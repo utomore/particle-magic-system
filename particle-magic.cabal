@@ -14,6 +14,7 @@ build-type:         Simple
 library magic-core
     hs-source-dirs:   src/core
     exposed-modules:  Magic.Types
+                      Magic.Particle.Buffer
     build-depends:    base
                     , vector
                     , deepseq
@@ -51,6 +52,7 @@ test-suite spec
     hs-source-dirs:   test
     other-modules:    BoundarySpec
                     , TypesSpec
+                    , BufferSpec
     build-depends:    base
                     , particle-magic:magic-core
                     , particle-magic:magic-boundary
