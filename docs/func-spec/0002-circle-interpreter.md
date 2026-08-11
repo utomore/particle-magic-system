@@ -2,7 +2,7 @@
 
 > 狀態：設計定案，待實作
 > 性質：**重大基建功能** —— 本 spec 定義真實的 `Circle` 結構 ADT、符文型別、`CompiledSpell` 內部結構（`EmitterSpec`／`Motion`／`Appearance`）與 JSON 完整槽位 schema，是 spec 0003（Expr 子系統）、生命週期 spec、力場 spec 的共同地基。本 spec 完成驗收前，依賴它的 spec 不得動工；完成後 §4 未標 ⚠ 的永久型別即凍結（可擴充 sum 的擴充合約見 §2）。
-> 前置依賴：spec 0001（需已完成）—— 0001 為重大基建，其驗收紀錄中的凍結介面清單是本 spec 的起點；0001 完成驗收前本 spec 不得動工。
+> 前置依賴：spec 0001（**已完成**，2026-08-12 驗收）—— 0001 為重大基建，其驗收紀錄中的「凍結介面清單」與五條實作期修訂是本 spec 的起點（§0 已據實對齊）。
 > 依據：[architecture.md](../architecture.md) §3.1、§4.1–§4.4、§5.1、§6；ADR-0002、0003、0005
 > 範圍：把魔法陣從空殼變成真語意——真實 `Circle` 結構、**參數層**符文子集、由內而外解釋器、真實解析取樣、完整槽位 JSON schema。**不含 Expr 數學式子系統**（四種 Expr 符文留給 spec 0003，見 §9）。
 
@@ -10,36 +10,37 @@
 
 ## 0. 起點：spec 0001 完成後的系統狀態
 
-本 spec 動工的前提是 0001 已驗收。彼時系統的狀態：
+0001 已於 2026-08-12 驗收（其 §10 含凍結介面清單與五條實作期修訂）。系統實際狀態：
 
 ### 0.1 可運行物（walking skeleton）
 
-- `cabal build all`／`cabal test` 通過；`cabal run` 開啟 raylib 3D 視窗。
+- `cabal build all`／`cabal test` 通過（55 examples 全綠，九個測試模組）；`cabal run` 開啟 raylib 3D 視窗（1280×720，60fps）。
 - `assets/spells/empty.json`（全空魔法陣）→ `loadCircle` → `castSpell`（stub 編譯）→ 每幀 `stepSpell`（stub 素放取樣）→ `RenderBatch` → 逐粒子 `drawCubeV` 畫出**素放噴泉**（256 粒、白色小方塊、循環重生）。
-- 模擬固定 60Hz（accumulator 時步），渲染幀率自由；修改 JSON 存檔後 0.5s 內熱重載（重新施法，狀態歸零）。
-- 十個測試模組（0001 T0–T9）全綠，含 headless 全管線驗收。
+- 模擬固定 60Hz（accumulator 時步，含 1e-9 幀 epsilon），渲染幀率自由；修改 JSON 存檔後 0.5s 內熱重載（重新施法，狀態歸零）。
+- 環境事實：h-raylib 5.6.0.0 × GHC 9.14.1 × Windows 可編譯執行，需 `cabal.project` 的 `allow-newer: h-raylib:template-haskell, h-raylib:base`；`Vector3` 為 pattern synonym。本輪不觸碰外殼，僅需知道環境已驗證可用。
 
-### 0.2 已凍結的永久介面（0001 交付的地基，本 spec 不得更動簽名）
+### 0.2 已凍結的永久介面（0001 驗收紀錄的凍結清單；本 spec 不得更動簽名）
 
 | 介面 | 內容 |
 |---|---|
-| `Magic.Types` | `V3`（含運算）、`Time`、`DeltaTime`、`Seconds`、`Seed` |
-| `Magic.Particle.Buffer` | SoA `ParticleBuffer`（六欄位）＋「長度==pbCount」不變量、`emptyBuffer` |
-| `Magic.Interface` | `CastContext`／`CastRequest`／`FrameInput`／`FrameOutput`／`RenderBatch`；`castSpell`／`stepSpell`／`isFinished`；`ActiveSpell` 對外不透明 |
-| `Magic.Codec` | `loadCircle :: ByteString -> Either LoadError Circle`；JSON v1 含 `version` 欄位的合約 |
-| `Magic.Compile` | `compile :: Circle -> Either CompileError CompiledSpell` 簽名 |
-| `Magic.Particle.Analytic` | `sample :: CompiledSpell -> CastContext -> Time -> ParticleBuffer` 簽名；`hashChan`（Seed×粒子索引×通道 → 0..1）隨機機制 |
-| `Magic.Step` | `plan`（固定時步規劃純函數） |
-| `App.Effects` | `Clock`／`FileWatch`／`Raylib` 三效果與雙直譯器（IO／測試） |
-| 套件邊界 | cabal 三 stanza；`magic-core` build-depends 白名單 {base, vector, deepseq}；executable 不依賴 `magic-core` |
+| `Magic.Types` | `V3(..)`（Num 實例、`vscale`/`dot`/`cross`/`norm`/`normalize`）、`Time`、`DeltaTime`、`Seconds`、`Seed`、**`CastContext(..)`**（在核心，非 Interface）、**`hashChan :: Seed -> Int -> Int -> Float`**（最終隨機機制） |
+| `Magic.Particle.Buffer` | SoA `ParticleBuffer`（六欄位）＋「長度==pbCount」不變量、`emptyBuffer`、`bufferInvariant` |
+| `Magic.Interface` | `CastRequest(..)`／`FrameInput(..)`／`FrameOutput(..)`／`RenderBatch(..)`／`BlendMode`／`BillboardShape`；`castSpell`／`stepSpell`／`isFinished`＋唯讀觀察者 `spellAge :: ActiveSpell -> Time`；`ActiveSpell` 對外不透明；re-export 核心型別 |
+| `Magic.Codec` | `loadCircle :: ByteString -> Either LoadError Circle`、`saveCircle`、`renderLoadError`、`LoadError (JsonError \| UnsupportedVersion)`；JSON v1 含 `version` 欄位的合約；語法錯誤附位置（aeson 路徑＋`addPosition` 行列定位） |
+| `Magic.Compile` | `compile :: Circle -> Either CompileError CompiledSpell` 的 `Either` 介面（`CompiledSpell` 欄位、`CompileError` 建構子明示為骨架期最小、後續擴充） |
+| `Magic.Particle.Analytic` | `sample :: CompiledSpell -> CastContext -> Time -> ParticleBuffer` 簽名 |
+| `Magic.Step` | `StepPlan(..)`、`plan`（固定時步規劃純函數，含 1e-9 幀 epsilon） |
+| `App.Effects` | `Clock`（`Now`）／`FileWatch`（`CheckChanged`、`ReadBytes`）／`Raylib`（bracket 四操作）三效果與雙直譯器（IO／測試）；`Camera` 為自有型別（效果層零 h-raylib 依賴）；`runRaylibIO` 位於 `App.Render.Raylib3D` |
+| 套件邊界 | cabal 三 stanza；`magic-core` build-depends 白名單 {base, vector, deepseq}；executable 不依賴 `magic-core`（`BoundarySpec` 守護） |
 
 ### 0.3 ⚠ stub 佔位（本 spec 要替換的實作；介面即最終介面）
 
-| stub | 0001 的樣子 | 本 spec 之後 |
+| stub | 0001 實作的樣子 | 本 spec 之後 |
 |---|---|---|
 | `Circle {}` | 空結構，只能表示全空陣 | 真實槽位結構（§4.1） |
-| `compile` | 任何 Circle → 素放常數 | 由內而外 fold（§4.5、§5.1） |
-| `sample` | 寫死的素放噴泉公式 | 由 `EmitterSpec` 驅動的通用取樣（§5.2） |
+| `compile` | 任何 Circle → `CompiledSpell {spellLifetime = 10s, spellBudget = 256}`；另 export 骨架常數 `particleLifetime = 2.0`（未列入凍結清單） | 由內而外 fold（§4.5、§5.1）；`particleLifetime` 併入 `Envelope`，該 export 移除 |
+| `sample` | 寫死的素放噴泉：第 i 粒於 `i·2s/256` 出生、壽命 2s 循環重生；位置 = `casterPos + facing·4.0·age + 橫向漂移·age`（漂移由 `hashChan` 通道 0/1 導出，散佈 1.6）；白色 `0xFFFFFFFF`、尺寸 0.05、life = age/2s | 由 `EmitterSpec` 驅動的通用取樣（§5.2），素放參數表見 §4.5 |
+| `CompileError` | `newtype CompileError = CompileError String` 佔位（骨架編譯不會失敗，無人建構） | 真實 sum（§4.4）；佔位建構子未凍結，直接取代 |
 | Codec schema | `"circle":{}` 空物件 | 完整槽位 schema（§4.7），**向後相容** |
 
 ### 0.4 本輪完全不動的
@@ -60,7 +61,7 @@ ring-fire.json → loadCircle → castSpell（真實 fold）
 完成定義：
 
 1. 至少 3 份新範例魔法陣（`ring-fire.json`、`square-burst.json`、`spiral-spark.json`，§8 S8）在視窗中**視覺可辨識差異**（形狀、顏色、軌跡各異）；
-2. **空陣仍為素放**：`emptyCircle` 走同一條 fold 通路（核心空缺 → Neutral 預設本質），無特例分支（architecture.md §3.3），且素放行為與 0001 語意等價（同樣的噴泉參數；0001 既有測試不得變紅）；
+2. **空陣仍為素放**：`emptyCircle` 走同一條 fold 通路（核心空缺 → Neutral 預設本質），無特例分支（architecture.md §3.3），且素放行為與 0001 語意等價——同樣的噴泉常數（§4.5 對照表），僅尾端消散為刻意差異；0001 既有測試不得變紅；
 3. `empty.json` **不需修改**仍可載入——schema 向後相容：缺鍵＝`null`＝空槽；
 4. 確定性保持：同 `(Circle, CastContext, t)` 兩次取樣 bit-for-bit 相等；
 5. `cabal build all` 與 `cabal test` 全綠（0001 全部測試＋本 spec 新測試）。
@@ -77,7 +78,7 @@ ring-fire.json → loadCircle → castSpell（真實 fold）
 | 編譯結果表示 | **`Motion`／`Appearance` 是資料非函數** | `CompiledSpell` 可序列化、可做編譯期粒子預算分析（architecture.md §4.4） |
 | 形狀取樣 | **獨立純函數 `sampleShape :: FaceShape -> Int -> Int -> V2`** | （形狀×粒子索引×通道擾動→面上一點）architecture.md §10 的既定擴充點；property 測試肥沃 |
 | 屬性→外觀 | **`Element` 查表** | 屬性只在 fold 步驟 1 轉成 `Appearance`，影響面封閉（architecture.md §10） |
-| 隨機性 | **沿用 0001 `hashChan`** | 出生位置擾動、相位錯開全走 seed 雜湊通道，零狀態、確定性不破 |
+| 隨機性 | **沿用 0001 `hashChan`**（位於 `Magic.Types`） | 每粒子漂移速度、相位錯開全走 seed 雜湊通道，零狀態、確定性不破 |
 | JSON 表示 | **tagged encoding（`"rune"` 欄位辨識建構子）＋缺鍵=null=空槽** | `"circle":{}` 依然合法 → 0001 的 `empty.json` 向後相容，不需 schema 版本升級 |
 | 可擴充 sum 合約 | **凍結語意、開放建構子** | 符文 sum type 本輪凍結「既有建構子的語意與 JSON tag」，但明文宣告為擴充點：後續 spec 以「加建構子＋解釋器加 case＋Codec 加 tag」擴充（architecture.md §10），**不視為破壞凍結**；GHC exhaustiveness check 列出所有需補位置 |
 
@@ -86,10 +87,12 @@ ring-fire.json → loadCircle → castSpell（真實 fold）
 ## 3. 模組變更總覽（相對 0001 的 delta）
 
 ```
-src/core/    Magic/Types.hs             -- 擴充：加 V2、basisFromNormal（既有定義不動）
+src/core/    Magic/Types.hs             -- 擴充：加 V2、basisFromNormal（既有定義不動；
+                                        --   basisFromNormal 抽取自 0001 Analytic 的內嵌基底）
              Magic/Circle.hs            -- 重寫：真實槽位結構（本輪後凍結）
              Magic/Rune.hs              -- 新增：符文 ADT（可擴充 sum）
-             Magic/Compile.hs           -- 真實化：由內而外 fold；CompiledSpell 加欄位
+             Magic/Compile.hs           -- 真實化：由內而外 fold；CompiledSpell 加欄位；
+                                        --   CompileError 換真實建構子；移除 particleLifetime export
              Magic/Particle/Analytic.hs -- 真實化：EmitterSpec 驅動取樣（簽名不變）
              Magic/Particle/Buffer.hs   -- 不動
              Magic/Project.hs           -- 不動
@@ -191,6 +194,8 @@ data V2 = V2 !Float !Float                    -- 初始面（2D）座標
 basisFromNormal :: V3 -> (V3, V3)             -- 法線 → 面平面正交基底（確定性選取）
 ```
 
+`basisFromNormal` 抽取自 0001 `Magic.Particle.Analytic` 的內嵌基底選取，**必須沿用其規則**（參考軸：法線 x 分量 `|fx| < 0.9` 時取 X 軸、否則取 Y 軸，再兩次 cross）——素放等價（§4.5）依賴同一基底得到同樣的漂移方向。
+
 ### 4.4 `Magic.Compile` 產物型別（永久）
 
 `CompiledSpell` 依 0001 的凍結紀律**只加欄位、不改既有**：
@@ -232,8 +237,9 @@ data Motion = Motion
   }
 
 data SpawnPattern
-  = SpawnAtAnchor                    -- 素放：全部由發動點出生（含 hashChan 微擾）
-  | SpawnOnShape !FaceShape          -- 沿初始面形狀取樣出生
+  = SpawnAtAnchor !Float             -- 素放：全部由發動點出生；參數 = 每粒子橫向漂移速度散佈
+                                     --   （hashChan 通道 0/1 導出，0001 噴泉語意的一般化；素放 = 1.6）
+  | SpawnOnShape !FaceShape          -- 沿初始面形狀取樣出生（無漂移散佈）
 
 data Appearance = Appearance
   { appColor :: !ColorRamp           -- 粒子生命週期 0..1 → RGBA（線性插值）
@@ -243,7 +249,7 @@ data Appearance = Appearance
 data ColorRamp = ColorRamp { rampStart :: !Word32, rampEnd :: !Word32 }
 ```
 
-`CompileError` 獲得第一個真實建構子（可擴充 sum；0001 只定了 `Either` 介面）：
+`CompileError` 獲得第一個真實建構子（可擴充 sum）。0001 實作以 `newtype CompileError = CompileError String` 佔位（骨架編譯不會失敗，無人建構）且其凍結清單只凍 `Either` 介面——本輪直接以真實 sum 取代佔位建構子：
 
 ```haskell
 data CompileError = BudgetExceeded !Int !Int   -- 要求量、上限
@@ -259,7 +265,19 @@ data ModulatedProto -- 步驟 3 產物：包絡經 PhaseRune 位移後的 Behavi
 -- compile = 步驟1 core → 步驟2 innerRings(A→B) → 步驟3 interLayer → 步驟4 outerRings(A→B)
 ```
 
-**素放預設值**（核心空缺時，architecture.md §6 步驟 1「素魔力」）：`Element = Neutral`、`essPower = 1.0`、粒子數基量 256、`Envelope = {delay 0, duration 4s, lifetime 2s}`、`Trajectory = Forward 3.0`、`SpawnAtAnchor`、`AlongNormal`——即 0001 stub 噴泉的參數。若 0001 實作驗收時凍結的常數與此不同，以 0001 驗收紀錄為準，動工前先校正本表。
+**素放預設值**（核心空缺時，architecture.md §6 步驟 1「素魔力」；常數取自 0001 已交付的 stub 實作）：
+
+| 項目 | 值 | 0001 來源 |
+|---|---|---|
+| `Element` / `essPower` | `Neutral` / `1.0` | —（0001 無屬性概念；Neutral 查表須給出白色 `0xFFFFFFFF`、0001 的預設 BlendMode） |
+| 粒子數基量 | 256 | `spellBudget = 256` |
+| `Envelope` | `{delay 0, duration 8s, lifetime 2s}` | `particleLifetime = 2.0`；`spellLifetime = 10s = delay + duration + lifetime` |
+| `Trajectory` | `Forward 4.0` | `fountainSpeed = 4.0` |
+| `SpawnPattern` | `SpawnAtAnchor 1.6` | `fountainSpread = 1.6`（hashChan 通道 0/1 橫向漂移） |
+| `RadiationMode` | `AlongNormal` | 位置沿 `casterFacing` |
+| 尺寸 | 0.05 | `pbSize` 常數 |
+
+**尾端行為的刻意差異**：0001 stub 的噴泉在整個壽命內無限循環重生，於 `t = 10s` 由 `isFinished` 硬切斷；本輪的包絡語意在生成窗口（`delay+duration = 8s`）結束後停止重生，最後一批粒子於 `10s` 自然死盡——消散更平滑，且 `spellLifetime` 公式化。0001 的回歸測試不受影響：其滿編斷言（`AcceptanceSpec` 的 `particleCounts !! 200 == 256`）落在 `t ≈ 3.3s`，`PipelineSpec` 只斷言預算上界與非空，皆在窗口內。
 
 本輪 fold **恆產出 1 個發射器**（`spellEmitters` 長度 1）；`Vector` 介面為生命週期 spec（陣形幾何發射器）與未來輻射展開預留。`spellBudget = emCount`（= power×基量，超過 `budgetCap` 即 `BudgetExceeded`）；`spellLifetime = envDelay + envDuration + envLifetime`（最後一批粒子死亡時刻）。
 
@@ -306,7 +324,7 @@ data ModulatedProto -- 步驟 3 產物：包絡經 PhaseRune 位移後的 Behavi
 
 - **缺鍵＝`null`＝空槽**。`"circle": {}` 合法且解為 `emptyCircle`——0001 的 `empty.json` 不需修改。
 - `outer`／`inner` 為長度 0–2 的陣列，**索引 0 = 內側層（ringA）、索引 1 = 外側層（ringB）**；缺項補空槽；長度 >2 為載入錯誤。
-- 符文以 `"rune"` tag 辨識。本輪合法 tag：外圈 `shape`｜`radiate`、夾層 `phase`、內圈 `trajectory`｜`timing`、節點 `dir-bias`。**未知 tag（含 0003 的 `formula`、`converge` 等）＝載入錯誤**，錯誤訊息附 JSON 位置與該槽位的合法 tag 清單。
+- 符文以 `"rune"` tag 辨識。本輪合法 tag：外圈 `shape`｜`radiate`、夾層 `phase`、內圈 `trajectory`｜`timing`、節點 `dir-bias`。**未知 tag（含 0003 的 `formula`、`converge` 等）＝載入錯誤**，錯誤訊息附 JSON 位置與該槽位的合法 tag 清單。所有本輪新增的錯誤（未知 tag、槽位錯置、非法參數）一律走 0001 已凍結的 `LoadError` 機制：以 aeson `Parser` 失敗回報為 `JsonError`（自帶 `$.circle.inner[0]` 式位置路徑），**不新增 `LoadError` 建構子**。
 - 形狀 `kind`：`hollow-square`(size)｜`rect`(w,h)｜`ring`(rInner,rOuter)｜`diamond`(size)；軌跡 `kind`：`forward`(speed)｜`spiral`(speed,radius,freq)｜`orbit`(radius,freq)；`mode`：`along-normal`｜`radial-outward`；`element`：`neutral`｜`fire`｜`water`｜`lightning`。
 - 幾何參數必須為正數（`rInner < rOuter`）、`power > 0`、包絡三欄 ≥ 0 且 `lifetime > 0`——違者載入錯誤（在 Codec 層擋，核心不做防禦檢查）。
 
@@ -333,8 +351,8 @@ flowchart LR
 flowchart LR
     T["Time t"] --> E["對每個 EmitterSpec"]
     E --> Alive["Envelope 排程：<br/>粒子 i 的 age（未出生/已死 → 略過）"]
-    Alive --> Pos["出生位置：<br/>SpawnAtAnchor ｜ sampleShape＋hashChan 擾動"]
-    Pos --> Traj["Trajectory(age) 沿輻射方向<br/>＋ drift·age（basisFromNormal 面座標）"]
+    Alive --> Pos["出生位置：<br/>SpawnAtAnchor ｜ sampleShape 形狀取樣"]
+    Pos --> Traj["Trajectory(age) 沿輻射方向<br/>＋ 節點 drift·age ＋ hashChan 漂移·age<br/>（basisFromNormal 面座標）"]
     Traj --> App["Appearance：<br/>ColorRamp(life)、尺寸"]
     App --> Buf["寫入 ParticleBuffer<br/>（SoA，count ≤ budget）"]
 ```
@@ -382,7 +400,7 @@ IO 分界與 0001 完全相同：本 spec 的所有新程式碼都在純核心�
 | ☐ | **S4** 包絡與軌跡求值 | `EnvelopeSpec.hs` | 排程邊界：`t < envDelay` 無粒子存活、窗口結束後最後一批於 `spellLifetime` 死盡；粒子 i 首生時刻公式；`Forward`：位移 == 方向×speed×age；`Spiral` 半徑恆定＝radius；`Orbit` 不沿法線前進 |
 | ☐ | **S5** fold 核心→內圈 | `CompileCoreSpec.hs` | 空核心 → Neutral 預設（素放參數表 §4.5 逐欄位相等）；每個 `Element` 查表得預期 `Appearance`；`emCount == round(power×256)` 且 clamp；四節點 bias → `motDrift` 向量和；內圈同類覆蓋規則（兩個 TrajectoryRune → 外側層勝出） |
 | ☐ | **S6** fold 夾層→外圈 | `CompileFoldSpec.hs` | `PhaseRune s` → `envDelay` 恰增加 s（其餘欄位不變）；`ShapeRune` → `SpawnOnShape`；`RadiateRune` → `motRadiation` 覆蓋；`spellBudget == emCount`；`power` 過大 → `Left (BudgetExceeded …)`；`spellLifetime == delay+duration+lifetime` |
-| ☐ | **S7** 取樣真實化 | `SampleSpec.hs` | 同 `(Seed, t)` 兩次取樣 bit-for-bit 相等；buffer 不變量恆真、count ≤ budget；包絡窗口外零粒子；**空陣素放等價**：`compile emptyCircle` 的取樣與素放參數表的預期行為一致，且 0001 `PipelineSpec` 不變綠；`SpawnOnShape Ring` 的粒子出生位置投影回面座標後落在環帶內 |
+| ☐ | **S7** 取樣真實化 | `SampleSpec.hs` | 同 `(Seed, t)` 兩次取樣 bit-for-bit 相等；buffer 不變量恆真、count ≤ budget；包絡窗口外零粒子；**空陣素放等價**：`compile emptyCircle` 的取樣符合 §4.5 常數表（窗口內滿編 256、速度 4.0、散佈 1.6、白色、尺寸 0.05），且 0001 `PipelineSpec`／`AcceptanceSpec` 不變綠；`SpawnOnShape Ring` 的粒子出生位置投影回面座標後落在環帶內 |
 | ☐ | **S8** 端到端驗收 | `Acceptance2Spec.hs` ＋ 手動 smoke | 自動：三份範例 asset 各 headless 跑 N 幀（JSON bytes → FrameOutput 非空 → finished）；三者輸出可區分（粒子位置分佈／顏色欄位兩兩不同）。手動：開窗依序載入三份範例目視差異、改 JSON 熱重載生效，結果記錄於 §10 |
 
 規則同 0001：**一個 Todo 打勾的前提是對應測試存在且綠**。0001 既有的十個測試模組是本輪的回歸防線，全程必須保持綠。
@@ -404,7 +422,6 @@ IO 分界與 0001 完全相同：本 spec 的所有新程式碼都在純核心�
 |---|---|---|
 | S8：三份範例魔法陣目視可辨識差異 | | |
 | S8：熱重載目視驗收 | | |
-| 0001 既有測試回歸全綠 | | |
+| 0001 既有測試回歸全綠（含 `AcceptanceSpec` 素放滿編斷言） | | |
 | `cabal test` 全綠 | | |
-| 素放預設常數與 0001 凍結值核對（§4.5） | | |
 | 凍結的介面清單（重大基建交付必填：列出實際凍結的永久型別、可擴充 sum 的既有建構子語意、JSON schema tag 集，供下游 spec 引用） | | |
