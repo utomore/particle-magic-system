@@ -62,3 +62,13 @@ spec = describe "Magic.Step.plan (fixed timestep accumulator)" $ do
 
   it "negative elapsed time is treated as zero" $
     plan (1 / 60) 8 (-1) 0.5 `shouldBe` plan (1 / 60) 8 0 0.5
+
+  it "float-noisy 60Hz clock deltas still run exactly 1 step per frame" $ do
+    -- Timestamps built by repeated addition of 1/60 (like a real clock
+    -- read) produce deltas an ulp off from dt; the planner's epsilon
+    -- must absorb this.
+    let dt = 1 / 60 :: Double
+        times = take 601 (iterate (+ dt) 0)
+        deltas = zipWith (-) (drop 1 times) times
+        (total, _) = runFrames dt maxBound deltas
+    total `shouldBe` 600

@@ -29,7 +29,15 @@ plan dt maxSteps elapsed acc
   | dt <= 0 = StepPlan 0 acc
   | otherwise =
       let acc' = acc + max 0 elapsed
-          n = floor (acc' / dt)
+          -- Clock timestamps are differenced by the caller, so elapsed
+          -- carries ±ulp float noise; a frame worth of backlog can land
+          -- an ulp short of dt and lose a step. The epsilon (1e-9 of a
+          -- frame ≈ 17ps at 60Hz) absorbs that noise. It is far below
+          -- the gaps of the exact dyadic grid T6 tests on, so the
+          -- bit-exact slicing property is unaffected.
+          n = floor (acc' / dt + stepEpsilon)
        in if n > maxSteps
             then StepPlan maxSteps 0
             else StepPlan n (max 0 (acc' - fromIntegral n * dt))
+  where
+    stepEpsilon = 1e-9

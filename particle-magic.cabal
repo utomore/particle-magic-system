@@ -56,13 +56,21 @@ executable particle-magic
 test-suite spec
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
-    hs-source-dirs:   test
+    -- app/ is included so the loop + interpreters are tested as-built;
+    -- the raylib-touching modules (Main, App.Render.Raylib3D) are NOT
+    -- listed, keeping the test suite headless and h-raylib-free.
+    hs-source-dirs:   test, app
     other-modules:    BoundarySpec
                     , TypesSpec
                     , BufferSpec
                     , CodecSpec
                     , PipelineSpec
                     , StepSpec
+                    , EffectsSpec
+                    , App.Effects
+                    , App.HotReload
+                    , App.Loop
+                    , App.TestInterp
     build-depends:    base
                     , particle-magic:magic-core
                     , particle-magic:magic-boundary
