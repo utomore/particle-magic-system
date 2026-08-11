@@ -16,6 +16,9 @@ library magic-core
     exposed-modules:  Magic.Types
                       Magic.Particle.Buffer
                       Magic.Circle
+                      Magic.Compile
+                      Magic.Particle.Analytic
+                      Magic.Project
     build-depends:    base
                     , vector
                     , deepseq
@@ -25,6 +28,7 @@ library magic-core
 library magic-boundary
     hs-source-dirs:   src/boundary
     exposed-modules:  Magic.Codec
+                      Magic.Interface
     build-depends:    base
                     , particle-magic:magic-core
                     , aeson
@@ -56,6 +60,7 @@ test-suite spec
                     , TypesSpec
                     , BufferSpec
                     , CodecSpec
+                    , PipelineSpec
     build-depends:    base
                     , particle-magic:magic-core
                     , particle-magic:magic-boundary

@@ -275,7 +275,7 @@ plan :: Double        -- 固定時步（1/60）
 | ✅ | **S2** `Magic.Types` | `TypesSpec.hs` | V3 運算 property：加法交換/結合、`normalize` 後長度 ≈1（零向量除外）、dot/cross 正交性質 |
 | ✅ | **S3** `ParticleBuffer` | `BufferSpec.hs` | 不變量 property：任意合法建構下六個欄位長度 == `pbCount`；`emptyBuffer` 的 count == 0 |
 | ✅ | **S4** Codec 最小 JSON | `CodecSpec.hs` | roundtrip：`decode . encode == id`（骨架 schema）；`version ≠ 1` 拒絕且錯誤訊息含版號；壞 JSON 錯誤含位置；`empty.json` 樣本檔可載入 |
-| ☐ | **S5** 核心管線 stub | `PipelineSpec.hs` | 空陣 → `castSpell` 成功；`stepSpell` 推進：粒子數 ≤ budget、buffer 不變量恆真；同 `(Seed, t)` 兩次取樣 bit-for-bit 相等（確定性）；推進超過 lifetime 後 `isFinished == True` |
+| ✅ | **S5** 核心管線 stub | `PipelineSpec.hs` | 空陣 → `castSpell` 成功；`stepSpell` 推進：粒子數 ≤ budget、buffer 不變量恆真；同 `(Seed, t)` 兩次取樣 bit-for-bit 相等（確定性）；推進超過 lifetime 後 `isFinished == True` |
 | ☐ | **S6** 固定時步 | `StepSpec.hs` | property：任意切幀方式下總步數 == `floor(total/dt)`（clamp 未觸發）；clamp 觸發時 `stepsToRun ≤ maxSteps`；accumulator 恆 `0 ≤ acc < dt`（無 clamp 時） |
 | ☐ | **S7** 效果與直譯器 | `EffectsSpec.hs` | 用 `runClockVirtual`＋`runRaylibHeadless` 跑主迴圈 N 虛擬秒：模擬步數 == N×60；headless renderer 收到的 DrawBatch 次數 == 渲染幀數 |
 | ☐ | **S8** 熱重載決策 | `HotReloadSpec.hs` | 純決策函數：mtime 序列 → 重載時點；`runFileWatchScript` 注入「第 k 幀檔案變更」→ 斷言第 k 幀後 spell 被重新 cast（施法時間歸零） |
