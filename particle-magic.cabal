@@ -1,0 +1,13 @@
+cabal-version:      3.4
+name:               particle-magic
+version:            0.1.0.0
+synopsis:           Particle magic system proof-of-concept
+build-type:         Simple
+
+executable particle-magic
+    main-is:          Main.hs
+    hs-source-dirs:   app
+    build-depends:    base
+                    , h-raylib
+    default-language: GHC2021
+    ghc-options:      -Wall -threaded

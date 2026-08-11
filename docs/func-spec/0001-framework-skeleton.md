@@ -1,6 +1,6 @@
 # Func-Spec 0001：框架搭建（Walking Skeleton）
 
-> 狀態：設計定案，待實作
+> 狀態：實作中
 > 性質：**重大基建功能** —— 本 spec 建立套件邊界、`Magic.Interface` 對外合約、`ParticleBuffer` 與固定時步等永久介面，是**所有後續 func-spec 的共同地基**。本 spec 完成驗收前，任何依賴它的 spec 不得動工；完成後其「永久型別」（§4 未標 ⚠ 者）即凍結，變更需先修訂 ADR/架構書。
 > 前置依賴：無
 > 依據：[architecture.md](../architecture.md) §2、§3；ADR-0004、0007
@@ -270,7 +270,7 @@ plan :: Double        -- 固定時步（1/60）
 
 | ✅ | Todo | 測試（`test/` 下） | 測試內容（完成即斷言） |
 |---|---|---|---|
-| ☐ | **S0** h-raylib 開窗驗證 | —（手動 smoke） | 視窗開啟、畫一方塊、Esc 關閉。唯一無自動測試的步驟，結果記錄於本文件 §10 |
+| ✅ | **S0** h-raylib 開窗驗證 | —（手動 smoke） | 視窗開啟、畫一方塊、Esc 關閉。唯一無自動測試的步驟，結果記錄於本文件 §10 |
 | ☐ | **S1** 三套件邊界 | `BoundarySpec.hs` | 剖析 `particle-magic.cabal`：`magic-core` 的 build-depends ⊆ {base, vector, deepseq}；executable 的 build-depends 不含 `magic-core` |
 | ☐ | **S2** `Magic.Types` | `TypesSpec.hs` | V3 運算 property：加法交換/結合、`normalize` 後長度 ≈1（零向量除外）、dot/cross 正交性質 |
 | ☐ | **S3** `ParticleBuffer` | `BufferSpec.hs` | 不變量 property：任意合法建構下六個欄位長度 == `pbCount`；`emptyBuffer` 的 count == 0 |
@@ -299,7 +299,7 @@ plan :: Double        -- 固定時步（1/60）
 
 | 項目 | 日期 | 結果 |
 |---|---|---|
-| S0：h-raylib × GHC 9.14.1 × Windows 編譯 | | |
+| S0：h-raylib × GHC 9.14.1 × Windows 編譯 | 2026-08-12 | ✅ 通過。h-raylib 5.6.0.0 需 `cabal.project` 放寬 `allow-newer: h-raylib:template-haskell, h-raylib:base`（GHC 9.14.1 附 template-haskell 2.24 超出其上界 <2.24），放寬後原始碼相容、編譯執行皆正常。視窗開啟、3D 方塊＋網格顯示、180 幀後自動關閉（exit 0）。注意：`Vector3` 在 h-raylib 5.6 是 pattern synonym（底層為 `linear` 的 `V3 Float`），需以 `pattern Vector3` 匯入 |
 | S9：walking skeleton 目視驗收 | | |
 | `cabal test` 全綠 | | |
 | 凍結的介面清單（重大基建交付必填：列出實際凍結的永久型別與函數簽名，供下游 spec 引用） | | |
