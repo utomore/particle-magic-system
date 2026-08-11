@@ -73,6 +73,7 @@ test-suite spec
                     , StepSpec
                     , EffectsSpec
                     , HotReloadSpec
+                    , AcceptanceSpec
                     , App.Effects
                     , App.HotReload
                     , App.Loop
