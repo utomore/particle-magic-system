@@ -1,6 +1,6 @@
 # Func-Spec 0001：框架搭建（Walking Skeleton）
 
-> 狀態：設計定案，待實作
+> 狀態：已完成（2026-08-12，驗收紀錄見 §10）
 > 性質：**重大基建功能** —— 本 spec 建立套件邊界、`Magic.Interface` 對外合約、`ParticleBuffer` 與固定時步等永久介面，是**所有後續 func-spec 的共同地基**。本 spec 完成驗收前，任何依賴它的 spec 不得動工；完成後其「永久型別」（§4 未標 ⚠ 者）即凍結，變更需先修訂 ADR/架構書。
 > 前置依賴：無
 > 依據：[architecture.md](../architecture.md) §2、§3；ADR-0004、0007
@@ -270,16 +270,16 @@ plan :: Double        -- 固定時步（1/60）
 
 | ✅ | Todo | 測試（`test/` 下） | 測試內容（完成即斷言） |
 |---|---|---|---|
-| ☐ | **S0** h-raylib 開窗驗證 | —（手動 smoke） | 視窗開啟、畫一方塊、Esc 關閉。唯一無自動測試的步驟，結果記錄於本文件 §10 |
-| ☐ | **S1** 三套件邊界 | `BoundarySpec.hs` | 剖析 `particle-magic.cabal`：`magic-core` 的 build-depends ⊆ {base, vector, deepseq}；executable 的 build-depends 不含 `magic-core` |
-| ☐ | **S2** `Magic.Types` | `TypesSpec.hs` | V3 運算 property：加法交換/結合、`normalize` 後長度 ≈1（零向量除外）、dot/cross 正交性質 |
-| ☐ | **S3** `ParticleBuffer` | `BufferSpec.hs` | 不變量 property：任意合法建構下六個欄位長度 == `pbCount`；`emptyBuffer` 的 count == 0 |
-| ☐ | **S4** Codec 最小 JSON | `CodecSpec.hs` | roundtrip：`decode . encode == id`（骨架 schema）；`version ≠ 1` 拒絕且錯誤訊息含版號；壞 JSON 錯誤含位置；`empty.json` 樣本檔可載入 |
-| ☐ | **S5** 核心管線 stub | `PipelineSpec.hs` | 空陣 → `castSpell` 成功；`stepSpell` 推進：粒子數 ≤ budget、buffer 不變量恆真；同 `(Seed, t)` 兩次取樣 bit-for-bit 相等（確定性）；推進超過 lifetime 後 `isFinished == True` |
-| ☐ | **S6** 固定時步 | `StepSpec.hs` | property：任意切幀方式下總步數 == `floor(total/dt)`（clamp 未觸發）；clamp 觸發時 `stepsToRun ≤ maxSteps`；accumulator 恆 `0 ≤ acc < dt`（無 clamp 時） |
-| ☐ | **S7** 效果與直譯器 | `EffectsSpec.hs` | 用 `runClockVirtual`＋`runRaylibHeadless` 跑主迴圈 N 虛擬秒：模擬步數 == N×60；headless renderer 收到的 DrawBatch 次數 == 渲染幀數 |
-| ☐ | **S8** 熱重載決策 | `HotReloadSpec.hs` | 純決策函數：mtime 序列 → 重載時點；`runFileWatchScript` 注入「第 k 幀檔案變更」→ 斷言第 k 幀後 spell 被重新 cast（施法時間歸零） |
-| ☐ | **S9** 端到端驗收 | `AcceptanceSpec.hs` ＋ 手動 | 自動：headless 全管線（JSON bytes → N 幀 → FrameOutput 非空 → finished）。手動：開窗見噴泉、改 JSON 見重載 |
+| ✅ | **S0** h-raylib 開窗驗證 | —（手動 smoke） | 視窗開啟、畫一方塊、Esc 關閉。唯一無自動測試的步驟，結果記錄於本文件 §10 |
+| ✅ | **S1** 三套件邊界 | `BoundarySpec.hs` | 剖析 `particle-magic.cabal`：`magic-core` 的 build-depends ⊆ {base, vector, deepseq}；executable 的 build-depends 不含 `magic-core` |
+| ✅ | **S2** `Magic.Types` | `TypesSpec.hs` | V3 運算 property：加法交換/結合、`normalize` 後長度 ≈1（零向量除外）、dot/cross 正交性質 |
+| ✅ | **S3** `ParticleBuffer` | `BufferSpec.hs` | 不變量 property：任意合法建構下六個欄位長度 == `pbCount`；`emptyBuffer` 的 count == 0 |
+| ✅ | **S4** Codec 最小 JSON | `CodecSpec.hs` | roundtrip：`decode . encode == id`（骨架 schema）；`version ≠ 1` 拒絕且錯誤訊息含版號；壞 JSON 錯誤含位置；`empty.json` 樣本檔可載入 |
+| ✅ | **S5** 核心管線 stub | `PipelineSpec.hs` | 空陣 → `castSpell` 成功；`stepSpell` 推進：粒子數 ≤ budget、buffer 不變量恆真；同 `(Seed, t)` 兩次取樣 bit-for-bit 相等（確定性）；推進超過 lifetime 後 `isFinished == True` |
+| ✅ | **S6** 固定時步 | `StepSpec.hs` | property：任意切幀方式下總步數 == `floor(total/dt)`（clamp 未觸發）；clamp 觸發時 `stepsToRun ≤ maxSteps`；accumulator 恆 `0 ≤ acc < dt`（無 clamp 時） |
+| ✅ | **S7** 效果與直譯器 | `EffectsSpec.hs` | 用 `runClockVirtual`＋`runRaylibHeadless` 跑主迴圈 N 虛擬秒：模擬步數 == N×60；headless renderer 收到的 DrawBatch 次數 == 渲染幀數 |
+| ✅ | **S8** 熱重載決策 | `HotReloadSpec.hs` | 純決策函數：mtime 序列 → 重載時點；`runFileWatchScript` 注入「第 k 幀檔案變更」→ 斷言第 k 幀後 spell 被重新 cast（施法時間歸零） |
+| ✅ | **S9** 端到端驗收 | `AcceptanceSpec.hs` ＋ 手動 | 自動：headless 全管線（JSON bytes → N 幀 → FrameOutput 非空 → finished）。手動：開窗見噴泉、改 JSON 見重載 |
 
 規則：**一個 Todo 打勾的前提是對應測試存在且綠**。S0/S9 的手動部分在 §10 留驗收紀錄。
 
@@ -299,7 +299,36 @@ plan :: Double        -- 固定時步（1/60）
 
 | 項目 | 日期 | 結果 |
 |---|---|---|
-| S0：h-raylib × GHC 9.14.1 × Windows 編譯 | | |
-| S9：walking skeleton 目視驗收 | | |
-| `cabal test` 全綠 | | |
-| 凍結的介面清單（重大基建交付必填：列出實際凍結的永久型別與函數簽名，供下游 spec 引用） | | |
+| S0：h-raylib × GHC 9.14.1 × Windows 編譯 | 2026-08-12 | ✅ 通過。h-raylib 5.6.0.0 需 `cabal.project` 放寬 `allow-newer: h-raylib:template-haskell, h-raylib:base`（GHC 9.14.1 附 template-haskell 2.24 超出其上界 <2.24），放寬後原始碼相容、編譯執行皆正常。視窗開啟、3D 方塊＋網格顯示、180 幀後自動關閉（exit 0）。注意：`Vector3` 在 h-raylib 5.6 是 pattern synonym（底層為 `linear` 的 `V3 Float`），需以 `pattern Vector3` 匯入 |
+| S9：walking skeleton 目視驗收 | 2026-08-12 | ✅ `cabal run`：1280×720 視窗開啟（GLFW/OpenGL 3.3），60fps 跑 401 幀；執行中修改 `empty.json`（name 欄位）→ 統計輸出 `casts=2` 證實熱重載自動重新施法；視窗優雅關閉後印出 `frames=401 simSteps=399 casts=2`。headless 驗收（`AcceptanceSpec`）：真實檔案 bytes → 620 幀 → 噴泉粒子於穩態滿編 256、恆在預算內 → 過壽命後 `isFinished` |
+| `cabal test` 全綠 | 2026-08-12 | ✅ 55 examples, 0 failures（T1–T9 全數對應） |
+| 凍結的介面清單（重大基建交付必填：列出實際凍結的永久型別與函數簽名，供下游 spec 引用） | 2026-08-12 | 見下方「凍結介面清單」 |
+
+### 凍結介面清單（2026-08-12 交付）
+
+**`magic-core`**（build-depends 白名單 base/vector/deepseq，測試 T1 守護）：
+
+- `Magic.Types`：`V3(..)`（Num 實例、`vscale`/`dot`/`cross`/`norm`/`normalize`）、`Time`、`DeltaTime`、`Seconds`、`Seed`、`CastContext(..)`、`hashChan :: Seed -> Int -> Int -> Float`（最終隨機機制）
+- `Magic.Particle.Buffer`：`ParticleBuffer` SoA 六欄位＋`pbCount` 不變量、`emptyBuffer`、`bufferInvariant`
+- `Magic.Particle.Analytic`：`sample :: CompiledSpell -> CastContext -> Time -> ParticleBuffer`（⚠ 行為為素放 stub，簽名永久）
+- `Magic.Compile`：`compile :: Circle -> Either CompileError CompiledSpell`（⚠ `CompiledSpell` 欄位骨架期最小，後續擴充；`Either` 介面永久）
+- `Magic.Circle`：`Circle` / `emptyCircle`（⚠ stub，spec 0002+ 填入槽位結構）
+
+**`magic-boundary`**：
+
+- `Magic.Interface`（對外唯一入口）：`CastRequest(..)`、`FrameInput(..)`、`FrameOutput(..)`、`RenderBatch(..)`、`BlendMode`、`BillboardShape`、不透明 `ActiveSpell`、四函數 `loadCircle`（位於 Codec）/`castSpell`/`stepSpell`/`isFinished`，另加唯讀觀察者 `spellAge :: ActiveSpell -> Time`（spec 未列，交付時新增，供宿主與熱重載測試使用）
+- `Magic.Codec`：`loadCircle :: ByteString(strict) -> Either LoadError Circle`、`saveCircle`、`LoadError(JsonError | UnsupportedVersion)`、JSON v1 schema（`version`/`name`/`circle`）
+- `Magic.Step`：`StepPlan(..)`、`plan :: Double -> Int -> Double -> Double -> StepPlan`（含 1e-9 幀 epsilon，見下）
+
+**`App.*` 效果介面**：
+
+- `Clock`（`Now`）、`FileWatch`（`CheckChanged`、**`ReadBytes`**）、`Raylib`（`WithWindow`/`WithFrame`/`DrawBatch`/`ShouldClose`，higher-order bracket）、`Camera`（自有型別）
+- 直譯器：`runClockIO`/`runClockVirtual`、`runFileWatchIO`（mtime 輪詢 0.5s 節流）/`runFileWatchScript`、`runRaylibIO`（位於 `App.Render.Raylib3D`）/`runRaylibHeadless`
+
+**實作期修訂（相對 §4 的偏差，均已測試守護）**：
+
+1. `FileWatch` 增加 `ReadBytes`：重載必須重新讀檔，檔案存取全數歸效果所有，維持迴圈零 IO。
+2. `Camera` 為自有型別而非 raylib 型別：效果定義（`App.Effects`）零 h-raylib 依賴，測試套件因此完全 headless。
+3. `Raylib` 的 IO 直譯器移至 `App.Render.Raylib3D`（spec 原列於 `App.Effects`），理由同上。
+4. `Magic.Step.plan` 加入 1e-9 幀 epsilon：T7 發現時鐘時間戳差分帶 ±ulp 噪音會每 ~2 秒丟一步；epsilon 遠小於 T6 dyadic 網格的最小間隙，位元級精確性質不受影響（`StepSpec` 有回歸測試）。
+5. `Vector3` 在 h-raylib 5.6 為 pattern synonym（底層 `linear` 的 `V3 Float`），需 `pattern Vector3` 匯入。

@@ -68,4 +68,4 @@
 
 | 編號 | 主題 | 性質 | 前置依賴 | 狀態 |
 |---|---|---|---|---|
-| [0001](docs/func-spec/0001-framework-skeleton.md) | 框架搭建（walking skeleton）：套件邊界、IO/核心邊界、端到端資料流 | **重大基建功能** | 無 | 設計定案，待實作 |
+| [0001](docs/func-spec/0001-framework-skeleton.md) | 框架搭建（walking skeleton）：套件邊界、IO/核心邊界、端到端資料流 | **重大基建功能** | 無 | 已完成 |
