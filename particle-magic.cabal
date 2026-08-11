@@ -4,10 +4,63 @@ version:            0.1.0.0
 synopsis:           Particle magic system proof-of-concept
 build-type:         Simple
 
+-- Architecture boundary is enforced by this package structure
+-- (func-spec 0001 §3, guarded by test/BoundarySpec.hs):
+--   * magic-core: pure core, build-depends whitelist {base, vector, deepseq}
+--   * magic-boundary: pure boundary layer (JSON codec, public interface)
+--   * executable: effectful shell; depends on magic-boundary ONLY,
+--     so it physically cannot import core internals.
+
+library magic-core
+    hs-source-dirs:   src/core
+    exposed-modules:  Magic.Types
+    build-depends:    base
+                    , vector
+                    , deepseq
+    default-language: GHC2021
+    ghc-options:      -Wall
+
+library magic-boundary
+    hs-source-dirs:   src/boundary
+    build-depends:    base
+                    , particle-magic:magic-core
+                    , aeson
+                    , bytestring
+                    , text
+    default-language: GHC2021
+    ghc-options:      -Wall
+
 executable particle-magic
     main-is:          Main.hs
     hs-source-dirs:   app
     build-depends:    base
+                    , particle-magic:magic-boundary
                     , h-raylib
+                    , effectful
+                    , bytestring
+                    , vector
+                    , directory
+                    , time
+                    , containers
+    default-language: GHC2021
+    ghc-options:      -Wall -threaded
+
+test-suite spec
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    hs-source-dirs:   test
+    other-modules:    BoundarySpec
+    build-depends:    base
+                    , particle-magic:magic-core
+                    , particle-magic:magic-boundary
+                    , hspec
+                    , QuickCheck
+                    , bytestring
+                    , vector
+                    , effectful
+                    , directory
+                    , time
+                    , containers
+    build-tool-depends: hspec-discover:hspec-discover
     default-language: GHC2021
     ghc-options:      -Wall -threaded
