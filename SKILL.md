@@ -69,3 +69,4 @@
 | 編號 | 主題 | 性質 | 前置依賴 | 狀態 |
 |---|---|---|---|---|
 | [0001](docs/func-spec/0001-framework-skeleton.md) | 框架搭建（walking skeleton）：套件邊界、IO/核心邊界、端到端資料流 | **重大基建功能** | 無 | 已完成 |
+| [0002](docs/func-spec/0002-circle-interpreter.md) | 魔法陣結構與解釋器：Circle ADT、參數層符文、由內而外 fold、真實取樣、完整槽位 JSON schema | **重大基建功能** | spec 0001（已完成） | 設計定案，待實作 |
