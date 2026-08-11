@@ -1,0 +1,94 @@
+cabal-version:      3.4
+name:               particle-magic
+version:            0.1.0.0
+synopsis:           Particle magic system proof-of-concept
+build-type:         Simple
+
+-- Architecture boundary is enforced by this package structure
+-- (func-spec 0001 §3, guarded by test/BoundarySpec.hs):
+--   * magic-core: pure core, build-depends whitelist {base, vector, deepseq}
+--   * magic-boundary: pure boundary layer (JSON codec, public interface)
+--   * executable: effectful shell; depends on magic-boundary ONLY,
+--     so it physically cannot import core internals.
+
+library magic-core
+    hs-source-dirs:   src/core
+    exposed-modules:  Magic.Types
+                      Magic.Particle.Buffer
+                      Magic.Circle
+                      Magic.Compile
+                      Magic.Particle.Analytic
+                      Magic.Project
+    build-depends:    base
+                    , vector
+                    , deepseq
+    default-language: GHC2021
+    ghc-options:      -Wall
+
+library magic-boundary
+    hs-source-dirs:   src/boundary
+    exposed-modules:  Magic.Codec
+                      Magic.Interface
+                      Magic.Step
+    build-depends:    base
+                    , particle-magic:magic-core
+                    , aeson
+                    , bytestring
+                    , text
+    default-language: GHC2021
+    ghc-options:      -Wall
+
+executable particle-magic
+    main-is:          Main.hs
+    hs-source-dirs:   app
+    other-modules:    App.Effects
+                    , App.HotReload
+                    , App.Loop
+                    , App.TestInterp
+                    , App.Render.Raylib3D
+    build-depends:    base
+                    , particle-magic:magic-boundary
+                    , h-raylib
+                    , effectful
+                    , bytestring
+                    , vector
+                    , directory
+                    , time
+                    , containers
+    default-language: GHC2021
+    ghc-options:      -Wall -threaded
+
+test-suite spec
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    -- app/ is included so the loop + interpreters are tested as-built;
+    -- the raylib-touching modules (Main, App.Render.Raylib3D) are NOT
+    -- listed, keeping the test suite headless and h-raylib-free.
+    hs-source-dirs:   test, app
+    other-modules:    BoundarySpec
+                    , TypesSpec
+                    , BufferSpec
+                    , CodecSpec
+                    , PipelineSpec
+                    , StepSpec
+                    , EffectsSpec
+                    , HotReloadSpec
+                    , AcceptanceSpec
+                    , App.Effects
+                    , App.HotReload
+                    , App.Loop
+                    , App.TestInterp
+    build-depends:    base
+                    , particle-magic:magic-core
+                    , particle-magic:magic-boundary
+                    , hspec
+                    , QuickCheck
+                    , bytestring
+                    , vector
+                    , effectful
+                    , directory
+                    , time
+                    , containers
+    build-tool-depends: hspec-discover:hspec-discover
+    default-language: GHC2021
+    ghc-options:      -Wall -threaded

@@ -1,0 +1,6 @@
+packages: .
+
+-- GHC 9.14.1 ships template-haskell 2.24 / base 4.22, slightly ahead of
+-- h-raylib 5.6.0.0's declared upper bounds. Relax them for the skeleton;
+-- verified by the S0 smoke build (func-spec 0001 §7).
+allow-newer: h-raylib:template-haskell, h-raylib:base, h-raylib:containers
