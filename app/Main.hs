@@ -1,30 +1,44 @@
-{-# LANGUAGE PatternSynonyms #-}
-
--- S0 smoke test: open a raylib 3D window, draw a cube, auto-close after ~3s
--- (or close via window button / Esc). Validates h-raylib x GHC 9.14.1 x Windows.
+-- | The effectful shell: assemble the IO interpreters and run the loop
+-- (func-spec 0001 §5). All spell semantics live behind Magic.Interface;
+-- this file is glue.
 module Main (main) where
 
-import Raylib.Core (beginDrawing, beginMode3D, clearBackground, endDrawing, endMode3D, windowShouldClose)
-import Raylib.Core.Models (drawCube, drawGrid)
-import Raylib.Types (Camera3D (..), CameraProjection (CameraPerspective), pattern Vector3)
-import Raylib.Util (withWindow)
-import Raylib.Util.Colors (maroon, rayWhite)
+import Effectful (runEff)
+
+import App.Effects (runClockIO, runFileWatchIO)
+import App.Loop (LoopConfig (..), LoopStats (..), defaultCamera, runLoop)
+import App.Render.Raylib3D (runRaylibIO)
+import Magic.Interface (CastContext (..), Seed (..), V3 (..))
+
+config :: LoopConfig
+config =
+  LoopConfig
+    { lcSimDt = 1 / 60
+    , lcMaxStepsPerFrame = 8
+    , lcSpellPath = "assets/spells/empty.json"
+    , lcCamera = defaultCamera
+    , lcCastCtx =
+        CastContext
+          { casterPos = V3 0 0 0
+          , casterFacing = V3 0 1 0
+          , seed = Seed 42
+          }
+    , lcWindowSize = (1280, 720)
+    , lcWindowTitle = "particle-magic — walking skeleton"
+    }
 
 main :: IO ()
-main = withWindow 800 450 "particle-magic S0 smoke" 60 $ \_ -> do
-  let cam = Camera3D (Vector3 4 3 4) (Vector3 0 0 0) (Vector3 0 1 0) 45 CameraPerspective
-      loop :: Int -> IO ()
-      loop n = do
-        close <- windowShouldClose
-        if close || n >= 180
-          then pure ()
-          else do
-            beginDrawing
-            clearBackground rayWhite
-            beginMode3D cam
-            drawCube (Vector3 0 0.5 0) 1 1 1 maroon
-            drawGrid 10 1
-            endMode3D
-            endDrawing
-            loop (n + 1)
-  loop 0
+main = do
+  stats <-
+    runEff
+      . runRaylibIO
+      . runFileWatchIO 0.5
+      . runClockIO
+      $ runLoop config
+  putStrLn $
+    "frames="
+      ++ show (lsFrames stats)
+      ++ " simSteps="
+      ++ show (lsSimSteps stats)
+      ++ " casts="
+      ++ show (lsCasts stats)

@@ -278,7 +278,7 @@ plan :: Double        -- 固定時步（1/60）
 | ✅ | **S5** 核心管線 stub | `PipelineSpec.hs` | 空陣 → `castSpell` 成功；`stepSpell` 推進：粒子數 ≤ budget、buffer 不變量恆真；同 `(Seed, t)` 兩次取樣 bit-for-bit 相等（確定性）；推進超過 lifetime 後 `isFinished == True` |
 | ✅ | **S6** 固定時步 | `StepSpec.hs` | property：任意切幀方式下總步數 == `floor(total/dt)`（clamp 未觸發）；clamp 觸發時 `stepsToRun ≤ maxSteps`；accumulator 恆 `0 ≤ acc < dt`（無 clamp 時） |
 | ✅ | **S7** 效果與直譯器 | `EffectsSpec.hs` | 用 `runClockVirtual`＋`runRaylibHeadless` 跑主迴圈 N 虛擬秒：模擬步數 == N×60；headless renderer 收到的 DrawBatch 次數 == 渲染幀數 |
-| ☐ | **S8** 熱重載決策 | `HotReloadSpec.hs` | 純決策函數：mtime 序列 → 重載時點；`runFileWatchScript` 注入「第 k 幀檔案變更」→ 斷言第 k 幀後 spell 被重新 cast（施法時間歸零） |
+| ✅ | **S8** 熱重載決策 | `HotReloadSpec.hs` | 純決策函數：mtime 序列 → 重載時點；`runFileWatchScript` 注入「第 k 幀檔案變更」→ 斷言第 k 幀後 spell 被重新 cast（施法時間歸零） |
 | ☐ | **S9** 端到端驗收 | `AcceptanceSpec.hs` ＋ 手動 | 自動：headless 全管線（JSON bytes → N 幀 → FrameOutput 非空 → finished）。手動：開窗見噴泉、改 JSON 見重載 |
 
 規則：**一個 Todo 打勾的前提是對應測試存在且綠**。S0/S9 的手動部分在 §10 留驗收紀錄。

@@ -41,6 +41,11 @@ library magic-boundary
 executable particle-magic
     main-is:          Main.hs
     hs-source-dirs:   app
+    other-modules:    App.Effects
+                    , App.HotReload
+                    , App.Loop
+                    , App.TestInterp
+                    , App.Render.Raylib3D
     build-depends:    base
                     , particle-magic:magic-boundary
                     , h-raylib
@@ -67,6 +72,7 @@ test-suite spec
                     , PipelineSpec
                     , StepSpec
                     , EffectsSpec
+                    , HotReloadSpec
                     , App.Effects
                     , App.HotReload
                     , App.Loop
