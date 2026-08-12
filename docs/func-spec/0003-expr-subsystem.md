@@ -1,6 +1,6 @@
 # Func-Spec 0003：Expr 數學式子系統（Expr Subsystem）
 
-> 狀態：設計定案，待實作
+> 狀態：已完成（2026-08-12 驗收，見 §10）
 > 性質：**重大基建功能** —— 本 spec 定義 DSL 第三層（ADR-0002）的**語言合約**：`Expr` AST 建構子、變數環境、求值語意、文字語法與內建函數集。交付後語言合約即凍結（可擴充 sum 合約見 §4.5）；Expr 符文接線 spec（預定編號 0004）與未來力場/生命週期 spec 皆引用本語言。本 spec 完成驗收前，依賴它的 spec 不得動工。
 > 前置依賴：spec 0001（**已完成**，2026-08-12 驗收）。**不依賴 spec 0002**——設計時即與 0002 零共同模組、可平行實作（§0.2 保留作切分依據）；0002 已於 2026-08-12 完成驗收，其凍結介面對本 spec 無影響（0002 不觸碰 `Magic/Expr*`）。
 > 依據：[architecture.md](../architecture.md) §4.2、§8（Expr 求值效能的既定延後）、§10；ADR-0002（分層 DSL：封閉、一階、必終止）、ADR-0007（核心零 IO）
@@ -224,10 +224,10 @@ flowchart LR
 
 | ✅ | Todo | 測試（`test/` 下） | 測試內容（完成即斷言） |
 |---|---|---|---|
-| ☐ | **S1** AST 與求值器 | `ExprEvalSpec.hs` | 代數判例（加乘單位元、`Neg . Neg == id` 語意）；三變數查值；`Chan n` 求值 == `hashChan seed pindex n`（property）；同 `(Expr, env)` 兩次求值 bit-for-bit 相等（property）；任意 `Expr` × 任意 env → `evalFinite` 恆有限（property，含刻意生成 `Div`/`Pow`/`FSqrt` 的 NaN/Inf 路徑）；`exprSize` 判例；數百節點深樹求值完成 |
-| ☐ | **S2** 剖析器與守門 | `ExprParseSpec.hs` | §4.4 三判例（`-x^2`、`2^3^2`、`2^-3` 錯誤）＋優先序/結合性判例表；空白容忍；未知識別字 → 錯誤含位置與合法名單；`sin(1,2)` arity 錯誤；`chan(t)`、`chan(-1)` → 錯誤；> 512 節點 → 錯誤；`BoundarySpec` 擴充後三斷言仍綠 |
-| ☐ | **S3** 渲染器 | `ExprRenderSpec.hs` | roundtrip property：`parseExpr (renderExpr e) == Right e`（任意 `Expr`）；抽查判例：render 輸出最少括號且可讀（如 `Bin Add (Bin Mul …) …` → `a*b + c`） |
-| ☐ | **S4** 語意黃金判例 | `ExprGoldenSpec.hs` | 典型公式在固定 env 取樣點的期望值（誤差 1e-5）：脈衝 `abs(sin(t*pi))`、衰減 `(1 - life)^2`、每粒子相位 `sin(t*6.0 + chan(0)*6.28318)`、`clamp` 邊界值；黃金判例同時驗證 §4.3 語意表與實作一致 |
+| ✅ | **S1** AST 與求值器 | `ExprEvalSpec.hs` | 代數判例（加乘單位元、`Neg . Neg == id` 語意）；三變數查值；`Chan n` 求值 == `hashChan seed pindex n`（property）；同 `(Expr, env)` 兩次求值 bit-for-bit 相等（property）；任意 `Expr` × 任意 env → `evalFinite` 恆有限（property，含刻意生成 `Div`/`Pow`/`FSqrt` 的 NaN/Inf 路徑）；`exprSize` 判例；數百節點深樹求值完成 |
+| ✅ | **S2** 剖析器與守門 | `ExprParseSpec.hs` | §4.4 三判例（`-x^2`、`2^3^2`、`2^-3` 錯誤）＋優先序/結合性判例表；空白容忍；未知識別字 → 錯誤含位置與合法名單；`sin(1,2)` arity 錯誤；`chan(t)`、`chan(-1)` → 錯誤；> 512 節點 → 錯誤；`BoundarySpec` 擴充後三斷言仍綠 |
+| ✅ | **S3** 渲染器 | `ExprRenderSpec.hs` | roundtrip property：`parseExpr (renderExpr e) == Right e`（任意 `Expr`）；抽查判例：render 輸出最少括號且可讀（如 `Bin Add (Bin Mul …) …` → `a*b + c`） |
+| ✅ | **S4** 語意黃金判例 | `ExprGoldenSpec.hs` | 典型公式在固定 env 取樣點的期望值（誤差 1e-5）：脈衝 `abs(sin(t*pi))`、衰減 `(1 - life)^2`、每粒子相位 `sin(t*6.0 + chan(0)*6.28318)`、`clamp` 邊界值；黃金判例同時驗證 §4.3 語意表與實作一致 |
 
 規則同前：**一個 Todo 打勾的前提是對應測試存在且綠**。0001 既有十個測試模組是回歸防線，全程必須保持綠（本 spec 與 0002 零共同模組，互不影響對方回歸）。
 
@@ -245,7 +245,13 @@ flowchart LR
 
 | 項目 | 日期 | 結果 |
 |---|---|---|
-| `cabal test` 全綠（0001 回歸＋本 spec 四個測試模組） | | |
-| `BoundarySpec` 擴充後三斷言綠（megaparsec 只進 boundary） | | |
-| megaparsec × GHC 9.14.1 × Windows 實際版本紀錄 | | |
-| 凍結的介面清單（重大基建交付必填：實際凍結的 AST 建構子語意、文字語法詞彙/優先序、`ExprEnv` 欄位、API 簽名，供 0004 引用） | | |
+| `cabal test` 全綠（0001 回歸＋本 spec 四個測試模組） | 2026-08-12 | ✅ 204 examples, 0 failures（全套件，含 0001/0002 回歸）；本 spec 四模組：ExprEvalSpec 27、ExprParseSpec 29、ExprRenderSpec 11（roundtrip property 1000 例）、ExprGoldenSpec 23；`cabal build all` 亦綠 |
+| `BoundarySpec` 擴充後三斷言綠（megaparsec 只進 boundary） | 2026-08-12 | ✅ 三斷言綠；megaparsec、parser-combinators 僅入 `magic-boundary`；`magic-core` build-depends 零變更（白名單 {base, vector, deepseq} 不動） |
+| megaparsec × GHC 9.14.1 × Windows 實際版本紀錄 | 2026-08-12 | megaparsec **9.8.1** × parser-combinators **1.3.1** × GHC 9.14.1 × Windows 11——直接解依賴成功，**無需 allow-newer** |
+| 凍結的介面清單（重大基建交付必填：實際凍結的 AST 建構子語意、文字語法詞彙/優先序、`ExprEnv` 欄位、API 簽名，供 0004 引用） | 2026-08-12 | 見下方清單 |
+
+**凍結的介面清單**（0004 起引用；擴充僅依 §4.5 加建構子式）：
+
+- `Magic.Expr`（core）：`Expr(..)`（`Lit`／`Var`／`Chan`／`Neg`／`Bin`／`Fun1`／`Fun2`／`Fun3`）、`Var(..)`、`BinOp(..)`、`Fun1(..)`、`Fun2(..)`、`Fun3(..)`，語意如 §4.3（含 `FFloor` 的 2²³ 規則、`Chan n` = `hashChan envSeed envPIndex n`）；`ExprEnv(envT, envLife, envPIndex, envSeed)`；`evalExpr :: Expr -> ExprEnv -> Float`（IEEE 全函數）、`evalFinite :: Expr -> ExprEnv -> Float`（NaN/±Inf → 0，取樣端唯一入口）、`exprSize :: Expr -> Int`
+- `Magic.Expr.Parse`（boundary）：`parseExpr :: Text -> Either ExprParseError Expr`、`renderExpr :: Expr -> Text`（合約＝roundtrip property）、`renderExprParseError :: ExprParseError -> String`（含行列位置）、`maxExprNodes = 512`（語意凍結，值可由後續 spec 上調）
+- 文字語法：§4.4 詞彙（`t`／`life`／`pindex`／`pi`；`sin` `cos` `abs` `sqrt` `floor` `sign`｜`min` `max`｜`clamp`｜`chan` 限非負整數字面量）與優先序表（原子 > `^` 右結合 > 一元 `-` > `*` `/` 左 > `+` `-` 左）；判例 `-x^2 = -(x^2)`、`2^3^2 = 512`、`2^-3` 語法錯誤——已由 ExprParseSpec／ExprRenderSpec 機械證明
