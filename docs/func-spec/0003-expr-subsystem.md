@@ -109,7 +109,8 @@ data Fun3  = FClamp                                       deriving (Eq, Show, En
 
 ```haskell
 data ExprEnv = ExprEnv
-  { envT      :: !Float   -- 施法後秒數（取樣端由 Time/Double 窄化）
+  { envT      :: !Float   -- 時間（秒，取樣端由 Time/Double 窄化）；預設語意＝施法後秒數，
+                          --   呼叫端實際餵入的時間框架由接線 spec 的變數語意表定義（0004 §4.4）
   , envLife   :: !Float   -- 粒子正規化生命 0..1
   , envPIndex :: !Int     -- 粒子索引
   , envSeed   :: !Seed    -- 施法 seed（CastContext.seed）
