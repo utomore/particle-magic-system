@@ -1,6 +1,6 @@
 # Func-Spec 0002：魔法陣結構與解釋器（Circle Structure & Interpreter）
 
-> 狀態：設計定案，待實作
+> 狀態：已完成（2026-08-12，驗收紀錄見 §10）
 > 性質：**重大基建功能** —— 本 spec 定義真實的 `Circle` 結構 ADT、符文型別、`CompiledSpell` 內部結構（`EmitterSpec`／`Motion`／`Appearance`）與 JSON 完整槽位 schema，是 spec 0003（Expr 子系統）、生命週期 spec、力場 spec 的共同地基。本 spec 完成驗收前，依賴它的 spec 不得動工；完成後 §4 未標 ⚠ 的永久型別即凍結（可擴充 sum 的擴充合約見 §2）。
 > 前置依賴：spec 0001（**已完成**，2026-08-12 驗收）—— 0001 為重大基建，其驗收紀錄中的「凍結介面清單」與五條實作期修訂是本 spec 的起點（§0 已據實對齊）。
 > 依據：[architecture.md](../architecture.md) §3.1、§4.1–§4.4、§5.1、§6；ADR-0002、0003、0005
@@ -394,14 +394,14 @@ IO 分界與 0001 完全相同：本 spec 的所有新程式碼都在純核心�
 
 | ✅ | Todo | 測試（`test/` 下） | 測試內容（完成即斷言） |
 |---|---|---|---|
-| ☐ | **S1** 結構 ADT | `CircleSpec.hs` | `emptyCircle` 全槽 `Nothing`；`TwoOf`／`Nodes` 建構與存取；`V2` 運算；`basisFromNormal` property：回傳基底與法線兩兩正交、皆為單位長（任意非零法線） |
-| ☐ | **S2** Codec 完整 schema | `CircleCodecSpec.hs` | 任意 `Circle` roundtrip property（`decode . encode == id`，需 Arbitrary instance）；`"circle":{}` 與 0001 `empty.json` 位元組原樣可載入且解為 `emptyCircle`；未知 rune tag／槽位錯置 tag／非法參數（負半徑、`rInner ≥ rOuter`、`power ≤ 0`）→ 錯誤且訊息含位置；`outer` 長度 3 → 錯誤 |
-| ☐ | **S3** 形狀取樣器 | `ShapeSpec.hs` | property（任意索引/通道）：`Ring` 取樣點半徑 ∈ [rInner, rOuter]；`Diamond` 取樣點 `|x|+|y| ≤ size`；`HollowSquare` 取樣點在邊帶上（中心空腔無點）；`Rect` 在界內；同輸入確定性 |
-| ☐ | **S4** 包絡與軌跡求值 | `EnvelopeSpec.hs` | 排程邊界：`t < envDelay` 無粒子存活、窗口結束後最後一批於 `spellLifetime` 死盡；粒子 i 首生時刻公式；`Forward`：位移 == 方向×speed×age；`Spiral` 半徑恆定＝radius；`Orbit` 不沿法線前進 |
-| ☐ | **S5** fold 核心→內圈 | `CompileCoreSpec.hs` | 空核心 → Neutral 預設（素放參數表 §4.5 逐欄位相等）；每個 `Element` 查表得預期 `Appearance`；`emCount == round(power×256)` 且 clamp；四節點 bias → `motDrift` 向量和；內圈同類覆蓋規則（兩個 TrajectoryRune → 外側層勝出） |
-| ☐ | **S6** fold 夾層→外圈 | `CompileFoldSpec.hs` | `PhaseRune s` → `envDelay` 恰增加 s（其餘欄位不變）；`ShapeRune` → `SpawnOnShape`；`RadiateRune` → `motRadiation` 覆蓋；`spellBudget == emCount`；`power` 過大 → `Left (BudgetExceeded …)`；`spellLifetime == delay+duration+lifetime` |
-| ☐ | **S7** 取樣真實化 | `SampleSpec.hs` | 同 `(Seed, t)` 兩次取樣 bit-for-bit 相等；buffer 不變量恆真、count ≤ budget；包絡窗口外零粒子；**空陣素放等價**：`compile emptyCircle` 的取樣符合 §4.5 常數表（窗口內滿編 256、速度 4.0、散佈 1.6、白色、尺寸 0.05），且 0001 `PipelineSpec`／`AcceptanceSpec` 不變綠；`SpawnOnShape Ring` 的粒子出生位置投影回面座標後落在環帶內 |
-| ☐ | **S8** 端到端驗收 | `Acceptance2Spec.hs` ＋ 手動 smoke | 自動：三份範例 asset 各 headless 跑 N 幀（JSON bytes → FrameOutput 非空 → finished）；三者輸出可區分（粒子位置分佈／顏色欄位兩兩不同）。手動：開窗依序載入三份範例目視差異、改 JSON 熱重載生效，結果記錄於 §10 |
+| ✅ | **S1** 結構 ADT | `CircleSpec.hs` | `emptyCircle` 全槽 `Nothing`；`TwoOf`／`Nodes` 建構與存取；`V2` 運算；`basisFromNormal` property：回傳基底與法線兩兩正交、皆為單位長（任意非零法線） |
+| ✅ | **S2** Codec 完整 schema | `CircleCodecSpec.hs` | 任意 `Circle` roundtrip property（`decode . encode == id`，需 Arbitrary instance）；`"circle":{}` 與 0001 `empty.json` 位元組原樣可載入且解為 `emptyCircle`；未知 rune tag／槽位錯置 tag／非法參數（負半徑、`rInner ≥ rOuter`、`power ≤ 0`）→ 錯誤且訊息含位置；`outer` 長度 3 → 錯誤 |
+| ✅ | **S3** 形狀取樣器 | `ShapeSpec.hs` | property（任意索引/通道）：`Ring` 取樣點半徑 ∈ [rInner, rOuter]；`Diamond` 取樣點 `|x|+|y| ≤ size`；`HollowSquare` 取樣點在邊帶上（中心空腔無點）；`Rect` 在界內；同輸入確定性 |
+| ✅ | **S4** 包絡與軌跡求值 | `EnvelopeSpec.hs` | 排程邊界：`t < envDelay` 無粒子存活、窗口結束後最後一批於 `spellLifetime` 死盡；粒子 i 首生時刻公式；`Forward`：位移 == 方向×speed×age；`Spiral` 半徑恆定＝radius；`Orbit` 不沿法線前進 |
+| ✅ | **S5** fold 核心→內圈 | `CompileCoreSpec.hs` | 空核心 → Neutral 預設（素放參數表 §4.5 逐欄位相等）；每個 `Element` 查表得預期 `Appearance`；`emCount == round(power×256)` 且 clamp；四節點 bias → `motDrift` 向量和；內圈同類覆蓋規則（兩個 TrajectoryRune → 外側層勝出） |
+| ✅ | **S6** fold 夾層→外圈 | `CompileFoldSpec.hs` | `PhaseRune s` → `envDelay` 恰增加 s（其餘欄位不變）；`ShapeRune` → `SpawnOnShape`；`RadiateRune` → `motRadiation` 覆蓋；`spellBudget == emCount`；`power` 過大 → `Left (BudgetExceeded …)`；`spellLifetime == delay+duration+lifetime` |
+| ✅ | **S7** 取樣真實化 | `SampleSpec.hs` | 同 `(Seed, t)` 兩次取樣 bit-for-bit 相等；buffer 不變量恆真、count ≤ budget；包絡窗口外零粒子；**空陣素放等價**：`compile emptyCircle` 的取樣符合 §4.5 常數表（窗口內滿編 256、速度 4.0、散佈 1.6、白色、尺寸 0.05），且 0001 `PipelineSpec`／`AcceptanceSpec` 不變綠；`SpawnOnShape Ring` 的粒子出生位置投影回面座標後落在環帶內 |
+| ✅ | **S8** 端到端驗收 | `Acceptance2Spec.hs` ＋ 手動 smoke | 自動：三份範例 asset 各 headless 跑 N 幀（JSON bytes → FrameOutput 非空 → finished）；三者輸出可區分（粒子位置分佈／顏色欄位兩兩不同）。手動：開窗依序載入三份範例目視差異、改 JSON 熱重載生效，結果記錄於 §10 |
 
 規則同 0001：**一個 Todo 打勾的前提是對應測試存在且綠**。0001 既有的十個測試模組是本輪的回歸防線，全程必須保持綠。
 
@@ -420,8 +420,47 @@ IO 分界與 0001 完全相同：本 spec 的所有新程式碼都在純核心�
 
 | 項目 | 日期 | 結果 |
 |---|---|---|
-| S8：三份範例魔法陣目視可辨識差異 | | |
-| S8：熱重載目視驗收 | | |
-| 0001 既有測試回歸全綠（含 `AcceptanceSpec` 素放滿編斷言） | | |
-| `cabal test` 全綠 | | |
-| 凍結的介面清單（重大基建交付必填：列出實際凍結的永久型別、可擴充 sum 的既有建構子語意、JSON schema tag 集，供下游 spec 引用） | | |
+| S8：三份範例魔法陣目視可辨識差異 | 2026-08-12 | ✅ 開窗逐一載入（截圖驗證）：素放＝白色噴泉；ring-fire＝橙紅火粒、環形出生、螺旋上升；square-burst＝黃白→紫雷粒、口字形出生、radial-outward 水平爆散；spiral-spark＝水藍粒、菱形出生、貼面環繞＋北向漂移。四者一眼可辨 |
+| S8：熱重載目視驗收 | 2026-08-12 | ✅ 程式執行中依序以三份範例內容覆寫 `empty.json`，每次 0.5s 內重新施法生效；結束後 `empty.json` 位元組原樣復原 |
+| 0001 既有測試回歸全綠（含 `AcceptanceSpec` 素放滿編斷言） | 2026-08-12 | ✅ 0001 全部測試模組未動且全綠；`AcceptanceSpec` 的 `particleCounts !! 200 == 256` 斷言照舊通過 |
+| `cabal test` 全綠 | 2026-08-12 | ✅ 115 examples, 0 failures（0001 既有＋本輪 8 個新測試模組）；`cabal build all` 乾淨（僅 0001 遺留的兩個 app 層 warning） |
+| 凍結的介面清單（重大基建交付必填：列出實際凍結的永久型別、可擴充 sum 的既有建構子語意、JSON schema tag 集，供下游 spec 引用） | 2026-08-12 | ✅ 見下方清單 |
+
+### 凍結的介面清單（本 spec 交付新增；0001 清單全數仍有效）
+
+**永久型別（簽名凍結，只可加欄位／加建構子）**
+
+| 介面 | 內容 |
+|---|---|
+| `Magic.Types` 追加 | `V2(..)`（Num 實例；面座標 x＝面右、y＝面上）、`basisFromNormal :: V3 -> (V3, V3)`（0001 噴泉基底規則原樣抽取：法線 x 分量絕對值 < 0.9 取 X 軸、否則取 Y 軸，再兩次 cross；素放等價依賴此規則） |
+| `Magic.Circle` | `Circle(..)`、`TwoOf(..)`（ringA＝內側層、ringB＝外側層）、`Core(..)`、`Nodes(..)`（north/south/east/west）、`emptyCircle`；環層數結構 外2／夾1／內2／核心 為硬合約 |
+| `Magic.Compile` | `CompiledSpell` 加 `spellEmitters :: Vector EmitterSpec`（本輪恆長度 1）；`EmitterSpec(..)`、`Anchor(..)`（施法者座標系，+Z＝casterFacing；骨架期 offset＝0、normal＝+Z）、`Envelope(..)`、`Motion(..)`、`SpawnPattern(..)`、`Appearance(..)`、`ColorRamp(..)`（0xRRGGBBAA 端點線性插值）、`BlendMode(..)`（定義自 `Magic.Interface` 移入核心，Interface 照舊 re-export——對外簽名不變）、`budgetCap = 4096`、`spellBlend`；`compile` 的 `Either` 介面沿用；`particleLifetime` export 已依規格移除 |
+| `Magic.Particle.Analytic` | `sample` 簽名不變；新增永久擴充點 `sampleShape :: FaceShape -> Int -> Int -> V2`（內部固定 shape seed，消耗通道 c..c+2；出生點是「畫出的面」的性質、不隨 cast seed 變），與排程／軌跡求值 `firstBirth`、`particleAge`、`trajectoryOffset` |
+
+**可擴充 sum（既有建構子語意與 JSON tag 凍結；加建構子＝合法擴充）**
+
+- `OuterRune = ShapeRune FaceShape | RadiateRune RadiationMode`
+- `FaceShape = HollowSquare size | Rect V2 | Ring rInner rOuter | Diamond size`
+- `RadiationMode = AlongNormal | RadialOutward`（RadialOutward 出生點在中心時退化為法線方向）
+- `BridgeRune = PhaseRune Seconds`（語意：`envDelay += shift`）
+- `InnerRune = TrajectoryRune Trajectory | TimingRune Envelope`
+- `Trajectory = Forward speed | Spiral speed radius freq | Orbit radius freq`
+- `Element = Neutral | Fire | Water | Lightning`（查表在 `elementAppearance`，影響面封閉）
+- `NodeRune = DirBias strength`（面座標常數漂移速度偏置；north＝+y、east＝+x）
+- `CompileError = BudgetExceeded requested cap`
+
+**JSON v1 tag 集（未知 tag＝載入錯誤，錯誤含位置與該槽位合法 tag 清單）**
+
+- 符文 `rune`：外圈 `shape`｜`radiate`；夾層 `phase`；內圈 `trajectory`｜`timing`；節點 `dir-bias`
+- 形狀 `kind`：`hollow-square`(size)｜`rect`(w,h)｜`ring`(rInner,rOuter)｜`diamond`(size)
+- 軌跡 `kind`：`forward`(speed)｜`spiral`(speed,radius,freq)｜`orbit`(radius,freq)
+- `mode`：`along-normal`｜`radial-outward`；`element`：`neutral`｜`fire`｜`water`｜`lightning`
+- 規則：缺鍵＝null＝空槽；`outer`／`inner` 為 0–2 長度陣列（索引 0＝ringA）；參數驗證在 Codec 層（幾何 > 0、`rInner < rOuter`、`power > 0`、包絡 ≥ 0 且 `lifetime > 0`、`shift ≥ 0`、螺旋／環繞 `radius > 0`）
+
+**實作期修訂（與 §4 呈現的差異，均不影響對外合約）**
+
+1. `Envelope` 的定義位置在 `Magic.Rune`（它是 `TimingRune` 的酬載，放 `Magic.Compile` 會造成 Rune↔Compile 模組循環），由 `Magic.Compile` re-export——下游一律 `import Magic.Compile (Envelope(..))` 即可，與 §4.4 的呈現一致。
+2. `BlendMode` 定義自 `Magic.Interface` 移入 `Magic.Compile`（`Appearance` 需要它，核心不能 import 邊界層），`Magic.Interface` 照舊 re-export；外殼與 0001 測試零修改。
+3. 新增核心輔助 `spellBlend :: CompiledSpell -> BlendMode` 供 `stepSpell` 決定 batch 混合模式（magic-boundary 依賴清單不含 vector，不能自行走訪 `spellEmitters`）。
+4. `sampleShape` 位於 `Magic.Particle.Analytic`（§2 的獨立純函數）；隨機性用內部固定 seed 而非 cast seed——同一魔法陣的出生圖樣固定，per-cast 變化走 cast seed 的漂移／相位通道。
+5. `Spiral`／`Orbit` 的每粒子角度相位由 cast seed 通道 2 錯開（§2「相位錯開全走 seed 雜湊通道」的落地）；cast seed 通道 0/1 仍為素放橫向漂移（0001 語意）。

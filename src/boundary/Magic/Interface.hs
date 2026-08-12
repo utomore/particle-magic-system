@@ -39,7 +39,13 @@ module Magic.Interface
   ) where
 
 import Magic.Circle (Circle, emptyCircle)
-import Magic.Compile (CompileError (..), CompiledSpell (..), compile)
+import Magic.Compile
+  ( BlendMode (..)
+  , CompileError (..)
+  , CompiledSpell (..)
+  , compile
+  , spellBlend
+  )
 import Magic.Particle.Analytic (sample)
 import Magic.Particle.Buffer (ParticleBuffer (..))
 import Magic.Types
@@ -50,10 +56,6 @@ import Magic.Types
   , Time (..)
   , V3 (..)
   )
-
--- | How a batch should be blended by the renderer.
-data BlendMode = BlendAlpha | BlendAdditive
-  deriving (Eq, Show)
 
 -- | Billboard geometry hint for the renderer.
 data BillboardShape = BillboardSquare
@@ -106,7 +108,7 @@ stepSpell (FrameInput (DeltaTime dt)) spell =
       batch =
         RenderBatch
           { rbParticles = buffer
-          , rbBlend = BlendAlpha
+          , rbBlend = spellBlend (asSpell spell)
           , rbShape = BillboardSquare
           }
    in (spell', FrameOutput {batches = [batch]})

@@ -11,6 +11,10 @@ module Magic.Types
   , norm
   , normalize
 
+    -- * Face plane (spec 0002 §4.3)
+  , V2 (..)
+  , basisFromNormal
+
     -- * Time and randomness
   , Time (..)
   , DeltaTime (..)
@@ -74,6 +78,35 @@ normalize v =
   let n = norm v
    in if n == 0 then V3 0 0 0 else vscale (1 / n) v
 {-# INLINE normalize #-}
+
+-- | A point in the initial face plane (the drawn 2D magic circle):
+-- x = face right, y = face up, mapped to world space via 'basisFromNormal'.
+data V2 = V2 !Float !Float
+  deriving (Eq, Show)
+
+-- | Componentwise arithmetic; 'fromInteger' broadcasts to both components.
+instance Num V2 where
+  V2 ax ay + V2 bx by = V2 (ax + bx) (ay + by)
+  V2 ax ay - V2 bx by = V2 (ax - bx) (ay - by)
+  V2 ax ay * V2 bx by = V2 (ax * bx) (ay * by)
+  negate (V2 x y) = V2 (negate x) (negate y)
+  abs (V2 x y) = V2 (abs x) (abs y)
+  signum (V2 x y) = V2 (signum x) (signum y)
+  fromInteger n = let f = fromInteger n in V2 f f
+
+-- | Deterministic orthonormal basis of the plane perpendicular to a
+-- normal: @basisFromNormal n = (u, w)@ with @u ⟂ w ⟂ n@, both unit
+-- length. Extracted verbatim from the 0001 fountain sampler (reference
+-- axis: X while @|n_x| < 0.9@, otherwise Y, then two crosses) — the
+-- plain-discharge equivalence of spec 0002 relies on this exact rule.
+basisFromNormal :: V3 -> (V3, V3)
+basisFromNormal n0 =
+  let n = normalize n0
+      V3 nx _ _ = n
+      refAxis = if abs nx < 0.9 then V3 1 0 0 else V3 0 1 0
+      u = normalize (cross n refAxis)
+      w = cross n u
+   in (u, w)
 
 -- | Seconds since the spell was cast.
 newtype Time = Time Double
