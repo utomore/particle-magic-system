@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "name": "square-burst",
+  "circle": {
+    "outer": [
+      { "rune": "shape", "shape": { "kind": "hollow-square", "size": 2.4 } },
+      { "rune": "radiate", "mode": "radial-outward" }
+    ],
+    "inner": [
+      { "rune": "trajectory", "kind": "forward", "speed": 9.0 },
+      { "rune": "timing", "delay": 0.0, "duration": 3.0, "lifetime": 0.9 }
+    ],
+    "core": {
+      "center": { "element": "lightning", "power": 1.25 }
+    }
+  }
+}

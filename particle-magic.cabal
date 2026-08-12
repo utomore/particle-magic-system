@@ -15,6 +15,7 @@ library magic-core
     hs-source-dirs:   src/core
     exposed-modules:  Magic.Types
                       Magic.Particle.Buffer
+                      Magic.Rune
                       Magic.Circle
                       Magic.Compile
                       Magic.Particle.Analytic
@@ -67,6 +68,14 @@ test-suite spec
     hs-source-dirs:   test, app
     other-modules:    BoundarySpec
                     , TypesSpec
+                    , CircleSpec
+                    , CircleCodecSpec
+                    , ShapeSpec
+                    , EnvelopeSpec
+                    , CompileCoreSpec
+                    , CompileFoldSpec
+                    , SampleSpec
+                    , Acceptance2Spec
                     , BufferSpec
                     , CodecSpec
                     , PipelineSpec

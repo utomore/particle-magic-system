@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "name": "ring-fire",
+  "circle": {
+    "outer": [
+      { "rune": "shape", "shape": { "kind": "ring", "rInner": 1.0, "rOuter": 1.5 } },
+      { "rune": "radiate", "mode": "along-normal" }
+    ],
+    "bridge": { "rune": "phase", "shift": 0.5 },
+    "inner": [
+      { "rune": "trajectory", "kind": "spiral", "speed": 6.0, "radius": 0.4, "freq": 2.0 },
+      { "rune": "timing", "delay": 0.0, "duration": 4.0, "lifetime": 2.0 }
+    ],
+    "core": {
+      "center": { "element": "fire", "power": 1.5 },
+      "nodes": {
+        "north": { "rune": "dir-bias", "strength": 0.4 },
+        "south": null,
+        "east": null,
+        "west": null
+      }
+    }
+  }
+}

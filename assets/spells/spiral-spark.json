@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "name": "spiral-spark",
+  "circle": {
+    "outer": [
+      { "rune": "shape", "shape": { "kind": "diamond", "size": 0.6 } }
+    ],
+    "inner": [
+      { "rune": "trajectory", "kind": "orbit", "radius": 1.4, "freq": 1.2 },
+      { "rune": "timing", "delay": 0.2, "duration": 6.0, "lifetime": 3.0 }
+    ],
+    "core": {
+      "center": { "element": "water", "power": 0.75 },
+      "nodes": {
+        "north": { "rune": "dir-bias", "strength": 1.5 }
+      }
+    }
+  }
+}
