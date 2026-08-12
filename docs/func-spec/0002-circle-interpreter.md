@@ -1,10 +1,10 @@
 # Func-Spec 0002：魔法陣結構與解釋器（Circle Structure & Interpreter）
 
 > 狀態：已完成（2026-08-12，驗收紀錄見 §10）
-> 性質：**重大基建功能** —— 本 spec 定義真實的 `Circle` 結構 ADT、符文型別、`CompiledSpell` 內部結構（`EmitterSpec`／`Motion`／`Appearance`）與 JSON 完整槽位 schema，是 spec 0003（Expr 子系統）、生命週期 spec、力場 spec 的共同地基。本 spec 完成驗收前，依賴它的 spec 不得動工；完成後 §4 未標 ⚠ 的永久型別即凍結（可擴充 sum 的擴充合約見 §2）。
+> 性質：**重大基建功能** —— 本 spec 定義真實的 `Circle` 結構 ADT、符文型別、`CompiledSpell` 內部結構（`EmitterSpec`／`Motion`／`Appearance`）與 JSON 完整槽位 schema，是 Expr 符文接線 spec（0004）、生命週期 spec、力場 spec 的共同地基。本 spec 完成驗收前，依賴它的 spec 不得動工；完成後 §4 未標 ⚠ 的永久型別即凍結（可擴充 sum 的擴充合約見 §2）。
 > 前置依賴：spec 0001（**已完成**，2026-08-12 驗收）—— 0001 為重大基建，其驗收紀錄中的「凍結介面清單」與五條實作期修訂是本 spec 的起點（§0 已據實對齊）。
 > 依據：[architecture.md](../architecture.md) §3.1、§4.1–§4.4、§5.1、§6；ADR-0002、0003、0005
-> 範圍：把魔法陣從空殼變成真語意——真實 `Circle` 結構、**參數層**符文子集、由內而外解釋器、真實解析取樣、完整槽位 JSON schema。**不含 Expr 數學式子系統**（四種 Expr 符文留給 spec 0003，見 §9）。
+> 範圍：把魔法陣從空殼變成真語意——真實 `Circle` 結構、**參數層**符文子集、由內而外解釋器、真實解析取樣、完整槽位 JSON schema。**不含 Expr 數學式子系統**（Expr 語言本身是 spec 0003、與本 spec 平行進行；四種 Expr 符文的接線留給 spec 0004，見 §9）。
 
 ---
 
@@ -141,14 +141,14 @@ emptyCircle :: Circle                       -- 全槽 Nothing（介面沿用 000
 
 ### 4.2 `Magic.Rune`（新模組；可擴充 sum）
 
-本輪只納入**參數層**符文（ADR-0002 第 2 層）；酬載為 `Expr` 的符文（`RangeRune`／`ConvergeRune`／`AmplifyRune`／`FormulaRune`）留給 spec 0003 以加建構子方式擴充。
+本輪只納入**參數層**符文（ADR-0002 第 2 層）；酬載為 `Expr` 的符文（`RangeRune`／`ConvergeRune`／`AmplifyRune`／`FormulaRune`）留給 spec 0004 以加建構子方式擴充（`Expr` 語言本身由 spec 0003 提供）。
 
 ```haskell
 -- 外圈：展現
 data OuterRune
   = ShapeRune   FaceShape          -- 初始面形狀（出生位置來源）
   | RadiateRune RadiationMode      -- 軌跡參考方向
-  -- ⚠ 0003 擴充：RangeRune Expr
+  -- ⚠ 0004 擴充：RangeRune Expr
 
 data FaceShape
   = HollowSquare !Double           -- 口字型（邊長；九宮格中心空）
@@ -163,13 +163,13 @@ data RadiationMode
 -- 夾層：調變
 data BridgeRune
   = PhaseRune !Seconds             -- 時序位移：整體包絡延後
-  -- ⚠ 0003 擴充：ConvergeRune Expr | AmplifyRune Expr
+  -- ⚠ 0004 擴充：ConvergeRune Expr | AmplifyRune Expr
 
 -- 內圈：行為
 data InnerRune
   = TrajectoryRune Trajectory      -- 內建軌跡
   | TimingRune     Envelope        -- 生成/持續時間包絡
-  -- ⚠ 0003 擴充：FormulaRune ExprV3
+  -- ⚠ 0004 擴充：FormulaRune ExprV3
 
 data Trajectory
   = Forward !Double                -- 直進：速度（單位/秒），方向由 RadiationMode 決定
@@ -324,7 +324,7 @@ data ModulatedProto -- 步驟 3 產物：包絡經 PhaseRune 位移後的 Behavi
 
 - **缺鍵＝`null`＝空槽**。`"circle": {}` 合法且解為 `emptyCircle`——0001 的 `empty.json` 不需修改。
 - `outer`／`inner` 為長度 0–2 的陣列，**索引 0 = 內側層（ringA）、索引 1 = 外側層（ringB）**；缺項補空槽；長度 >2 為載入錯誤。
-- 符文以 `"rune"` tag 辨識。本輪合法 tag：外圈 `shape`｜`radiate`、夾層 `phase`、內圈 `trajectory`｜`timing`、節點 `dir-bias`。**未知 tag（含 0003 的 `formula`、`converge` 等）＝載入錯誤**，錯誤訊息附 JSON 位置與該槽位的合法 tag 清單。所有本輪新增的錯誤（未知 tag、槽位錯置、非法參數）一律走 0001 已凍結的 `LoadError` 機制：以 aeson `Parser` 失敗回報為 `JsonError`（自帶 `$.circle.inner[0]` 式位置路徑），**不新增 `LoadError` 建構子**。
+- 符文以 `"rune"` tag 辨識。本輪合法 tag：外圈 `shape`｜`radiate`、夾層 `phase`、內圈 `trajectory`｜`timing`、節點 `dir-bias`。**未知 tag（含 0004 的 `formula`、`converge` 等）＝載入錯誤**，錯誤訊息附 JSON 位置與該槽位的合法 tag 清單。所有本輪新增的錯誤（未知 tag、槽位錯置、非法參數）一律走 0001 已凍結的 `LoadError` 機制：以 aeson `Parser` 失敗回報為 `JsonError`（自帶 `$.circle.inner[0]` 式位置路徑），**不新增 `LoadError` 建構子**。
 - 形狀 `kind`：`hollow-square`(size)｜`rect`(w,h)｜`ring`(rInner,rOuter)｜`diamond`(size)；軌跡 `kind`：`forward`(speed)｜`spiral`(speed,radius,freq)｜`orbit`(radius,freq)；`mode`：`along-normal`｜`radial-outward`；`element`：`neutral`｜`fire`｜`water`｜`lightning`。
 - 幾何參數必須為正數（`rInner < rOuter`）、`power > 0`、包絡三欄 ≥ 0 且 `lifetime > 0`——違者載入錯誤（在 Codec 層擋，核心不做防禦檢查）。
 
@@ -409,7 +409,7 @@ IO 分界與 0001 完全相同：本 spec 的所有新程式碼都在純核心�
 
 ## 9. 非目標（本 spec 明確不做）
 
-- **`Expr` AST、求值器、文字剖析**與四種 Expr 符文（`RangeRune`／`ConvergeRune`／`AmplifyRune`／`FormulaRune`）—— spec 0003。彼輪以「sum type 加建構子＋fold 加 case＋Codec 加 tag」擴充，本輪的可擴充 sum 合約（§2）已為此鋪路
+- **`Expr` AST、求值器、文字剖析** —— spec 0003（Expr 語言本身；不依賴本 spec，與本 spec 平行進行）。**四種 Expr 符文**（`RangeRune`／`ConvergeRune`／`AmplifyRune`／`FormulaRune`）的接線 —— spec 0004（前置依賴：本 spec 與 0003 皆已完成），以「sum type 加建構子＋fold 加 case＋Codec 加 tag」擴充，本輪的可擴充 sum 合約（§2）已為此鋪路
 - **生命週期四階段**（Drawing/Converging/Casting/Dissipating）、`PhasePlan`、陣形幾何發射器（fold 步驟 5）、`EmitterSpec.phase` 欄位 —— 生命週期 spec
 - 力場層（`ForceField`／`FieldState`）
 - `CompiledSpell` 的 `Semigroup`（多陣合併）
