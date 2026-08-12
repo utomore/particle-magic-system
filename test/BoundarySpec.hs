@@ -4,7 +4,8 @@
 --
 --   * @magic-core@'s build-depends ⊆ {base, vector, deepseq}
 --   * the executable's build-depends do NOT include @magic-core@
---   * @magic-boundary@'s build-depends ⊆ core ∪ {aeson, bytestring, text}
+--   * @magic-boundary@'s build-depends ⊆ core ∪ {aeson, bytestring, text,
+--     megaparsec, parser-combinators} (the last two added by func-spec 0003)
 module BoundarySpec (spec) where
 
 import Data.Char (isSpace)
@@ -23,9 +24,9 @@ spec = describe "cabal package boundary (func-spec 0001 §3)" $ do
     deps `shouldSatisfy` all (\d -> depName d /= "magic-core")
     deps `shouldSatisfy` any (\d -> depName d == "magic-boundary")
 
-  it "magic-boundary only adds serialization deps {aeson, bytestring, text} over core" $ do
+  it "magic-boundary only adds serialization + parsing deps {aeson, bytestring, text, megaparsec, parser-combinators} over core" $ do
     deps <- stanzaDeps "library magic-boundary"
-    let allowed = ["base", "vector", "deepseq", "aeson", "bytestring", "text"]
+    let allowed = ["base", "vector", "deepseq", "aeson", "bytestring", "text", "megaparsec", "parser-combinators"]
     deps `shouldSatisfy` all (\d -> depName d `elem` allowed || depName d == "magic-core")
     deps `shouldSatisfy` any (\d -> depName d == "magic-core")
 

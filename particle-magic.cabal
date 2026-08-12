@@ -20,6 +20,7 @@ library magic-core
                       Magic.Compile
                       Magic.Particle.Analytic
                       Magic.Project
+                      Magic.Expr
     build-depends:    base
                     , vector
                     , deepseq
@@ -31,11 +32,14 @@ library magic-boundary
     exposed-modules:  Magic.Codec
                       Magic.Interface
                       Magic.Step
+                      Magic.Expr.Parse
     build-depends:    base
                     , particle-magic:magic-core
                     , aeson
                     , bytestring
                     , text
+                    , megaparsec
+                    , parser-combinators
     default-language: GHC2021
     ghc-options:      -Wall
 
@@ -83,6 +87,11 @@ test-suite spec
                     , EffectsSpec
                     , HotReloadSpec
                     , AcceptanceSpec
+                    , ExprGen
+                    , ExprEvalSpec
+                    , ExprParseSpec
+                    , ExprRenderSpec
+                    , ExprGoldenSpec
                     , App.Effects
                     , App.HotReload
                     , App.Loop
@@ -98,6 +107,7 @@ test-suite spec
                     , directory
                     , time
                     , containers
+                    , text
     build-tool-depends: hspec-discover:hspec-discover
     default-language: GHC2021
     ghc-options:      -Wall -threaded

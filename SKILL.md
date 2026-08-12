@@ -70,5 +70,5 @@
 |---|---|---|---|---|
 | [0001](docs/func-spec/0001-framework-skeleton.md) | 框架搭建（walking skeleton）：套件邊界、IO/核心邊界、端到端資料流 | **重大基建功能** | 無 | 已完成 |
 | [0002](docs/func-spec/0002-circle-interpreter.md) | 魔法陣結構與解釋器：Circle ADT、參數層符文、由內而外 fold、真實取樣、完整槽位 JSON schema | **重大基建功能** | spec 0001（已完成） | 已完成 |
-| [0003](docs/func-spec/0003-expr-subsystem.md) | Expr 數學式子系統：封閉一階 AST、樸素求值器、文字語法剖析（megaparsec）、渲染器；不含符文接線 | **重大基建功能** | spec 0001（已完成）；不依賴 0002 | 設計定案，待實作 |
+| [0003](docs/func-spec/0003-expr-subsystem.md) | Expr 數學式子系統：封閉一階 AST、樸素求值器、文字語法剖析（megaparsec）、渲染器；不含符文接線 | **重大基建功能** | spec 0001（已完成）；不依賴 0002 | 已完成 |
 | 0004（預定） | Expr 符文接線：`RangeRune`/`ConvergeRune`/`AmplifyRune`/`FormulaRune`、`ExprV3`、fold 加 case、Codec 加 tag | 一般 | spec 0002（已完成）＋0003（需已完成） | 未撰寫 |
