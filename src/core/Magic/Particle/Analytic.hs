@@ -11,6 +11,14 @@
 -- exactly the 0001 fountain channels; channel 2: trajectory phase
 -- stagger), so the same @(spell, ctx, t)@ always yields a bit-for-bit
 -- identical buffer.
+--
+-- Spec 0004 wires the Expr runes in at three insertion points (§4.5) with
+-- the layered time frame of §4.4: the range curve scales the spawn offset
+-- (t = birth time, frozen at birth), the trajectory term may come from a
+-- formula (t = particle age), the converge curve multiplies the lateral
+-- component of the total displacement and the amplify curve multiplies
+-- the size (both t = seconds since cast). All evaluation goes through
+-- 'evalFinite' / 'evalFiniteV3' — any player formula yields finite values.
 module Magic.Particle.Analytic
   ( sample
 
@@ -36,6 +44,7 @@ import Magic.Compile
   , Motion (..)
   , SpawnPattern (..)
   )
+import Magic.Expr (ExprEnv (..), evalFinite, evalFiniteV3)
 import Magic.Rune (FaceShape (..), RadiationMode (..), Trajectory (..))
 import Magic.Types
   ( CastContext (..)
@@ -45,6 +54,7 @@ import Magic.Types
   , V2 (..)
   , V3 (..)
   , basisFromNormal
+  , dot
   , hashChan
   , norm
   , normalize
@@ -86,12 +96,15 @@ particleAge env count i (Time t)
 -- | Evaluate a trajectory at a particle age: @(travel along the axis,
 -- lateral offset in the axis' 'basisFromNormal' plane)@. @phase@ (radians)
 -- staggers the angular start of 'Spiral'/'Orbit'; 'Forward' ignores it.
+-- 'Formula' needs the particle's 'ExprEnv' and is evaluated by the sampler
+-- itself (spec 0004 §4.5); this env-free helper reports it as zero offset.
 trajectoryOffset :: Trajectory -> Float -> Float -> (Float, V2)
 trajectoryOffset trajectory phase age = case trajectory of
   Forward speed -> (realToFrac speed * age, V2 0 0)
   Spiral speed radius freq ->
     (realToFrac speed * age, circleAt radius freq)
   Orbit radius freq -> (0, circleAt radius freq)
+  Formula _ -> (0, V2 0 0)
   where
     circleAt radius freq =
       let theta = phase + 2 * pi * realToFrac freq * age
@@ -157,9 +170,10 @@ emitterParticles ctx t em =
   , Just age <- [particleAge env (emCount em) i t]
   ]
   where
+    Time seconds = t
     env = emSpawn em
-    Motion spawnPattern trajectory radiation drift = emMotion em
-    Appearance ramp size _blend = emAppearance em
+    Motion spawnPattern trajectory radiation drift mRange mConverge = emMotion em
+    Appearance ramp size _blend mAmplify = emAppearance em
     Seconds lifetime = envLifetime env
 
     -- Caster frame: +Z = facing, X/Y = the facing's face-plane basis.
@@ -176,10 +190,29 @@ emitterParticles ctx t em =
 
     particle i ageD =
       let age = realToFrac ageD :: Float
+          lifeFrac = realToFrac (ageD / lifetime) :: Float
 
+          -- Layered time frame (spec 0004 §4.4). Birth env: t = this
+          -- generation's spawn time, life = 0 (the value at the instant
+          -- of birth) — recomputed every frame but constant per birth.
+          birthEnv =
+            ExprEnv
+              { envT = realToFrac (seconds - ageD)
+              , envLife = 0
+              , envPIndex = i
+              , envSeed = seed ctx
+              }
+          -- Frame env for the modulation layer: t = seconds since cast.
+          frameEnv = birthEnv {envT = realToFrac seconds, envLife = lifeFrac}
+          -- Behavior-layer env for the formula trajectory: t = age.
+          ageEnv = frameEnv {envT = age}
+
+          -- §4.5 (1) Range: scale the shape sample point. Not clamped
+          -- (negative = mirrored); a no-op for SpawnAtAnchor (offset 0).
+          rangeScale = maybe 1 (`evalFinite` birthEnv) mRange
           V2 sx sy = case spawnPattern of
             SpawnAtAnchor _ -> V2 0 0
-            SpawnOnShape shape -> sampleShape shape i 0
+            SpawnOnShape shape -> vscale2 rangeScale (sampleShape shape i 0)
           spawnW = anchorW + vscale sx u + vscale sy w
 
           axis = case radiation of
@@ -189,10 +222,18 @@ emitterParticles ctx t em =
                in if norm outward < 1e-6 then faceNormal else normalize outward
           (au, aw) = basisFromNormal axis
 
-          phase = case trajectory of
-            Forward _ -> 0
-            _ -> 2 * pi * hashChan (seed ctx) i 2
-          (travel, V2 lx ly) = trajectoryOffset trajectory phase age
+          -- §4.5 (4) Formula replaces only the trajectory term; built-ins
+          -- keep the 0002 phase-stagger path bit-for-bit.
+          trajTerm = case trajectory of
+            Formula v3 ->
+              let V3 fx fy fz = evalFiniteV3 v3 ageEnv
+               in vscale fx au + vscale fy aw + vscale fz axis
+            _ ->
+              let phase = case trajectory of
+                    Forward _ -> 0
+                    _ -> 2 * pi * hashChan (seed ctx) i 2
+                  (travel, V2 lx ly) = trajectoryOffset trajectory phase age
+               in vscale travel axis + vscale lx au + vscale ly aw
 
           spreadDrift = case spawnPattern of
             SpawnAtAnchor spread ->
@@ -202,15 +243,27 @@ emitterParticles ctx t em =
             SpawnOnShape _ -> V3 0 0 0
           nodeDriftW = faceToWorld drift
 
-          position =
-            spawnW
-              + vscale travel axis
-              + vscale lx au
-              + vscale ly aw
-              + vscale age (spreadDrift + nodeDriftW)
+          rawPosition = spawnW + trajTerm + vscale age (spreadDrift + nodeDriftW)
 
-          lifeFrac = realToFrac (ageD / lifetime) :: Float
-       in (position, size, lifeFrac, rampColor ramp lifeFrac)
+          -- §4.5 (2) Converge: pos' = anchor + axial + k_c·trans, written
+          -- as pos − (1−k_c)·trans so k_c = 1 reproduces the unmodulated
+          -- position exactly.
+          position = case mConverge of
+            Nothing -> rawPosition
+            Just conv ->
+              let kc = evalFinite conv frameEnv
+                  r = rawPosition - anchorW
+                  axial = vscale (dot r axis) axis
+                  trans = r - axial
+               in rawPosition - vscale (1 - kc) trans
+
+          -- §4.5 (3) Amplify: negative curve values clamp to size 0.
+          finalSize = case mAmplify of
+            Nothing -> size
+            Just amp -> size * max 0 (evalFinite amp frameEnv)
+       in (position, finalSize, lifeFrac, rampColor ramp lifeFrac)
+
+    vscale2 s (V2 x y) = V2 (s * x) (s * y)
 
 -- | Linear interpolation of a packed 0xRRGGBBAA ramp over life ∈ [0, 1].
 rampColor :: ColorRamp -> Float -> Word32

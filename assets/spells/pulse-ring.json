@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "name": "pulse-ring",
+  "circle": {
+    "outer": [
+      { "rune": "shape", "shape": { "kind": "ring", "rInner": 1.0, "rOuter": 1.25 } },
+      { "rune": "range", "expr": "1 + sin(t*2)*0.5" }
+    ],
+    "bridge": { "rune": "amplify", "expr": "1 + sin(t*3)*0.5" },
+    "inner": [
+      { "rune": "trajectory", "kind": "forward", "speed": 0.5 },
+      { "rune": "timing", "delay": 0.0, "duration": 4.0, "lifetime": 1.0 }
+    ],
+    "core": {
+      "center": { "element": "water", "power": 1.5 },
+      "nodes": { "north": null, "south": null, "east": null, "west": null }
+    }
+  }
+}

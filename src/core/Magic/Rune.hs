@@ -7,8 +7,9 @@
 -- Every sum type here is an /extensible sum/ (spec 0002 §2): the meaning
 -- and JSON tag of each existing constructor are frozen, but later specs
 -- add constructors (plus an interpreter case and a codec tag) without
--- that counting as breaking the freeze. Spec 0003 adds the Expr-payload
--- runes (RangeRune / ConvergeRune / AmplifyRune / FormulaRune).
+-- that counting as breaking the freeze. Spec 0004 fills the reserved
+-- slots with the Expr-payload runes (RangeRune / ConvergeRune /
+-- AmplifyRune / FormulaRune); their meaning is frozen by 0004 §4.7.
 module Magic.Rune
   ( -- * Outer ring: presentation
     OuterRune (..)
@@ -29,6 +30,7 @@ module Magic.Rune
   , NodeRune (..)
   ) where
 
+import Magic.Expr (Expr, ExprV3)
 import Magic.Types (Seconds, V2)
 
 -- | Outer-ring runes: how the magic presents itself.
@@ -37,6 +39,9 @@ data OuterRune
     ShapeRune FaceShape
   | -- | Reference direction for trajectory travel.
     RadiateRune RadiationMode
+  | -- | Spawn-offset scale curve (spec 0004; t = this particle's birth
+    -- time, frozen at birth). A no-op without a 'ShapeRune'.
+    RangeRune Expr
   deriving (Eq, Show)
 
 -- | The drawn 2D face the spell is born on (face coordinates).
@@ -63,12 +68,21 @@ data RadiationMode
 data BridgeRune
   = -- | Timing shift: delays the whole spawn envelope.
     PhaseRune !Seconds
+  | -- | Lateral-convergence multiplier curve (spec 0004; t = seconds
+    -- since cast, whole-spell time): 0 = beam, 1 = untouched.
+    ConvergeRune Expr
+  | -- | Size-multiplier curve (spec 0004; t = seconds since cast;
+    -- negative values clamp to 0 at the sampler).
+    AmplifyRune Expr
   deriving (Eq, Show)
 
 -- | Inner-ring runes: how particles behave over their lifetime.
 data InnerRune
   = TrajectoryRune Trajectory
   | TimingRune Envelope
+  | -- | Custom trajectory formula (spec 0004; t = particle age). Same
+    -- rune kind as 'TrajectoryRune' for the override rule.
+    FormulaRune ExprV3
   deriving (Eq, Show)
 
 -- | Built-in trajectories, functions of particle age relative to the
@@ -81,6 +95,10 @@ data Trajectory
   | -- | Circle around the travel axis (radius, angular frequency);
     -- no travel along the axis.
     Orbit !Double !Double
+  | -- | Formula-driven offset (spec 0004 §4.5): displacement =
+    -- x·b_x + y·b_y + z·d in the travel frame, components evaluated
+    -- with t = particle age.
+    Formula ExprV3
   deriving (Eq, Show)
 
 -- | Spawn/lifetime envelope. Scheduling (the generalization of the 0001

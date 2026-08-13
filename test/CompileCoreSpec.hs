@@ -63,11 +63,12 @@ spec = describe "compile fold steps 1-2 (spec 0002 S5)" $ do
         { appColor = ColorRamp 0xFFFFFFFF 0xFFFFFFFF
         , appSize = 0.05
         , appBlend = BlendAlpha
+        , appAmplify = Nothing
         }
 
   it "each element looks up its own appearance; Neutral is 0001's white" $ do
     elementAppearance Neutral
-      `shouldBe` Appearance (ColorRamp 0xFFFFFFFF 0xFFFFFFFF) 0.05 BlendAlpha
+      `shouldBe` Appearance (ColorRamp 0xFFFFFFFF 0xFFFFFFFF) 0.05 BlendAlpha Nothing
     let looks = map elementAppearance [Neutral, Fire, Water, Lightning]
     -- All four table rows are distinct, and the essence reaches the emitter.
     length looks `shouldBe` 4

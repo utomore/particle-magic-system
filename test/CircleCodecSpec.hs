@@ -167,9 +167,13 @@ spec = describe "Magic.Codec full slot schema (spec 0002 S2)" $ do
           }
 
   it "rejects an unknown rune tag with the position and the valid tags" $
+    -- 0004 note: the original fixture tag "formula" became a valid inner
+    -- tag when spec 0004 landed; "essence" stays unknown. The assertion —
+    -- unknown tag → error with position and the valid-tag list — is
+    -- unchanged.
     shouldFailContaining
-      "{\"version\":1,\"circle\":{\"inner\":[{\"rune\":\"formula\"}]}}"
-      ["$.circle.inner[0]", "formula", "trajectory, timing"]
+      "{\"version\":1,\"circle\":{\"inner\":[{\"rune\":\"essence\"}]}}"
+      ["$.circle.inner[0]", "essence", "trajectory, timing"]
 
   it "rejects a misplaced tag (behavior rune in the outer ring)" $
     shouldFailContaining

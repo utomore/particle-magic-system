@@ -43,6 +43,7 @@ import Data.Maybe (fromMaybe)
 import qualified Data.Vector as V
 import Data.Word (Word32)
 import Magic.Circle (Circle (..), Core (..), Nodes (..), TwoOf (..))
+import Magic.Expr (Expr)
 import Magic.Rune
   ( BridgeRune (..)
   , Element (..)
@@ -106,6 +107,10 @@ data Motion = Motion
   , motDrift :: !V3
   -- ^ Constant drift velocity from node biases, in face coordinates
   -- (x = face right, y = face up, z = along the normal).
+  , motRange :: !(Maybe Expr)
+  -- ^ Spawn-offset scale curve (spec 0004); 'Nothing' = no modulation.
+  , motConverge :: !(Maybe Expr)
+  -- ^ Lateral-convergence curve (spec 0004); 'Nothing' = no modulation.
   }
   deriving (Eq, Show)
 
@@ -124,6 +129,8 @@ data Appearance = Appearance
   -- ^ Particle life fraction 0..1 → RGBA (linear interpolation).
   , appSize :: !Float
   , appBlend :: !BlendMode
+  , appAmplify :: !(Maybe Expr)
+  -- ^ Size-multiplier curve (spec 0004); 'Nothing' = no modulation.
   }
   deriving (Eq, Show)
 
@@ -172,10 +179,10 @@ defaultSpawn = SpawnAtAnchor 1.6
 -- 0001 plain discharge: solid white, alpha blend, size 0.05.
 elementAppearance :: Element -> Appearance
 elementAppearance element = case element of
-  Neutral -> Appearance (ColorRamp 0xFFFFFFFF 0xFFFFFFFF) 0.05 BlendAlpha
-  Fire -> Appearance (ColorRamp 0xFFD966FF 0xE6390000) 0.05 BlendAdditive
-  Water -> Appearance (ColorRamp 0x66CCFFFF 0x1A4DCC33) 0.05 BlendAlpha
-  Lightning -> Appearance (ColorRamp 0xFFFFCCFF 0x8033FF66) 0.05 BlendAdditive
+  Neutral -> Appearance (ColorRamp 0xFFFFFFFF 0xFFFFFFFF) 0.05 BlendAlpha Nothing
+  Fire -> Appearance (ColorRamp 0xFFD966FF 0xE6390000) 0.05 BlendAdditive Nothing
+  Water -> Appearance (ColorRamp 0x66CCFFFF 0x1A4DCC33) 0.05 BlendAlpha Nothing
+  Lightning -> Appearance (ColorRamp 0xFFFFCCFF 0x8033FF66) 0.05 BlendAdditive Nothing
 
 -- | Blend mode of the spell's render batch (first emitter's; the shell
 -- reads this through 'Magic.Interface').
@@ -193,11 +200,13 @@ data SpellSeed = SpellSeed
   , ssDrift :: !V3
   }
 
--- | Step 2/3 product: seed + behavior (trajectory, envelope).
+-- | Step 2/3 product: seed + behavior (trajectory, envelope) + the
+-- interlayer's motion-side modulation.
 data BehaviorProto = BehaviorProto
   { bpSeed :: !SpellSeed
   , bpTraject :: !Trajectory
   , bpEnvelope :: !Envelope
+  , bpConverge :: !(Maybe Expr)
   }
 
 -- The fold -------------------------------------------------------------------
@@ -266,22 +275,32 @@ defaultBehavior seed =
     { bpSeed = seed
     , bpTraject = defaultTrajectory
     , bpEnvelope = defaultEnvelope
+    , bpConverge = Nothing
     }
 
 -- | Fold step 2 — inner rings: behavior runes overwrite the defaults;
 -- same-kind runes let the outer layer (B) win because it is applied last.
+-- 'FormulaRune' is trajectory-kind (spec 0004 §4.3): it lands on the same
+-- 'bpTraject' field, so the override rule holds with no extra machinery.
 applyInner :: BehaviorProto -> InnerRune -> BehaviorProto
 applyInner proto rune = case rune of
   TrajectoryRune t -> proto {bpTraject = t}
   TimingRune e -> proto {bpEnvelope = e}
+  FormulaRune v3 -> proto {bpTraject = Formula v3}
 
 -- | Fold step 3 — the interlayer: modulation. 'PhaseRune' shifts the whole
--- envelope later; everything else about the behavior is untouched.
+-- envelope later; the Expr runes (spec 0004 §4.3) record their curves for
+-- the sampler; everything else about the behavior is untouched.
 applyBridge :: BehaviorProto -> BridgeRune -> BehaviorProto
-applyBridge proto (PhaseRune (Seconds shift)) =
-  let env = bpEnvelope proto
-      Seconds delay = envDelay env
-   in proto {bpEnvelope = env {envDelay = Seconds (delay + shift)}}
+applyBridge proto rune = case rune of
+  PhaseRune (Seconds shift) ->
+    let env = bpEnvelope proto
+        Seconds delay = envDelay env
+     in proto {bpEnvelope = env {envDelay = Seconds (delay + shift)}}
+  ConvergeRune e -> proto {bpConverge = Just e}
+  AmplifyRune e ->
+    let sd = bpSeed proto
+     in proto {bpSeed = sd {ssAppearance = (ssAppearance sd) {appAmplify = Just e}}}
 
 defaultMotion :: BehaviorProto -> Motion
 defaultMotion proto =
@@ -290,14 +309,17 @@ defaultMotion proto =
     , motTraject = bpTraject proto
     , motRadiation = AlongNormal
     , motDrift = ssDrift (bpSeed proto)
+    , motRange = Nothing
+    , motConverge = bpConverge proto
     }
 
 -- | Fold step 4 — outer rings: presentation runes overwrite the motion's
--- spawn pattern and radiation reference.
+-- spawn pattern, radiation reference and spawn-range curve.
 applyOuter :: Motion -> OuterRune -> Motion
 applyOuter motion rune = case rune of
   ShapeRune shape -> motion {motSpawn = SpawnOnShape shape}
   RadiateRune mode -> motion {motRadiation = mode}
+  RangeRune e -> motion {motRange = Just e}
 
 -- | Apply a ring's two layers in order: A (inner) first, then B (outer).
 foldRing :: (b -> a -> b) -> TwoOf (Maybe a) -> b -> b
