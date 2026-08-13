@@ -28,6 +28,7 @@ data ParticleBuffer = ParticleBuffer
 - 熱路徑（取樣、力場步進）是連續記憶體上的緊密迴圈：無 box、無指標追蹤、快取行利用率高，GHC 可有效 unbox/fuse。
 - GC 只見少數大型陣列而非十萬個小物件，minor GC 壓力趨近於零（配合緩衝重用）。
 - SoA 各欄位獨立成陣列，恰好對應 instanced rendering 的 per-instance attribute 佈局，FFI 零轉換。
+  ——**由 [ADR-0009](0009-dynamic-quad-mesh-rendering.md) 修訂**：渲染路徑實際採動態 quad mesh（instancing 經實證否決），每幀有一次 O(n) 的 CPU quad 展開；「零轉換」不再成立，但每幀 FFI 次數仍為 O(1)。
 
 **負面**：
 - **欄位佈局成為硬點**：加一個粒子屬性＝改 `ParticleBuffer`、取樣器、FFI 佈局三處（見 architecture.md §11）。
