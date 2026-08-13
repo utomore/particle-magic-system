@@ -72,3 +72,4 @@
 | [0002](docs/func-spec/0002-circle-interpreter.md) | 魔法陣結構與解釋器：Circle ADT、參數層符文、由內而外 fold、真實取樣、完整槽位 JSON schema | **重大基建功能** | spec 0001（已完成） | 已完成 |
 | [0003](docs/func-spec/0003-expr-subsystem.md) | Expr 數學式子系統：封閉一階 AST、樸素求值器、文字語法剖析（megaparsec）、渲染器；不含符文接線 | **重大基建功能** | spec 0001（已完成）；不依賴 0002 | 已完成 |
 | [0004](docs/func-spec/0004-expr-rune-wiring.md) | Expr 符文接線：`RangeRune`/`ConvergeRune`/`AmplifyRune`/`FormulaRune`、`ExprV3` 定型、分層時間框架（行為層 t＝粒子年齡、調變層 t＝施法秒數）、fold 加 case、Codec 加 tag | 一般 | spec 0002（已完成）＋0003（已完成）——動工門檻已解除 | 設計定案，待實作 |
+| [0005](docs/func-spec/0005-render-observability.md) | 渲染落實與觀測：動態 quad mesh 單 draw call、`rbBlend`/`rbShape` 生效、HUD＋載入錯誤上屏、鍵盤切換範例、`-O2`＋benchmark 基線；`advanceSpell`/`observeSpell` 分離 | 一般 | spec 0001/0002/0003（已完成）；**與 0004 平行**（檔案零交集，見其 §0.3） | 設計定案，待實作 |
