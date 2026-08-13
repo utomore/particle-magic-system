@@ -1,7 +1,7 @@
 # 粒子魔法系統 — 系統架構設計書
 
-> 版本：1.0（2026-08-11）
-> 狀態：設計定案（POC 實作前）
+> 版本：1.1（2026-08-13：對齊 spec 0001–0005 交付現實——§4.3/§5.1 Expr 合約更正、§5.3 函數清單、§7/§9.2 渲染路線改依 ADR-0009、型別落點註記；語意設計不變）
+> 狀態：設計定案（POC 實作中）
 > 相關文件：[Init.md](../Init.md)（原始需求）、[ADR 索引](#12-adr-索引)
 
 ---
@@ -41,7 +41,7 @@ flowchart TD
     subgraph Shell["效果外殼 App.* （effectful，IO 在此）"]
         Loop["App.Loop<br/>固定時步主迴圈"]
         HotReload["App.HotReload<br/>JSON 檔案監看與重載"]
-        Render3D["App.Render.Raylib3D<br/>h-raylib instanced 渲染"]
+        Render3D["App.Render.Raylib3D<br/>h-raylib 動態 quad mesh 渲染（ADR-0009）"]
         Render2D["App.Render.Ortho2D<br/>（未來）2D 正交後端"]
     end
 
@@ -56,7 +56,7 @@ flowchart TD
         Expr["Magic.Expr<br/>數學 AST 與純求值器"]
         Compile["Magic.Compile<br/>解釋器：Circle → CompiledSpell"]
         Analytic["Magic.Particle.Analytic<br/>解析層：時間函數取樣"]
-        Field["Magic.Particle.Field<br/>力場層：固定時步純積分"]
+        Field["Magic.Particle.Field<br/>（未來）力場層：固定時步純積分"]
         Buffer["Magic.Particle.Buffer<br/>SoA 粒子緩衝"]
         Project["Magic.Project<br/>投影抽象（3D/2D）"]
     end
@@ -68,7 +68,7 @@ flowchart TD
 
     Interface --> Compile
     Interface --> Analytic
-    Interface --> Field
+    Interface -.-> Field
     Codec --> Circle
     Codec --> Expr
 
@@ -78,7 +78,7 @@ flowchart TD
     Circle --> Rune
     Rune --> Expr
     Analytic --> Buffer
-    Field --> Buffer
+    Field -.-> Buffer
     Interface --> Project
 ```
 
@@ -137,7 +137,7 @@ stateDiagram-v2
     Drawing : 繪製陣形－粒子沿魔法陣幾何（環、槽位、節點）生成
     Drawing : 發射器由 Circle 的形狀資料直接導出
     Converging : 收束－陣形粒子向核心收束
-    Converging : 收束曲線來自夾層 BridgeRune
+    Converging : 收束曲線由 phases 設定導出（spec 0006）；玩家夾層 ConvergeRune 調變的是主效果（0004 凍結語意）
     Casting : 發動－主效果發射器啟動
     Casting : 沿法線方向擴充立體
     Dissipating : 消散－粒子淡出、緩衝回收
@@ -215,22 +215,26 @@ data NodeRune = DirBias Double | ...  -- 上下左右節點：方向性偏置
 
 ### 4.3 數學表達式（`Magic.Expr`）
 
+實際凍結合約（spec 0003/0004 交付；早期草圖以此為準——`Float` 精度、無 `Lerp`、`Chan` 為獨立建構子）：
+
 ```haskell
 data Expr
-  = Lit !Double
+  = Lit !Float
   | Var !Var
-  | Neg Expr | Add Expr Expr | Mul Expr Expr | Div Expr Expr
-  | Sin Expr | Cos Expr | Pow Expr Expr
-  | Clamp Expr Expr Expr | Lerp Expr Expr Expr
+  | Chan !Int                          -- 確定性隨機通道 0..1（(Seed, 粒子索引, 通道) 雜湊）
+  | Neg Expr
+  | Bin !BinOp Expr Expr               -- Add | Sub | Mul | Div | Pow
+  | Fun1 !Fun1 Expr                    -- sin cos abs sqrt floor sign
+  | Fun2 !Fun2 Expr Expr               -- min max
+  | Fun3 !Fun3 Expr Expr Expr          -- clamp
 
 data Var
-  = T        -- 施法起算的全域時間（秒）
-  | Life     -- 粒子正規化生命週期 0..1
-  | PIndex   -- 粒子索引正規化 0..1（同批粒子錯開相位用）
-  | Chan Int -- 由種子導出的確定性隨機通道 0..1
+  = VarT       -- 時間軸依掛載點分層（spec 0004）：行為層 t＝粒子年齡、調變層 t＝施法秒數
+  | VarLife    -- 粒子正規化生命週期 0..1
+  | VarPIndex  -- 粒子索引正規化 0..1（同批粒子錯開相位用）
 
-eval :: Env -> Expr -> Double        -- 全函數（total）：除零、NaN 皆有定義的退化值
-data ExprV3 = ExprV3 Expr Expr Expr  -- 三分量向量式
+evalExpr :: Expr -> ExprEnv -> Float   -- 全函數（total）；evalFinite 保證有限值
+data ExprV3 = ExprV3 Expr Expr Expr    -- 三分量向量式
 ```
 
 **設計要點**：
@@ -241,21 +245,23 @@ data ExprV3 = ExprV3 Expr Expr Expr  -- 三分量向量式
 
 ### 4.4 編譯結果（`Magic.Compile`）
 
+實際凍結合約（spec 0002 交付、0006 補 phases；`fields`/`ParticleBudget` 留待力場 spec 與效能 spec）：
+
 ```haskell
 data CompiledSpell = CompiledSpell
-  { spellPhases :: PhasePlan             -- Drawing/Converging/Casting/Dissipating 時間表
-  , emitters    :: Vector EmitterSpec    -- 各階段發射器（含陣形繪製發射器）
-  , fields      :: [ForceField]          -- 可選力場（無互動效果時為空）
-  , budget      :: ParticleBudget        -- 粒子數上限（編譯期算出）
+  { spellLifetime :: !Seconds            -- 最後一批粒子死盡的時刻
+  , spellBudget   :: !Int                -- Σ emCount（編譯期算出；結構化 ParticleBudget 待效能 spec）
+  , spellEmitters :: !(Vector EmitterSpec) -- 各階段發射器（含 0006 的陣形繪製發射器）
+  , spellPhases   :: !PhasePlan          -- Drawing/Converging/Casting/Dissipating 絕對時間界標（spec 0006）
   }
 
 data EmitterSpec = EmitterSpec
-  { anchor    :: Anchor          -- 發動點（相對施法者面向）＋法線
-  , phase     :: Phase           -- 所屬生命週期階段
-  , count     :: Int
-  , spawn     :: Envelope        -- 發動時間/生成率包絡
-  , motion    :: Motion          -- 位置：形狀取樣＋軌跡＋數學式的組合（資料）
-  , appearance :: Appearance     -- 顏色曲線（屬性導出）、尺寸式、混合模式
+  { emAnchor     :: !Anchor        -- 發動點（相對施法者面向）＋法線
+  , emCount      :: !Int
+  , emSpawn      :: !Envelope      -- 發動時間/生成包絡（Envelope 實際定義於 Magic.Rune）
+  , emMotion     :: !Motion        -- 位置：形狀取樣＋軌跡＋數學式的組合（資料）
+  , emAppearance :: !Appearance    -- 顏色曲線（屬性導出）、尺寸、混合模式（BlendMode 實際定義於 Magic.Compile）
+  , emPhase      :: !Phase         -- 所屬生命週期階段（spec 0006；中繼資料）
   }
 
 compile :: Circle -> Either CompileError CompiledSpell
@@ -291,6 +297,8 @@ step :: [ForceField] -> DeltaTime -> ParticleBuffer -> FieldState
 無力場的魔法：每幀就是一次 `sample`，零狀態、可任意快轉倒帶。有力場的魔法：`FieldState` 是唯一跨幀狀態，且轉移是純函數＋固定時步——重播只需重放 `(dt 序列, Seed)`。
 
 ### 4.7 施法上下文與系統介面（`Magic.Interface`）
+
+（型別落點註記：`CastContext` 實際定義於 `Magic.Types`、經 `Magic.Interface` re-export——對宿主的可見面不變。）
 
 ```haskell
 data CastContext = CastContext
@@ -329,7 +337,7 @@ data RenderBatch = RenderBatch
       { "rune": "shape", "shape": { "kind": "hollow-square", "size": 3.0 } },
       { "rune": "radiate", "mode": "along-normal" }
     ],
-    "bridge": { "rune": "converge", "curve": "1 - life^2" },
+    "bridge": { "rune": "converge", "expr": "1 - life^2" },
     "inner": [
       { "rune": "trajectory", "kind": "forward", "speed": 8.0 },
       { "rune": "formula", "x": "sin(t*6)*0.3", "y": "cos(t*6)*0.3", "z": "0" }
@@ -345,7 +353,7 @@ data RenderBatch = RenderBatch
 規則：
 
 - 一切槽位可為 `null`（Optional 語意）；全 `null` 即「素放」。
-- 數學式為文字，文法：實數、變數 `t`/`life`/`index`/`rand0..randN`、`+ - * / ^`、`sin cos clamp lerp`、括號。剖析失敗＝載入錯誤，附行列位置。
+- 數學式為文字，文法（spec 0003 凍結）：實數、常數 `pi`、變數 `t`/`life`/`pindex`、隨機通道 `chan(n)`、`+ - * / ^`、函數 `sin cos abs sqrt floor sign min max clamp`、括號。剖析失敗＝載入錯誤，附行列位置。
 - **版本策略**：`version` 遞增時，`Magic.Codec` 保留舊版解碼器並提供 `migrate :: CircleV1 -> CircleV2`；核心永遠只處理最新版 ADT。
 
 ### 5.2 輸出格式：RenderBatch 串流
@@ -353,17 +361,26 @@ data RenderBatch = RenderBatch
 每幀輸出 `[RenderBatch]`：粒子位置為抽象 3D 座標的 SoA 緩衝＋混合模式＋billboard 形狀。**輸出不含任何 raylib 型別**——這是渲染後端可替換性的保證。宿主（遊戲）的責任：
 
 1. 把 `RenderBatch` 交給投影後端（3D 透視 / 2D 正交）。
-2. 依 `BlendMode` 設定管線狀態，instanced 繪製。
+2. 依 `BlendMode` 設定管線狀態，整批繪製（渲染路徑見 ADR-0009：動態 quad mesh，draw call 數 = batch 數）。
 
 ### 5.3 對外唯一入口
 
-外殼（或未來任何宿主遊戲）只允許 import `Magic.Interface` 與 `Magic.Codec`。核心其餘模組未來以 cabal internal library 隱藏。宿主的完整使用面積只有四個函數：
+外殼（或未來任何宿主遊戲）只允許 import `Magic.Interface` 與 `Magic.Codec`。核心其餘模組未來以 cabal internal library 隱藏（現況：exe 不依賴 `magic-core` 已由測試強制）。宿主的完整使用面積（spec 0001 交付；0005 加 `advanceSpell`/`observeSpell`）：
 
 ```haskell
-loadCircle :: ByteString -> Either LoadError Circle          -- Magic.Codec
-castSpell  :: CastRequest -> Either CompileError ActiveSpell -- Magic.Interface
+-- Magic.Codec
+loadCircle      :: ByteString -> Either LoadError Circle
+saveCircle      :: Circle -> ByteString
+renderLoadError :: LoadError -> String
+
+-- Magic.Interface
+castSpell  :: CastRequest -> Either CompileError ActiveSpell
 stepSpell  :: FrameInput -> ActiveSpell -> (ActiveSpell, FrameOutput)
 isFinished :: ActiveSpell -> Bool
+spellAge   :: ActiveSpell -> Time
+-- spec 0005（推進/取樣分離；stepSpell ≡ advance 後 observe）：
+advanceSpell :: FrameInput -> ActiveSpell -> ActiveSpell
+observeSpell :: ActiveSpell -> FrameOutput
 ```
 
 ---
@@ -378,7 +395,7 @@ isFinished :: ActiveSpell -> Bool
 | 2 | 內圈（由內層到外層） | `SpellSeed → BehaviorProto` | 疊上行為：軌跡、時序包絡、玩家數學式，組合成 `Motion` 資料 |
 | 3 | 夾層 | `BehaviorProto → ModulatedProto` | 調變：收束曲線、增幅係數、時序位移。夾層是「界接內外的關鍵因子」——內圈行為經它轉換後才交給外圈 |
 | 4 | 外圈（由內層到外層） | `ModulatedProto → Vector EmitterSpec` | 具現：初始面形狀取樣出發射位置、範圍縮放、輻射模式展開為發射器集合 |
-| 5 | 陣形自身 | `Circle 幾何 → Vector EmitterSpec` | 從魔法陣的環/槽位幾何直接導出 Drawing/Converging 階段的陣形粒子發射器 |
+| 5 | 陣形自身 | `Circle 幾何 → Vector EmitterSpec` | 從魔法陣的環/槽位幾何直接導出 Drawing/Converging 階段的陣形粒子發射器（spec 0006 認領） |
 
 **Init.md 參數對照表**（驗證原始需求全數落地）：
 
@@ -391,7 +408,7 @@ isFinished :: ActiveSpell -> Bool
 | 顏色（屬性） | `EssenceRune.essElement → Appearance` |
 | 依形狀輻射 | `RadiateRune RadiationMode` |
 | 收束強度 | `BridgeRune ConvergeRune`（解析曲線）；需粒子互動時用 `ForceField` |
-| 多個效果疊 | `CompiledSpell` 為 `Semigroup`：多張魔法陣的編譯結果可合併（發射器集合串接、預算相加） |
+| 多個效果疊 | `CompiledSpell` 為 `Semigroup`：多張魔法陣的編譯結果可合併（發射器集合串接、預算相加）——**未落地**：合併律（尤其 `PhasePlan` 界標）與預算超額的錯誤表達待「多陣合成 spec」設計（0006 §9） |
 | 強度 | `EssenceRune.essPower` |
 | 數學式 | `FormulaRune ExprV3` |
 
@@ -399,13 +416,15 @@ isFinished :: ActiveSpell -> Bool
 
 ## 7. 效能設計（目標：1 萬～10 萬粒子）
 
+> 現況註記：現行護欄 `budgetCap = 4096`（spec 0002，骨架渲染的護欄而非效能設計）；1 萬～10 萬目標與下表的緩衝重用/剔除等手段留待效能 spec，其動工前提是 spec 0005 產出的量測基線。
+
 | 手段 | 說明 |
 |---|---|
 | SoA + Unboxed Vector | §4.5。核心熱路徑（`sample`、`step`）在 unboxed 連續記憶體上以緊密迴圈運算，無 box、無指標追蹤 |
 | 緩衝重用 | `ParticleBuffer` 底層以預配置的 mutable 緩衝（`ST` 內部、對外仍是純介面）每幀重寫，避免每幀配置十萬元素的新 vector 造成 GC 壓力 |
 | 編譯期粒子預算 | `compile` 時即算出各發射器最大粒子數（`ParticleBudget`），緩衝一次配足，執行期零成長 |
 | 發射器層級剔除 | 解析模型下每個發射器的空間包絡可靜態估計上界 → 視錐外整個發射器跳過取樣 |
-| Instanced rendering | raylib 端以單一 quad mesh ＋ per-instance 位置/顏色/尺寸繪製整個 batch，draw call 數 = batch 數而非粒子數 |
+| 批次渲染（[ADR-0009](adr/0009-dynamic-quad-mesh-rendering.md)） | raylib 端以動態 quad mesh＋`c'` 指標 API 繪製整個 batch，draw call 數 = batch 數而非粒子數（instancing 經實證否決：無 per-instance 顏色、需自訂 shader） |
 | GHC 設定 | `-O2 -fllvm`（視環境）；熱路徑函數 `INLINE`/`SPECIALIZE`；必要時 `-threaded` 讓 GC 與模擬並行 |
 
 **明確不做**（POC 範圍外）：GPU compute/transform feedback、粒子間碰撞、空間分割結構。力場層僅支援「場對粒子」（重力、吸引、渦流），不支援「粒子對粒子」。
@@ -424,7 +443,7 @@ isFinished :: ActiveSpell -> Bool
 ## 9. 目前技術困難
 
 1. **h-raylib 在 Windows 的首次建置**：h-raylib 內含 raylib C 原始碼，首次 `cabal build` 需要可用的 C 工具鏈（ghcup 附的 MinGW 可用）且耗時長。GHC 9.14.1 很新，h-raylib 對新版 GHC 的相容性需在骨架階段最先驗證——這是整個技術棧風險最高的一點。
-2. **h-raylib 的 instancing 支援面**：raylib C API 有 `DrawMeshInstanced`，但 h-raylib 綁定的完整度與零拷貝傳遞（`Ptr` 直傳 transform 陣列）需要實測；若缺，備案是走 `rlgl` 低階綁定或自寫小段 FFI。
+2. **h-raylib 的 instancing 支援面**：~~raylib C API 有 `DrawMeshInstanced`，但 h-raylib 綁定的完整度與零拷貝傳遞需要實測~~——**已裁決（[ADR-0009](adr/0009-dynamic-quad-mesh-rendering.md)）**：instancing 否決，改走動態 quad mesh＋`c'` 指標路徑；待 spec 0005 S0 spike 實機確證。
 3. **effectful 與 raylib 命令式 API 的整合**：raylib 是 `IO` 命令式風格（`beginDrawing`/`endDrawing` 配對）。需要一層 `Raylib :: Effect` 封裝配對呼叫（bracket 模式），樣板量中等，但屬一次性成本。
 4. **GC 停頓**：十萬粒子若逐幀產生新 boxed 結構，minor GC 會吃掉幀預算。§7 的緩衝重用＋unboxed 策略是針對性解法，但需要以 `-s`/eventlog 實測驗證，不能只靠推測。
 5. **數學式剖析器**：需要一個小型剖析器（建議 megaparsec）處理文字式子→`Expr`，含錯誤位置回報。技術上成熟，但錯誤訊息品質（玩家會直接面對）需要投入。
@@ -464,3 +483,4 @@ isFinished :: ActiveSpell -> Bool
 | [ADR-0006](adr/0006-soa-unboxed-buffer.md) | SoA + Unboxed Vector 粒子緩衝 |
 | [ADR-0007](adr/0007-effectful-boundary.md) | effectful 效果邊界，核心零 IO |
 | [ADR-0008](adr/0008-dimension-agnostic-3d-first.md) | 維度無關核心，3D 優先投影 |
+| [ADR-0009](adr/0009-dynamic-quad-mesh-rendering.md) | 渲染路徑採動態 quad mesh，不採 instancing |
