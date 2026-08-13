@@ -1,6 +1,6 @@
 # Func-Spec 0005：渲染落實與觀測（Render Realization & Observability）
 
-> 狀態：設計定案，待實作
+> 狀態：已完成（驗收紀錄見 §10）
 > 性質：一般 —— 本 spec 兌現 architecture §5.2/§7 對渲染宿主的既定承諾並補齊觀測面；它不是後續 spec 的共同地基，但其量測基線（§8 S8）是未來 10k–100k 效能 spec 的動工前提資料。
 > 前置依賴：spec 0001／0002／0003（皆**已完成**）。**與 spec 0004 平行**：0004（設計定案，待實作）鎖定 `Magic/Rune.hs`、`Magic/Compile.hs`、`Magic/Particle/Analytic.hs`、`Magic/Expr.hs`、`Magic/Codec.hs`——本 spec 檔案清單與之**零交集**（§0.3 附盤點證明），兩 spec 可同時認領實作。
 > 依據：[architecture.md](../architecture.md) §5.2（宿主責任：blend 管線狀態、instanced 繪製）、§7（「draw call 數 = batch 數而非粒子數」、GHC 設定）、§8 風險 5（h-raylib FFI 邊界開銷，「需實測不能推測」）、§9.2（instancing 支援面是開放問題）；ADR-0005（負面：「錯誤訊息品質需要投入」）、ADR-0007（效果只在殼層）
@@ -285,16 +285,16 @@ flowchart LR
 
 | ✅ | Todo | 測試（`test/` 下） | 測試內容（完成即斷言） |
 |---|---|---|---|
-| ☐ | **S0** 渲染路徑 spike | —（手動 smoke，結果回填 §10） | 4096 顆彩色 quad 單 draw call 顯示；additive 目視疊亮；粒子數變動時變長繪製正確；VBO 索引對映與備案決策記錄 |
-| ☐ | **S1** advance/observe 分離 | `StepObserveSpec.hs` | 分解定律 property：任意 dt 序列下 `stepSpell` ≡ `advanceSpell`＋`observeSpell`（`FrameOutput` 與 `spellAge` 位元級相等）；`observeSpell` 冪等（連續兩次同值）；`isFinished` 與推進一致；0001 `PipelineSpec` 照舊全綠 |
-| ☐ | **S2** quad 建構 | `QuadBatchSpec.hs` | property（任意合法 buffer）：`qbCount == pbCount`、頂點數 = 4×count；四頂點平均 == 粒子位置（±ε）；quad 對角線 ⊥ 相機 forward；邊長 == pbSize；顏色 bytes == pbColor RGBA 展開；空 buffer → 空串流不崩 |
-| ☐ | **S3** 效果擴充＋雙直譯器 | `SceneEffectsSpec.hs` | 真實 `runLoop` headless 跑 N 幀：每幀恰一次 `DrawScene`＋一次 `DrawHud`（`hlScenes`/`hlHuds` 長度 == `hlFrames`）；`hlScenes` 的 (blend, count) 與 `observeSpell` 輸出一致；fire 範例 bytes → 記錄到 `BlendAdditive`；`hlDrawCalls` 語意重定義後 0001 `EffectsSpec` 斷言照舊成立 |
-| ☐ | **S4** 錯誤可觀測 | `ReloadStatusSpec.hs` | 劇本：第 k 幀換入壞 JSON → 舊 spell 續跑（casts 不變、粒子仍在）且 `hvReload` 為 `ReloadFailed` 含 `renderLoadError` 文字；初載即壞 → 不黑屏、HUD 有錯誤、後續修好可復原；修好後 → `ReloadOk` 且 age 歸零 |
-| ☐ | **S5** HUD 內容 | `HudSpec.hs` | `formatHud` 判例：各狀態（Idle/Ok/Failed）輸出含對應欄位；錯誤多行展開；FPS EMA property：恆定 dt 收斂至 1/dt、任意輸入下非負 |
-| ☐ | **S6** spell 切換 | `SpellSwitchSpec.hs` | 輸入腳本：第 k 幀 next → 路徑循環前進、發生 recast（casts +1、age 歸零）、watch 跟隨新路徑（`runFileWatchScriptMap`）；prev 反向循環；單檔清單 → next/prev 為 no-op；壞檔切入 → `ReloadFailed` 且可切走 |
-| ☐ | **S7** `Raylib3D` 轉正 | —（手動 smoke，結果回填 §10） | 開窗循環三份非空範例：fire additive 發光、quad 面向相機（繞行目視）、HUD 全欄位、壞檔上屏、`drawCubeV` 已移除 |
-| ☐ | **S8** `-O2`＋基準 | `OptFlagsSpec.hs` | 剖析 cabal（自帶輕量 stanza 剖析，手法同 `BoundarySpec`）：`magic-core`/`magic-boundary`/`executable` 的 `ghc-options` 含 `-O2`；`benchmark bench` stanza 存在。bench 數字為手動執行回填 §10 |
-| ☐ | **S9** 端到端驗收 | `Acceptance5Spec.hs`＋手動 | headless 全劇本：真實範例 bytes → N 幀 → 場景/HUD 序列健全 → 中途切換＋壞檔＋復原一鏡到底；`LoopStats` 合約不變。手動開窗總驗收，結果回填 §10 |
+| ✅ | **S0** 渲染路徑 spike | —（手動 smoke，結果回填 §10） | 4096 顆彩色 quad 單 draw call 顯示；additive 目視疊亮；粒子數變動時變長繪製正確；VBO 索引對映與備案決策記錄 |
+| ✅ | **S1** advance/observe 分離 | `StepObserveSpec.hs` | 分解定律 property：任意 dt 序列下 `stepSpell` ≡ `advanceSpell`＋`observeSpell`（`FrameOutput` 與 `spellAge` 位元級相等）；`observeSpell` 冪等（連續兩次同值）；`isFinished` 與推進一致；0001 `PipelineSpec` 照舊全綠 |
+| ✅ | **S2** quad 建構 | `QuadBatchSpec.hs` | property（任意合法 buffer）：`qbCount == pbCount`、頂點數 = 4×count；四頂點平均 == 粒子位置（±ε）；quad 對角線 ⊥ 相機 forward；邊長 == pbSize；顏色 bytes == pbColor RGBA 展開；空 buffer → 空串流不崩 |
+| ✅ | **S3** 效果擴充＋雙直譯器 | `SceneEffectsSpec.hs` | 真實 `runLoop` headless 跑 N 幀：每幀恰一次 `DrawScene`＋一次 `DrawHud`（`hlScenes`/`hlHuds` 長度 == `hlFrames`）；`hlScenes` 的 (blend, count) 與 `observeSpell` 輸出一致；fire 範例 bytes → 記錄到 `BlendAdditive`；`hlDrawCalls` 語意重定義後 0001 `EffectsSpec` 斷言照舊成立 |
+| ✅ | **S4** 錯誤可觀測 | `ReloadStatusSpec.hs` | 劇本：第 k 幀換入壞 JSON → 舊 spell 續跑（casts 不變、粒子仍在）且 `hvReload` 為 `ReloadFailed` 含 `renderLoadError` 文字；初載即壞 → 不黑屏、HUD 有錯誤、後續修好可復原；修好後 → `ReloadOk` 且 age 歸零 |
+| ✅ | **S5** HUD 內容 | `HudSpec.hs` | `formatHud` 判例：各狀態（Idle/Ok/Failed）輸出含對應欄位；錯誤多行展開；FPS EMA property：恆定 dt 收斂至 1/dt、任意輸入下非負 |
+| ✅ | **S6** spell 切換 | `SpellSwitchSpec.hs` | 輸入腳本：第 k 幀 next → 路徑循環前進、發生 recast（casts +1、age 歸零）、watch 跟隨新路徑（`runFileWatchScriptMap`）；prev 反向循環；單檔清單 → next/prev 為 no-op；壞檔切入 → `ReloadFailed` 且可切走 |
+| ✅ | **S7** `Raylib3D` 轉正 | —（手動 smoke，結果回填 §10） | 開窗循環三份非空範例：fire additive 發光、quad 面向相機（繞行目視）、HUD 全欄位、壞檔上屏、`drawCubeV` 已移除 |
+| ✅ | **S8** `-O2`＋基準 | `OptFlagsSpec.hs` | 剖析 cabal（自帶輕量 stanza 剖析，手法同 `BoundarySpec`）：`magic-core`/`magic-boundary`/`executable` 的 `ghc-options` 含 `-O2`；`benchmark bench` stanza 存在。bench 數字為手動執行回填 §10 |
+| ✅ | **S9** 端到端驗收 | `Acceptance5Spec.hs`＋手動 | headless 全劇本：真實範例 bytes → N 幀 → 場景/HUD 序列健全 → 中途切換＋壞檔＋復原一鏡到底；`LoopStats` 合約不變。手動開窗總驗收，結果回填 §10 |
 
 規則同前：**一個 Todo 打勾的前提是對應測試存在且綠**。`Magic.*` 測試（0002/0003 全部）零觸碰；0001 殼層測試僅允許 §0.3 的機械適配，斷言語意一字不變。
 
@@ -311,14 +311,26 @@ flowchart LR
 - Expr/符文語意一切事項 —— 0004 範圍；生命週期四階段、力場層 —— 各自後續 spec
 - 多 spell 並行、全域粒子配額 —— architecture §8.4，遊戲層策略未定
 
-## 10. 驗收紀錄（實作時回填）
+## 10. 驗收紀錄
+
+環境：Windows 11、GHC 9.14.1、cabal 3.16.1.0、h-raylib 5.6.0.0、OpenGL 3.3（NVIDIA RTX 5080）。
 
 | 項目 | 日期 | 結果 |
 |---|---|---|
-| S0：spike 結論（VBO 索引對映；預設 shader 頂點色；交付路線 or 備案階梯第幾層） | | |
-| S7：開窗目視（additive 發光／quad 面向相機／HUD／壞檔上屏） | | |
-| S8：bench 基線數字（castSpell×3 範例；observeSpell@4096×多 t；buildQuads@4096） | | |
-| 0001 殼層測試機械適配清單（檔名＋適配位置；斷言語意零變更之確認） | | |
-| 0002/0003 測試零觸碰、全綠；`cabal test` 全綠 | | |
-| 與 0004 的 cabal/SKILL.md 聯集合併確認（若 0004 先合併） | | |
-| 凍結清單確認（§4.7） | | |
+| S0：spike 結論（VBO 索引對映；預設 shader 頂點色；交付路線 or 備案階梯第幾層） | 2026-08-13 | **通過，走§0.2 主線路線，備案階梯一層都沒用上**。spike 為拋棄式 `spike/Spike.hs`＋暫時 `executable spike` stanza（驗收後已刪除，不入版控），它驅動的是**交付碼本身**（`runRaylibIO`／`drawScene`／`drawHud`），每個場景多跑幾幀後以 `takeScreenshot` 存圖比對。結論逐條：(1) **VBO 索引對映確認**＝raylib `UpdateMeshBuffer` 的 index 即 `DefaultShaderAttributeLocation` 序：**0 = positions、3 = colors**（圖上位置與顏色皆正確，若對映錯會是花屏）；(2) **預設 shader 直接吃 mesh 頂點色**，無需自訂 shader——4096 粒的 `ColorRamp` 橘→黃漸層逐粒子正確呈現；(3) **變長繪製成立**：poke `p'mesh'triangleCount` 後同一個 4096 容量 mesh 分別畫出 384／180／4096／0 粒，無殘留幾何；(4) **additive 確實生效**：同一份 4096 粒 buffer 分別以 `BlendAdditive`／`BlendAlpha` 出圖，additive 在噴泉根部重疊處累加爆白、alpha 維持橘色不疊亮——兩張圖肉眼可辨（`rlDisableDepthMask` 同時避免了順序假影）；(5) **billboard 面向相機**：正面與側面兩台相機拍同一份 buffer，quad 皆維持正對相機的正方形；(6) 空 batch 清單只畫格線不崩。附帶發現（spike 自身的取圖問題，非產品問題）：HUD 文字進的是 rlgl 批次、要到 `EndDrawing` 才 flush，因此 spike 需先呼叫 `rlDrawRenderBatchActive` 再取圖——真實迴圈不受影響 |
+| S7：開窗目視（additive 發光／quad 面向相機／HUD／壞檔上屏） | 2026-08-13 | **通過**（證據同 S0 的截圖組，取自交付碼路徑）：additive 發光疊加 ✔、quad 兩個視角皆面向相機 ✔、HUD 六行（fps／particles／spell／age／reload／按鍵提示）完整上屏 ✔、`drawCubeV` 已從 `Raylib3D` 移除（該模組不再 import `drawCubeV`）✔。真實 exe（`cabal run particle-magic`）實機開窗跑 8 秒無異常，raylib log 顯示 `VAO: [ID 2] Mesh uploaded successfully to VRAM (GPU)`、預設字型載入成功、目標 16.667 ms/frame。**尚待人工確認的殘項**：活視窗中實按 ←／→／R 的手感與熱重載即時性——其邏輯已由 `SpellSwitchSpec`／`ReloadStatusSpec` headless 全覆蓋（含壞檔上屏與復原），但「按下去的感覺」按 SKILL.md 屬人工 smoke |
+| S8：bench 基線數字（castSpell×3 範例；observeSpell@4096×多 t；buildQuads@4096） | 2026-08-13 | `cabal bench`，全套 `-O2`。**castSpell（僅編譯到 `CompiledSpell` 建構子，emitter 向量元素仍惰性）**：四份範例皆 ~17–18 ns。**castSpell ＋ 首幀取樣**（＝一次熱重載的真實成本）：ring-fire 1.71 µs／square-burst 963 ns／spiral-spark 864 ns／converge-flame 1.39 µs。**observeSpell**（bench 專用 4096 粒陣，`power = 16.0` 打到 `budgetCap`；各年齡實際存活數 30 幀=1024、60 幀=2049、120／240／480 幀=4096）：137 µs／305 µs／677 µs／665 µs／**660 µs @4096**。**buildQuads@4096**：**71.3 µs**。解讀供後續效能 spec 用：4096 粒的每幀純 CPU 成本 ≈ 0.73 ms（取樣 0.66 ms ＋ quad 0.07 ms），佔 60 fps 預算 16.7 ms 的 ~4.4%；取樣是主成本、且對粒子數近似線性（1024→4096 約 4.8×），故 10k–100k 的瓶頸將是 `observeSpell`，不是 GPU 路徑 |
+| 0001 殼層測試機械適配清單（檔名＋適配位置；斷言語意零變更之確認） | 2026-08-13 | 僅 **2 檔、各 1 處**：`EffectsSpec.hs` 與 `HotReloadSpec.hs` 的 `testConfig`，`lcSpellPath = "virtual-spell.json"` 改為 `lcSpellPaths = ["virtual-spell.json"]` ＋ `lcSpellIndex = 0`（§4.4 的欄位演進；單元素清單＝0001 行為）。**斷言一字未改**——frames/simSteps/casts/finalAge 的數值關係與 `hlDrawCalls == frames` 全部原樣通過（`hlDrawCalls` 重定義為「收到的 batch 總數」，現況每幀單 batch 故計數不變，另由 `SceneEffectsSpec` 一條判例釘住）。`PipelineSpec`／`AcceptanceSpec`／`Acceptance2Spec` 預期中的適配**實際不需要**（不建構 `LoopConfig`），零觸碰 |
+| 0002/0003 測試零觸碰、全綠；`cabal test` 全綠 | 2026-08-13 | 0002/0003/0004 測試零觸碰。`cabal build all` 通過、`cabal test` **309 examples, 0 failures**（0001–0004 全回歸＋本輪 8 個新模組） |
+| 與 0004 的 cabal/SKILL.md 聯集合併確認（若 0004 先合併） | 2026-08-13 | 0004 已先合併（PR #6/#8）。本輪在其之上純加行：`test-suite` `other-modules` 加 8 個新模組＋`App.Render.Quads`／`App.Hud`；exe `other-modules` 加 2；三個 stanza `ghc-options` 加 `-O2`；新增 `benchmark bench` stanza。0004 的行一行未動，無衝突。`SKILL.md` 索引表僅改 0005 該列狀態 |
+| 凍結清單確認（§4.7） | 2026-08-13 | 確認凍結：`advanceSpell`／`observeSpell` 簽名與分解定律（`StepObserveSpec` property 釘住，含各範例整段生命週期）；`Raylib` 效果七 op 形狀與 `HudView`／`ReloadStatus`／`DemoInput` 欄位；`hlDrawCalls` 的「batch 總數」語意。`QuadBatch`／`buildQuads`／`App.Hud` 依 §4.7 為殼層內部，後續效能 spec 可自由演進 |
+
+實作補記（非偏差，皆在 spec 授權範圍內）：
+
+- **`gpuCapacity = 4096` 在 `Raylib3D` 內以常數複刻 `Magic.Compile.budgetCap`**：殼層依套件邊界只能 import `magic-boundary`，而 `budgetCap` 未經 `Magic.Interface` 對外匯出。超量 batch 以夾擠（畫前 `gpuCapacity` 粒）處理而非幀中重配置；註解已標明對應關係。若日後效能 spec 提高預算，此常數需同步。
+- **`LoopState.stOutput` 移除**：取樣改為每幀由 `observeSpell` 現算，前一幀輸出不再需要保留（`LoopState` 非凍結型別）。
+- **`R` 的語意定為「用已載入的 circle 重施法」**（不重讀檔案，重讀是熱重載的職責）；未載入任何 circle 時為 no-op。
+- **`ReloadStatus` 的時刻取自 `Clock` 的單調時鐘讀數**（虛擬時鐘下即幀序 × dt）。初次載入失敗記為 `ReloadFailed t0`（而非 `ReloadIdle`），否則「初載即壞不黑屏且說明原因」無從表達。
+- **`hlScenes` 每個 batch 記一筆**（非每次 `DrawScene` 記一筆）：現況每幀單 batch 故與 `hlFrames` 等長，語意對多 batch 也成立，且與 `hlDrawCalls` 天然一致。
+- **bench 的 4096 粒陣以行內 JSON fixture 產生**（`power = 16.0`），不新增 `assets/spells/` 檔案——它是量測器材，不是範例魔法陣。現有範例最密者僅 512 粒，不足以量到預算上限。
+- **`castSpell` 給兩個數字**：只到建構子的 ~17 ns 是下界（`CompiledSpell` 的 emitter 向量元素仍惰性），「＋首幀取樣」才是熱重載的真實成本；§10 兩者並列以免誤讀。

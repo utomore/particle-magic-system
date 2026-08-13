@@ -22,7 +22,10 @@ testConfig =
   LoopConfig
     { lcSimDt = 1 / 60
     , lcMaxStepsPerFrame = 8
-    , lcSpellPath = "virtual-spell.json"
+    , -- func-spec 0005 §4.4 turned the single path into the demo's spell
+      -- list; a one-element list is the 0001 behaviour exactly.
+      lcSpellPaths = ["virtual-spell.json"]
+    , lcSpellIndex = 0
     , lcCamera = defaultCamera
     , lcCastCtx =
         CastContext

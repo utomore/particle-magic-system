@@ -29,11 +29,20 @@ module App.Effects
   , readBytes
   , runFileWatchIO
 
+    -- * Observation / input vocabulary (renderer-agnostic)
+  , HudView (..)
+  , ReloadStatus (..)
+  , DemoInput (..)
+  , noInput
+
     -- * Raylib (definition only; IO interpreter in App.Render.Raylib3D)
   , Raylib (..)
   , withWindow
   , withFrame
   , drawBatch
+  , drawScene
+  , drawHud
+  , pollInput
   , shouldClose
   ) where
 
@@ -101,13 +110,60 @@ runFileWatchIO pollInterval action = do
       fmap Right (BS.readFile path)
         `catchIOError` \e -> pure (Left (show e))
 
+-- | Everything the HUD overlay shows (func-spec 0005 §4.2). Computed by
+-- the loop as a plain value, so what the player would read off the screen
+-- is exactly what the headless tests assert on.
+data HudView = HudView
+  { hvFps :: !Double
+  -- ^ EMA-smoothed frames per second (the shell computes it; raylib's own
+  -- @getFPS@ would have no meaning under the test interpreters).
+  , hvParticles :: !Int
+  -- ^ Total particles across this frame's batches.
+  , hvSpellPath :: !FilePath
+  , hvSpellAge :: !Double
+  , hvReload :: !ReloadStatus
+  }
+  deriving (Eq, Show)
+
+-- | Outcome of the most recent load attempt. A failure keeps the previous
+-- spell running and puts the full error text on screen (ADR-0005's
+-- "error message quality needs investment" clause).
+data ReloadStatus
+  = ReloadIdle
+  -- ^ No reload since startup.
+  | ReloadOk !Double
+  -- ^ Succeeded, at that cast-clock time.
+  | ReloadFailed !Double !String
+  -- ^ Failed, at that time, with the full rendered error.
+  deriving (Eq, Show)
+
+-- | This frame's input snapshot. Our own type, so the loop and the test
+-- interpreters stay free of raylib key codes.
+data DemoInput = DemoInput
+  { diNextSpell :: !Bool
+  , diPrevSpell :: !Bool
+  , diRecast :: !Bool
+  }
+  deriving (Eq, Show)
+
+noInput :: DemoInput
+noInput = DemoInput {diNextSpell = False, diPrevSpell = False, diRecast = False}
+
 -- | Paired-call raylib operations (bracket pattern, higher-order effect)
--- plus the draw command. No raylib types appear here.
+-- plus the draw and input commands. No raylib types appear here.
+--
+-- 'DrawScene' supersedes 'DrawBatch' in the loop: blend grouping, the
+-- ground grid and the shared mesh update are whole-scene decisions that a
+-- per-batch operation cannot express. 'DrawBatch' is kept because the
+-- 0001 effect interface is frozen and frozen interfaces do not shrink.
 data Raylib :: Effect where
   WithWindow :: Int -> Int -> String -> m a -> Raylib m a
   WithFrame :: m a -> Raylib m a
   DrawBatch :: Camera -> RenderBatch -> Raylib m ()
   ShouldClose :: Raylib m Bool
+  DrawScene :: Camera -> [RenderBatch] -> Raylib m ()
+  DrawHud :: HudView -> Raylib m ()
+  PollInput :: Raylib m DemoInput
 
 type instance DispatchOf Raylib = Dynamic
 
@@ -119,6 +175,15 @@ withFrame = send . WithFrame
 
 drawBatch :: (Raylib :> es) => Camera -> RenderBatch -> Eff es ()
 drawBatch cam = send . DrawBatch cam
+
+drawScene :: (Raylib :> es) => Camera -> [RenderBatch] -> Eff es ()
+drawScene cam = send . DrawScene cam
+
+drawHud :: (Raylib :> es) => HudView -> Eff es ()
+drawHud = send . DrawHud
+
+pollInput :: (Raylib :> es) => Eff es DemoInput
+pollInput = send PollInput
 
 shouldClose :: (Raylib :> es) => Eff es Bool
 shouldClose = send ShouldClose

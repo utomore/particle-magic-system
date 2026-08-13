@@ -34,6 +34,8 @@ module Magic.Interface
   , ActiveSpell
   , castSpell
   , stepSpell
+  , advanceSpell
+  , observeSpell
   , isFinished
   , spellAge
   ) where
@@ -100,18 +102,34 @@ castSpell req = do
   compiled <- compile (circleOf req)
   pure ActiveSpell {asSpell = compiled, asCtx = ctxOf req, asElapsed = 0}
 
-stepSpell :: FrameInput -> ActiveSpell -> (ActiveSpell, FrameOutput)
-stepSpell (FrameInput (DeltaTime dt)) spell =
-  let elapsed' = asElapsed spell + dt
-      spell' = spell {asElapsed = elapsed'}
-      buffer = sample (asSpell spell) (asCtx spell) (Time elapsed')
+-- | Advance the spell's clock. Pure state transition, no sampling
+-- (func-spec 0005 §4.1).
+advanceSpell :: FrameInput -> ActiveSpell -> ActiveSpell
+advanceSpell (FrameInput (DeltaTime dt)) spell =
+  spell {asElapsed = asElapsed spell + dt}
+
+-- | Sample the spell at its current age. Pure observation, no time
+-- advance (func-spec 0005 §4.1) — so a host that runs several fixed
+-- simulation steps per rendered frame pays for exactly one sampling.
+observeSpell :: ActiveSpell -> FrameOutput
+observeSpell spell =
+  let buffer = sample (asSpell spell) (asCtx spell) (Time (asElapsed spell))
       batch =
         RenderBatch
           { rbParticles = buffer
           , rbBlend = spellBlend (asSpell spell)
           , rbShape = BillboardSquare
           }
-   in (spell', FrameOutput {batches = [batch]})
+   in FrameOutput {batches = [batch]}
+
+-- | Advance then observe. Decomposition law (func-spec 0005 §4.1, guarded
+-- by @test\/StepObserveSpec.hs@):
+--
+-- > stepSpell fi s == let s' = advanceSpell fi s in (s', observeSpell s')
+stepSpell :: FrameInput -> ActiveSpell -> (ActiveSpell, FrameOutput)
+stepSpell fi spell =
+  let spell' = advanceSpell fi spell
+   in (spell', observeSpell spell')
 
 isFinished :: ActiveSpell -> Bool
 isFinished spell =
