@@ -1,6 +1,6 @@
 # Func-Spec 0004：Expr 符文接線（Expr Rune Wiring）
 
-> 狀態：已實作（2026-08-13）——自動化驗收全綠；§10 的開窗手動 smoke 待人工確認後補記
+> 狀態：已完成（2026-08-13 驗收，見 §10）——自動化驗收全綠、開窗手動 smoke 已人工確認；§4.7 凍結範圍自此生效
 > 性質：一般 —— 本 spec 交付的符文語意與 JSON tag 完成後依 0002 §2 的可擴充 sum 合約凍結，但它不是後續 spec 的共同地基（生命週期、力場各自依賴 0002/0003，不依賴本 spec）。
 > 前置依賴：spec 0002（**已完成**，2026-08-12 驗收）＋ spec 0003（**已完成**，2026-08-12 驗收）——重大基建動工門檻已解除，本 spec 可認領實作。0003 交付與設計零偏差（其 §10 無實作期修訂），本 spec §0.2 引用的凍結介面全數如列交付；環境紀錄：megaparsec 9.8.1 × parser-combinators 1.3.1 × GHC 9.14.1，無需 allow-newer。
 > 依據：[architecture.md](../architecture.md) §4.1（四符文原始定義）、§4.2（Expr 設計要點）、§6 對照表（「收束強度」「數學式」）；ADR-0002（分層 DSL）、ADR-0003（固定職責槽位）
@@ -256,7 +256,7 @@ flowchart LR
 | ✅ | **S1** ADT 擴充＋fold 落點 | `CompileExprSpec.hs` | 四符文各自落點判例（§4.3 表逐行）；`FormulaRune` × `TrajectoryRune` 同類覆蓋（內圈兩層四種組合：外側勝出）；兩個 `RangeRune` → ringB 勝；空陣與純 0002 符文陣 → 新欄位全 `Nothing`／`motTraject` 非 `Formula`；0002 `CompileCoreSpec`/`CompileFoldSpec` 補欄後仍綠 |
 | ✅ | **S2** Codec 四 tag | `RuneCodecSpec.hs` | 四 tag 各自解碼判例＋含 Expr 符文的 `Circle` roundtrip property（`decode . encode == id`，重用 `ExprGen`）；壞公式（語法錯／未知識別字／`chan(t)`／>512 節點）→ 錯誤含 JSON 路徑＋剖析位置；槽位錯置 `range` 進內圈 → 錯誤附合法 tag 清單；0002 三份範例＋`empty.json` 位元組原樣仍可載入 |
 | ✅ | **S3** `sample` 接線 | `SampleExprSpec.hs` | formula 粒子位置 == 手算 `evalFiniteV3` 同座標系組裝（判例＋property）；**t=年齡機械證明**：兩粒子出生時刻不同、同年齡 → 同 formula 位移；converge `Lit 0` → 粒子位置貼行進軸（橫向分量 ≈ 0）、`Lit 1` → 與無符文 bit-for-bit 同；amplify 判例：尺寸 == `appSize × max 0 k`；range 判例：出生偏移縮放且出生後定格；同 `(Circle, CastContext, t)` 兩次取樣 bit-for-bit 相等；0002 `SampleSpec` 補欄後仍綠 |
-| ✅ | **S4** 範例與端到端（自動化部分；開窗手動 smoke 見 §10） | `Acceptance4Spec.hs` ＋手動 smoke | 自動：三份新範例 headless 跑 N 幀（JSON bytes → FrameOutput 非空 → finished），輸出兩兩可區分；四符文皆被範例覆蓋。手動：開窗目視 lissajous 軌跡／收束火焰／脈動環，熱重載改公式即時生效，結果回填 §10 |
+| ✅ | **S4** 範例與端到端（自動化＋開窗手動 smoke 皆完成，見 §10） | `Acceptance4Spec.hs` ＋手動 smoke | 自動：三份新範例 headless 跑 N 幀（JSON bytes → FrameOutput 非空 → finished），輸出兩兩可區分；四符文皆被範例覆蓋。手動：開窗目視 lissajous 軌跡／收束火焰／脈動環，熱重載改公式即時生效，結果回填 §10 |
 
 規則同前：**一個 Todo 打勾的前提是對應測試存在且綠**。0001/0003 測試零觸碰、全程必須保持綠；0002 測試僅允許機械補欄（§0.3），斷言語意一字不變。
 
@@ -276,7 +276,7 @@ flowchart LR
 
 | 項目 | 日期 | 結果 |
 |---|---|---|
-| S4：三份範例目視可辨識差異＋熱重載改公式即時生效 | 2026-08-13 | 自動化部分完成：`Acceptance4Spec` headless 驗證三份範例 620 幀端到端（輸出非空 → finished）、輸出兩兩可區分、四符文全覆蓋。**開窗目視與熱重載手動 smoke 待人工執行後補記** |
+| S4：三份範例目視可辨識差異＋熱重載改公式即時生效 | 2026-08-13 | **通過**。自動化：`Acceptance4Spec` headless 驗證三份範例 620 幀端到端（輸出非空 → finished）、輸出兩兩可區分、四符文全覆蓋。手動：人工開窗目視三份範例確認可辨識差異，並於視窗開啟中編輯 JSON 公式字串存檔，熱重載即時生效、無問題（驗收時暫改 `app/Main.hs` 的 `lcSpellPath` 指向各範例，驗收後已還原為 `empty.json`，不入版控） |
 | 0002 測試機械補欄清單（檔名＋補欄位置；斷言語意零變更之確認） | 2026-08-13 | `CompileCoreSpec.hs` 兩處 `Appearance` 建構補 `appAmplify = Nothing`（record 語法一處、位置參數一處）；斷言語意零變更。另一必要調整：`CircleCodecSpec.hs`「未知 rune tag」判例的 fixture 字面值 `"formula"` 因本輪成為合法 tag，改用仍未知的 `"essence"`——斷言語意（未知 tag → 錯誤附位置與合法清單）不變，檔內已加註。合法 tag 清單為尾端純加入，既有「misplaced tag」判例斷言的 `"shape, radiate"`／`"trajectory, timing"` 片段仍成立、零改動。`CompileFoldSpec`／`SampleSpec` 無需補欄 |
 | 0001/0003 測試零觸碰、全綠 | 2026-08-13 | 零觸碰；隨 `cabal test` 全數通過 |
 | `cabal test` 全綠（回歸＋本輪 4 個新測試模組） | 2026-08-13 | 247 examples, 0 failures；`cabal build all` 亦通過（GHC 9.14.1） |
