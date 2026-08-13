@@ -74,3 +74,4 @@
 | [0004](docs/func-spec/0004-expr-rune-wiring.md) | Expr 符文接線：`RangeRune`/`ConvergeRune`/`AmplifyRune`/`FormulaRune`、`ExprV3` 定型、分層時間框架（行為層 t＝粒子年齡、調變層 t＝施法秒數）、fold 加 case、Codec 加 tag | 一般 | spec 0002（已完成）＋0003（已完成） | 已完成 |
 | [0005](docs/func-spec/0005-render-observability.md) | 渲染落實與觀測：動態 quad mesh 單 draw call、`rbBlend`/`rbShape` 生效、HUD＋載入錯誤上屏、鍵盤切換範例、`-O2`＋benchmark 基線；`advanceSpell`/`observeSpell` 分離 | 一般 | spec 0001/0002/0003（已完成）；**與 0004 平行**（檔案零交集，見其 §0.3） | 已完成 |
 | [0006](docs/func-spec/0006-lifecycle-formation.md) | 生命週期四階段與陣形發射器：`Phase`/`PhasePlan`、opt-in `"phases"` JSON、陣形幾何→發射器（fold 步驟 5）、casting 包絡位移、合成收束 ramp；取樣器零變更、既有範例逐位元相容 | 一般 | spec 0002/0003/0004（已完成）；**與 0005 平行**（檔案零交集，見其 §0.2） | 設計定案，待實作 |
+| [0007](docs/func-spec/0007-force-field-layer.md) | 力場層：`ForceField`（gravity/attractor/vortex）、`FieldState` 穩定槽位身分、半隱式尤拉、零場逐位元相容律；ADR-0010 組合點語意；`app/*` 零觸碰 | 一般 | **spec 0006（需已完成）**——修改檔案與 0006 交集（Circle/Compile/Codec），動工門檻＝0006 驗收 | 設計定案，待實作 |

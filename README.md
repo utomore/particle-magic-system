@@ -1,0 +1,100 @@
+# particle-magic
+
+A pure-core, data-driven **particle magic system** for games: magic circles
+(魔法陣) are plain data — Haskell ADTs, serializable as JSON — compiled by a
+pre-written interpreter into deterministic particle emitters. The visual
+effect *is* the magic: every slot and rune of a circle directly determines
+the particles' mathematical behavior.
+
+The public libraries are renderer- and engine-agnostic. This repository's
+executable is only a demo shell (h-raylib, 3D); a host game brings its own
+renderer and consumes the system's dimension-free `RenderBatch` output.
+
+## Architecture in one paragraph
+
+Three rings, dependencies pointing strictly inward
+(details: [docs/architecture.md](docs/architecture.md), ADRs in
+[docs/adr/](docs/adr/)):
+
+- **Pure core** (`magic-core`, zero IO): circle ADT, rune vocabulary, a small
+  math-expression AST, the circle→emitters compiler, and the analytic
+  particle sampler (particle state is a pure function of time — fully
+  deterministic and replayable). Depends only on `base`, `vector`, `deepseq`.
+- **Pure boundary** (`magic-boundary`): the system's only public surface —
+  `Magic.Interface` (cast/step/observe) and `Magic.Codec` (JSON in/out,
+  formula-text parsing).
+- **Effect shell** (this repo's executable): fixed-timestep loop, hot reload,
+  h-raylib rendering. Host games replace this ring entirely.
+
+## Using it from another cabal project
+
+Add the repository and depend on the boundary library (the sublibraries are
+`visibility: public`):
+
+```cabal
+-- cabal.project
+source-repository-package
+  type: git
+  location: https://github.com/utomore/particle-magic-system.git
+  tag: <commit-or-tag>
+```
+
+```cabal
+-- your-package.cabal
+build-depends: particle-magic:magic-boundary
+```
+
+Your code imports `Magic.Interface` and `Magic.Codec` only — nothing else is
+part of the contract.
+
+## The host surface
+
+```haskell
+import Magic.Codec     (loadCircle, saveCircle, renderLoadError)
+import Magic.Interface
+
+-- load + cast once:
+main :: IO ()
+main = do
+  bytes <- BS.readFile "spells/my-spell.json"
+  case loadCircle bytes of
+    Left err -> putStrLn (renderLoadError err)
+    Right circle ->
+      case castSpell (CastRequest circle ctx) of
+        Left cerr  -> print cerr
+        Right spell -> gameLoop spell
+  where
+    ctx = CastContext { casterPos = V3 0 0 0
+                      , casterFacing = V3 0 0 1
+                      , seed = Seed 42 }
+
+-- every simulation step:
+gameLoop :: ActiveSpell -> IO ()
+gameLoop spell = do
+  let (spell', FrameOutput batches) = stepSpell (FrameInput dt) spell
+  mapM_ drawBatchWithYourRenderer batches   -- SoA particle buffers, blend mode, billboard shape
+  if isFinished spell' then pure () else gameLoop spell'
+```
+
+Advanced: `advanceSpell` / `observeSpell` split stepping (advance the
+simulation several fixed steps, sample exactly once per rendered frame) —
+`stepSpell` is their composition. `spellAge` reports seconds since cast.
+
+Determinism guarantee: the same `(Circle, CastContext, dt sequence)` always
+produces bit-identical output — spells are replayable and testable as pure
+functions.
+
+## Repository layout
+
+- `docs/architecture.md` — the system design (Traditional Chinese)
+- `docs/adr/` — architecture decision records
+- `docs/func-spec/` — per-iteration function specs (design-before-code, each
+  todo paired 1-to-1 with a test module)
+- `assets/spells/*.json` — example spells
+- `cabal build all && cabal test` — build and run the full test suite;
+  `cabal run particle-magic` — the raylib demo (first build compiles raylib's
+  C sources); `cabal bench` — pure-core baselines
+
+## License
+
+MIT — see [LICENSE](LICENSE).

@@ -2,7 +2,24 @@ cabal-version:      3.4
 name:               particle-magic
 version:            0.1.0.0
 synopsis:           Particle magic system proof-of-concept
+description:
+    A pure-core, data-driven particle magic system: magic circles are
+    Haskell ADTs (JSON-serializable) compiled into deterministic particle
+    emitters. The public libraries (magic-core, magic-boundary) are
+    renderer- and engine-agnostic; this repo's executable is an h-raylib
+    demo shell. Host games depend on particle-magic:magic-boundary and
+    consume Magic.Interface / Magic.Codec only.
+license:            MIT
+license-file:       LICENSE
+maintainer:         utomore@outlook.com
+category:           Graphics
 build-type:         Simple
+extra-doc-files:    README.md
+                    CHANGELOG.md
+
+source-repository head
+    type:     git
+    location: https://github.com/utomore/particle-magic-system.git
 
 -- Architecture boundary is enforced by this package structure
 -- (func-spec 0001 §3, guarded by test/BoundarySpec.hs):
@@ -12,6 +29,7 @@ build-type:         Simple
 --     so it physically cannot import core internals.
 
 library magic-core
+    visibility:       public
     hs-source-dirs:   src/core
     exposed-modules:  Magic.Types
                       Magic.Particle.Buffer
@@ -21,25 +39,26 @@ library magic-core
                       Magic.Particle.Analytic
                       Magic.Project
                       Magic.Expr
-    build-depends:    base
-                    , vector
-                    , deepseq
+    build-depends:    base     ^>=4.22
+                    , vector   ^>=0.13
+                    , deepseq  ^>=1.5
     default-language: GHC2021
     ghc-options:      -Wall -O2
 
 library magic-boundary
+    visibility:       public
     hs-source-dirs:   src/boundary
     exposed-modules:  Magic.Codec
                       Magic.Interface
                       Magic.Step
                       Magic.Expr.Parse
-    build-depends:    base
+    build-depends:    base                 ^>=4.22
                     , particle-magic:magic-core
-                    , aeson
-                    , bytestring
-                    , text
-                    , megaparsec
-                    , parser-combinators
+                    , aeson                ^>=2.3
+                    , bytestring           ^>=0.12
+                    , text                 ^>=2.1
+                    , megaparsec           ^>=9.8
+                    , parser-combinators   ^>=1.3
     default-language: GHC2021
     ghc-options:      -Wall -O2
 
