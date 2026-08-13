@@ -71,6 +71,7 @@ busyCircle =
           { coreCenter = Just (EssenceRune Fire 1.5)
           , coreNodes = Nodes (Just (DirBias 0.4)) Nothing Nothing Nothing
           }
+    , circlePhases = Nothing
     }
 
 spec :: Spec

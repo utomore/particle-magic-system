@@ -11,10 +11,12 @@ module Magic.Circle
   , TwoOf (..)
   , Core (..)
   , Nodes (..)
+  , PhaseConfig (..)
   , emptyCircle
   ) where
 
 import Magic.Rune (BridgeRune, EssenceRune, InnerRune, NodeRune, OuterRune)
+import Magic.Types (Seconds)
 
 -- | A fixed pair of ring layers. Convention: 'ringA' is the inner layer,
 -- 'ringB' the outer layer — the interpreter folds A before B, and
@@ -34,6 +36,22 @@ data Circle = Circle
   -- ^ Inner ring, 2 layers: behavior.
   , core :: Core
   -- ^ Core: essence.
+  , circlePhases :: !(Maybe PhaseConfig)
+  -- ^ Lifecycle staging (spec 0006 §3.3). 'Nothing' = instant cast, the
+  -- compatibility law's degenerate case; 'emptyCircle' uses it.
+  }
+  deriving (Eq, Show)
+
+-- | Lifecycle staging of the drawn circle (architecture §3.3). Not a
+-- rune: it is a property of the circle as a whole, not of any slot's
+-- meaning (ADR-0003 slot responsibility would be broken by parking it on
+-- a ring instead).
+data PhaseConfig = PhaseConfig
+  { phDraw :: !Seconds
+  -- ^ Drawing-phase length; the codec validates @> 0@.
+  , phConverge :: !Seconds
+  -- ^ Converging-phase length; the codec validates @>= 0@ (0 = instant
+  -- snap).
   }
   deriving (Eq, Show)
 
@@ -63,4 +81,5 @@ emptyCircle =
     , interLayer = Nothing
     , innerRings = TwoOf Nothing Nothing
     , core = Core {coreCenter = Nothing, coreNodes = Nodes Nothing Nothing Nothing Nothing}
+    , circlePhases = Nothing
     }

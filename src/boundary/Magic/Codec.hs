@@ -61,7 +61,7 @@ import Data.Foldable (toList)
 import Data.List (isInfixOf, isPrefixOf, tails)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Magic.Circle (Circle (..), Core (..), Nodes (..), TwoOf (..), emptyCircle)
+import Magic.Circle (Circle (..), Core (..), Nodes (..), PhaseConfig (..), TwoOf (..), emptyCircle)
 import Magic.Expr (Expr, ExprV3 (..))
 import Magic.Expr.Parse (parseExpr, renderExpr, renderExprParseError)
 import Magic.Rune
@@ -157,12 +157,14 @@ parseCircle = withObject "circle" $ \o -> do
   circleCore <- case coreValue of
     Nothing -> pure emptyCore
     Just v -> parseCore v <?> Key "core"
+  phases <- parseSlot "phases" parsePhaseConfig o
   pure
     Circle
       { outerRings = outer
       , interLayer = bridge
       , innerRings = inner
       , core = circleCore
+      , circlePhases = phases
       }
 
 emptyCore :: Core
@@ -321,6 +323,14 @@ parseCore = withObject "core" $ \o -> do
     Just v -> parseNodes v <?> Key "nodes"
   pure (Core center nodes)
 
+-- | Lifecycle staging (spec 0006 §4.5): opt-in circle-level key, not a
+-- rune slot — no "rune" tag, just the two durations.
+parsePhaseConfig :: Value -> Parser PhaseConfig
+parsePhaseConfig = withObject "phases" $ \o -> do
+  draw <- o .: "draw" >>= positive "draw"
+  converge <- o .: "converge" >>= nonNegative "converge"
+  pure (PhaseConfig (Seconds draw) (Seconds converge))
+
 parseEssence :: Value -> Parser EssenceRune
 parseEssence = withObject "core center" $ \o -> do
   element <- o .: "element" >>= parseElement
@@ -393,6 +403,7 @@ saveCircle circle =
             , "bridge" .= maybe Null encodeBridgeRune (interLayer circle)
             , "inner" .= encodeRing encodeInnerRune (innerRings circle)
             , "core" .= encodeCore (core circle)
+            , "phases" .= maybe Null encodePhaseConfig (circlePhases circle)
             ]
       ]
 
@@ -485,6 +496,10 @@ encodeElement e = case e of
   Fire -> "fire"
   Water -> "water"
   Lightning -> "lightning"
+
+encodePhaseConfig :: PhaseConfig -> Value
+encodePhaseConfig (PhaseConfig (Seconds d) (Seconds c)) =
+  object ["draw" .= d, "converge" .= c]
 
 encodeNodeSlot :: Maybe NodeRune -> Value
 encodeNodeSlot slot = case slot of

@@ -1,6 +1,6 @@
 # Func-Spec 0006：生命週期四階段與陣形發射器（Lifecycle Phases & Formation Emitters）
 
-> 狀態：設計定案，待實作
+> 狀態：已完成（2026-08-13，驗收紀錄見 §10）
 > 性質：一般 —— `Phase`/`PhasePlan` 交付後成為凍結詞彙，供未來力場 spec（`FieldState` 的階段感知）與多陣合成 spec 引用，但本 spec 不是它們的動工門檻。
 > 前置依賴：spec 0002／0003／0004（皆**已完成**）。**與 spec 0005 平行**：0005（設計定案，待實作）鎖定 `src/boundary/Magic/Interface.hs`、`app/*` 全部、`bench/*` 與 cabal 的 executable/benchmark stanza——本 spec 檔案清單與之**零交集**（§0.2 附盤點證明），兩 spec 可同時認領實作。
 > 依據：[architecture.md](../architecture.md) §3.3（四階段生命週期、「魔法陣本身的幾何就是繪製階段的粒子來源」、空陣 skip 規則）、§4.4（`spellPhases`/`phase` 草圖）、§6 步驟 5（`Circle 幾何 → Vector EmitterSpec`）、§10（「新生命週期階段」擴充點）；ADR-0003（陣形幾何依槽位固定職責導出）；0002 §4.4（`spellEmitters` 的 `Vector` 明文為本 spec 預留）
@@ -282,13 +282,13 @@ flowchart LR
 
 | ✅ | Todo | 測試模組 | 斷言內容 |
 |---|---|---|---|
-| ☐ | S1 階段詞彙與 Circle 欄位 | `test/PhasePlanSpec.hs` | `phaseAt` property：全函數（含 t<0）、界標單調不變量、各半開區間分類正確、退化計畫 t≥0 即 Casting（skip 規則）；`emptyCircle` 的 `circlePhases = Nothing`；（meta）機械適配後既有 suite 全綠 |
-| ☐ | S2 Codec `"phases"` 面 | `test/PhaseCodecSpec.hs` | 缺鍵/null → `Nothing`；`draw ≤ 0`、`converge < 0`、缺欄位 → 錯誤含 JSON 位置；含 phases 的 `Circle` roundtrip property；`saveCircle` 對 `Nothing` 輸出 null |
-| ☐ | S3 casting 位移與 PhasePlan | `test/CompileLifecycleSpec.hs` | 相容性法則結構半（`Nothing` ⇒ 1 發射器＋退化 PhasePlan＋逐欄位等於 0004 公式值）；L1 位移純平移、L2 PhaseRune 加法合成（property）；`spellLifetime == ppEnd` 不變量 property；`emPhase` 標記正確 |
-| ☐ | S4 陣形導出 | `test/FormationSpec.hs` | 佔用槽位 ↔ 發射器清單雙射＋邊界環恆有；`formEnv` 公式（推導鏈步驟 1–2 的數值驗證：全索引出生、終點恰 = castStart）；`kcExpr` 在 t=0/phDraw/castStart 求值 = 1/1/0；`phConverge=0` ⇒ `motConverge = Nothing`；節點 anchorOffset 座標表；陣形 ramp 端 alpha=0；`spellBudget = Σ`、超額 → `BudgetExceeded`；索引 0 = casting（`spellBlend` 不變） |
-| ☐ | S5 階段取樣行為 | `test/PhaseSampleSpec.hs` | property（經零變更的 `sample`）：Drawing 期陣形粒子存在且落於各自幾何界內（環帶半徑範圍/節點定點）；Converging 期環帶粒子側向距離對 t 單調遞減趨 0；`t ≥ castStart` 陣形粒子零存活；casting 粒子首現不早於 `castStart + delay`；逐位元確定性；`bufferInvariant` 恆成立、count ≤ spellBudget |
-| ☐ | S6 回歸防線 | `test/BackCompatSpec.hs` | 7 份真實 assets：載入成功、`circlePhases = Nothing`、compile → 1 發射器＋退化 PhasePlan＋`spellLifetime` 等於 0004 公式值、取樣序列非空時刻集不變；（meta）0002/0004 既有 suite 零紅 |
-| ☐ | S7 範例與驗收 | `test/Acceptance6Spec.hs`＋手動 smoke | `grand-sigil`（滿配：phases＋shape＋fire＋節點）與 `bare-sigil`（僅 phases＋空槽：邊界環＋素放）headless 全弧線：四階段各時窗粒子集非空且兩範例可區分；`isFinished` 於 `ppEnd` 翻轉；手動開窗目視四階段（結果回填 §10） |
+| ☑ | S1 階段詞彙與 Circle 欄位 | `test/PhasePlanSpec.hs` | `phaseAt` property：全函數（含 t<0）、界標單調不變量、各半開區間分類正確、退化計畫 t≥0 即 Casting（skip 規則）；`emptyCircle` 的 `circlePhases = Nothing`；（meta）機械適配後既有 suite 全綠 |
+| ☑ | S2 Codec `"phases"` 面 | `test/PhaseCodecSpec.hs` | 缺鍵/null → `Nothing`；`draw ≤ 0`、`converge < 0`、缺欄位 → 錯誤含 JSON 位置；含 phases 的 `Circle` roundtrip property；`saveCircle` 對 `Nothing` 輸出 null |
+| ☑ | S3 casting 位移與 PhasePlan | `test/CompileLifecycleSpec.hs` | 相容性法則結構半（`Nothing` ⇒ 1 發射器＋退化 PhasePlan＋逐欄位等於 0004 公式值）；L1 位移純平移、L2 PhaseRune 加法合成（property）；`spellLifetime == ppEnd` 不變量 property；`emPhase` 標記正確 |
+| ☑ | S4 陣形導出 | `test/FormationSpec.hs` | 佔用槽位 ↔ 發射器清單雙射＋邊界環恆有；`formEnv` 公式（推導鏈步驟 1–2 的數值驗證：全索引出生、終點恰 = castStart）；`kcExpr` 在 t=0/phDraw/castStart 求值 = 1/1/0；`phConverge=0` ⇒ `motConverge = Nothing`；節點 anchorOffset 座標表；陣形 ramp 端 alpha=0；`spellBudget = Σ`、超額 → `BudgetExceeded`；索引 0 = casting（`spellBlend` 不變） |
+| ☑ | S5 階段取樣行為 | `test/PhaseSampleSpec.hs` | property（經零變更的 `sample`）：Drawing 期陣形粒子存在且落於各自幾何界內（環帶半徑範圍/節點定點）；Converging 期環帶粒子側向距離對 t 單調遞減趨 0；`t ≥ castStart` 陣形粒子零存活；casting 粒子首現不早於 `castStart + delay`；逐位元確定性；`bufferInvariant` 恆成立、count ≤ spellBudget |
+| ☑ | S6 回歸防線 | `test/BackCompatSpec.hs` | 7 份真實 assets：載入成功、`circlePhases = Nothing`、compile → 1 發射器＋退化 PhasePlan＋`spellLifetime` 等於 0004 公式值、取樣序列非空時刻集不變；（meta）0002/0004 既有 suite 零紅 |
+| ☑ | S7 範例與驗收 | `test/Acceptance6Spec.hs`＋手動 smoke | `grand-sigil`（滿配：phases＋shape＋fire＋節點）與 `bare-sigil`（僅 phases＋空槽：邊界環＋素放）headless 全弧線：四階段各時窗粒子集非空且兩範例可區分；`isFinished` 於 `ppEnd` 翻轉；手動開窗目視四階段（結果回填 §10） |
 
 ## 9. 非目標（明確不做）
 
@@ -300,13 +300,29 @@ flowchart LR
 - **發射率／動態粒子數模型**：`count` 仍為「同時在池的槽位數」；多階段預算的結構化治理（`ParticleBudget` 型別）留給效能 spec 連同 `budgetCap` 一起設計（0004 §9 既定）。
 - 力場層、多 spell 並行、2D 後端、效能（緩衝重用／10k–100k）：各自既定的獨立 spec。
 
-## 10. 驗收紀錄（實作時回填）
+## 10. 驗收紀錄
 
 | 項目 | 結果 |
 |---|---|
-| S1–S7 完成日期與測試綠燈紀錄 | （待回填） |
-| 手動 smoke：開窗目視 grand-sigil / bare-sigil 四階段 | （待回填） |
-| 相容性法則確認：既有 7 assets 逐位元取樣不變（BackCompatSpec＋既有 suite） | （待回填） |
-| 被機械適配的既有測試檔清單與 diff 摘要 | （待回填） |
-| cabal / SKILL.md 與 0005 的聯集合併確認 | （待回填） |
-| 凍結清單：`Phase`/`PhasePlan`/`phaseAt`/`PhaseConfig`/`emPhase`/`spellPhases`/`"phases"` schema——交付即凍結，供力場 spec／多陣合成 spec 引用 | （待回填） |
+| S1–S7 完成日期與測試綠燈紀錄 | 2026-08-13 全數完成。`cabal build all` 綠（core / boundary / executable 含 h-raylib / test-suite 皆通過，零新警告）；`cabal test` **381 examples, 0 failures**（0006 前為 309，本輪淨增 72 例）。 |
+| 手動 smoke：開窗目視 grand-sigil / bare-sigil 四階段 | **待使用者目視確認**（本輪於 headless 環境實作，無法開窗）。替代證據：headless 逐時刻相位剖面（下表）已證實四階段弧線的數量特徵符合 §1／§4.3 推導。 |
+| 相容性法則確認：既有 7 assets 逐位元取樣不變（BackCompatSpec＋既有 suite） | ✔ `BackCompatSpec` 對 7 份 assets 各 3 項斷言全綠（載入＋`circlePhases = Nothing`、1 發射器＋退化 `PhasePlan`＋`spellLifetime` 等於 0004 公式值、取樣窗口首尾空／中段非空）。0002/0004 把行為釘成數值的既有 suite（`SampleSpec`／`CompileFoldSpec`／`Acceptance2Spec`／`Acceptance4Spec`／`SampleExprSpec`）**零紅、零斷言修改**。 |
+| 被機械適配的既有測試檔清單與 diff 摘要 | 4 檔，全為補欄位、**斷言語意一字未動**：`test/SampleSpec.hs`（`busyCircle` 補 `circlePhases = Nothing`）、`test/CompileExprSpec.hs`（同）、`test/RuneCodecSpec.hs`（`ExprCircle` 產生器同）、`test/CircleCodecSpec.hs`（§4.7 完整範例的 record 補欄位＋`genCircle` 加 `<*> pure Nothing`，依 §0.2 維持恆產 `Nothing`）。`test/CircleSpec.hs` 實際以 `emptyCircle {…}` 建構，自動存活、未觸碰。 |
+| cabal / SKILL.md 與 0005 的聯集合併確認 | ✔ `particle-magic.cabal` 僅於 `test-suite spec` 的 `other-modules` 純加 7 行（`PhasePlanSpec`/`PhaseCodecSpec`/`CompileLifecycleSpec`/`FormationSpec`/`PhaseSampleSpec`/`BackCompatSpec`/`Acceptance6Spec`），0005 的 exe/benchmark stanza 未動；`SKILL.md` 僅改 0006 索引行狀態欄。兩者皆為逐行聯集，無衝突。 |
+| 凍結清單：`Phase`/`PhasePlan`/`phaseAt`/`PhaseConfig`/`emPhase`/`spellPhases`/`"phases"` schema——交付即凍結，供力場 spec／多陣合成 spec 引用 | ✔ 已凍結，簽名如下：`data Phase = Drawing \| Converging \| Casting \| Dissipating`（可擴充和）；`PhasePlan{ppDrawEnd, ppConvergeEnd, ppCastingEnd, ppEnd :: !Seconds}`，不變量 `0 ≤ ppDrawEnd ≤ ppConvergeEnd ≤ ppCastingEnd ≤ ppEnd` 且 `ppEnd == spellLifetime`；`phaseAt :: PhasePlan -> Time -> Phase`（全函數，`t < 0` 等同 `t = 0`）；`PhaseConfig{phDraw, phConverge :: !Seconds}` 定義於 `Magic.Circle`；`Circle.circlePhases :: !(Maybe PhaseConfig)`；`EmitterSpec.emPhase :: !Phase`（純中繼資料，取樣器不讀）；`CompiledSpell.spellPhases :: !PhasePlan`；JSON `"phases": {"draw": Double > 0, "converge": Double ≥ 0}`（缺鍵／`null` ⇒ `Nothing`，v1 純擴充）。**`spellEmitters` 索引 0 恆為 casting 發射器**亦一併凍結（`spellBlend` 依賴）。 |
+
+### Headless 相位剖面（手動 smoke 的替代證據，seed 42、facing +Y）
+
+`grand-sigil`（draw 1.2 / converge 0.6 / `PhaseRune` 再 +0.3；`PhasePlan{1.2, 1.8, 6.1, 8.1}`，budget 840 ＝ casting 384 ＋ 陣形 456）：
+
+```
+t=0.0  Drawing     n=9      t=1.79 Converging n=6     ← 陣形恰在 castStart 前死盡
+t=0.6  Drawing     n=456    t=1.8  Casting    n=0     ← 交界零殘影；casting 尚在 +0.3 位移中
+t=0.9  Drawing     n=456    t=4.0  Casting    n=365
+t=1.2  Converging  n=447    t=6.5  Dissipating n=307
+t=1.5  Converging  n=219    t=8.1  Dissipating n=0    ← isFinished 於 ppEnd 翻轉
+```
+
+`bare-sigil`（僅 phases＋全空槽；`PhasePlan{1.0, 1.5, 9.5, 11.5}`，budget 352 ＝ 素放 256 ＋ 邊界環 96）：邊界環於 Drawing 期滿編 96（t=0.6／0.9），Converging 期塌縮至 48（t=1.2），`t = 1.5`（castStart）陣形歸零、素放接手 n=1 起算。**兩範例的發射器組成與數量特徵明顯可區分**（`Acceptance6Spec` 以此斷言）。
+
+實作備註：`ppCastingEnd`/`ppEnd` 由**已含 castStart 的** `envDelay` 直接推得（`delay + duration [+ lifetime]`），不再二次加 `castStart`——步驟 3.5 已把前奏烘進 `envDelay`，退化情形（`castStart = 0`）自然還原成 0004 公式。

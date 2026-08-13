@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "name": "bare-sigil",
+  "circle": {
+    "phases": { "draw": 1.0, "converge": 0.5 }
+  }
+}

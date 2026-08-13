@@ -123,6 +123,7 @@ spec = describe "Expr rune fold landing spots (spec 0004 S1)" $ do
                     { coreCenter = Just (EssenceRune Fire 1.5)
                     , coreNodes = Nodes Nothing Nothing Nothing Nothing
                     }
+              , circlePhases = Nothing
               }
           em = theEmitter c
       motRange (emMotion em) `shouldBe` Nothing
