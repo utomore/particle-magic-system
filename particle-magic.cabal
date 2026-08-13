@@ -25,7 +25,7 @@ library magic-core
                     , vector
                     , deepseq
     default-language: GHC2021
-    ghc-options:      -Wall
+    ghc-options:      -Wall -O2
 
 library magic-boundary
     hs-source-dirs:   src/boundary
@@ -41,7 +41,7 @@ library magic-boundary
                     , megaparsec
                     , parser-combinators
     default-language: GHC2021
-    ghc-options:      -Wall
+    ghc-options:      -Wall -O2
 
 executable particle-magic
     main-is:          Main.hs
@@ -51,6 +51,8 @@ executable particle-magic
                     , App.Loop
                     , App.TestInterp
                     , App.Render.Raylib3D
+                    , App.Render.Quads
+                    , App.Hud
     build-depends:    base
                     , particle-magic:magic-boundary
                     , h-raylib
@@ -61,7 +63,7 @@ executable particle-magic
                     , time
                     , containers
     default-language: GHC2021
-    ghc-options:      -Wall -threaded
+    ghc-options:      -Wall -threaded -O2
 
 test-suite spec
     type:             exitcode-stdio-1.0
@@ -96,10 +98,20 @@ test-suite spec
                     , RuneCodecSpec
                     , SampleExprSpec
                     , Acceptance4Spec
+                    , StepObserveSpec
+                    , QuadBatchSpec
+                    , SceneEffectsSpec
+                    , ReloadStatusSpec
+                    , HudSpec
+                    , SpellSwitchSpec
+                    , OptFlagsSpec
+                    , Acceptance5Spec
                     , App.Effects
                     , App.HotReload
                     , App.Loop
                     , App.TestInterp
+                    , App.Render.Quads
+                    , App.Hud
     build-depends:    base
                     , particle-magic:magic-core
                     , particle-magic:magic-boundary
@@ -115,3 +127,20 @@ test-suite spec
     build-tool-depends: hspec-discover:hspec-discover
     default-language: GHC2021
     ghc-options:      -Wall -threaded
+
+-- Baseline measurements for the future throughput spec (func-spec 0005
+-- §8 S8). A separate stanza so it is outside the library/executable
+-- whitelist BoundarySpec guards, and h-raylib-free: all it measures is
+-- pure code.
+benchmark bench
+    type:             exitcode-stdio-1.0
+    main-is:          Bench.hs
+    hs-source-dirs:   bench, app
+    other-modules:    App.Render.Quads
+    build-depends:    base
+                    , particle-magic:magic-boundary
+                    , tasty-bench
+                    , bytestring
+                    , vector
+    default-language: GHC2021
+    ghc-options:      -Wall -O2
