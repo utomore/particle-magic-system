@@ -23,6 +23,7 @@ module Magic.Expr
   , Fun1 (..)
   , Fun2 (..)
   , Fun3 (..)
+  , ExprV3 (..)
 
     -- * Variable environment
   , ExprEnv (..)
@@ -30,10 +31,11 @@ module Magic.Expr
     -- * Evaluation
   , evalExpr
   , evalFinite
+  , evalFiniteV3
   , exprSize
   ) where
 
-import Magic.Types (Seed, hashChan)
+import Magic.Types (Seed, V3 (..), hashChan)
 
 -- | A math formula. Fixed arity is encoded in the constructors ('Fun3'
 -- carries exactly three children), so an ill-formed application is
@@ -67,6 +69,17 @@ data Fun2 = FMin | FMax
 
 data Fun3 = FClamp
   deriving (Eq, Show, Enum, Bounded)
+
+-- | A formula per spatial component (func-spec 0004 §4.2, the fixing of
+-- the 0003 §4.5 reservation). Payload of the formula trajectory: the
+-- three components are assembled in the trajectory's travel frame by the
+-- sampling side. Permanent type — frozen once spec 0004 delivers.
+data ExprV3 = ExprV3
+  { exX :: Expr
+  , exY :: Expr
+  , exZ :: Expr
+  }
+  deriving (Eq, Show)
 
 -- | Everything a formula can read. Built per particle per frame by the
 -- sampling side (spec 0004); this module only defines the shape.
@@ -142,6 +155,12 @@ evalFinite :: Expr -> ExprEnv -> Float
 evalFinite e env =
   let v = evalExpr e env
    in if isNaN v || isInfinite v then 0 else v
+
+-- | Componentwise 'evalFinite': each component flushes NaN/±Infinity to
+-- 0 independently of the others.
+evalFiniteV3 :: ExprV3 -> ExprEnv -> V3
+evalFiniteV3 (ExprV3 x y z) env =
+  V3 (evalFinite x env) (evalFinite y env) (evalFinite z env)
 
 -- | AST node count (every constructor counts as one node). Used by the
 -- parse-layer size gate and by tests.

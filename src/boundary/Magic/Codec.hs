@@ -7,12 +7,19 @@
 -- slot", so @"circle": {}@ still decodes to 'emptyCircle' and the shipped
 -- @empty.json@ loads byte-for-byte unchanged.
 --
--- Runes are tagged by a @"rune"@ field. Valid tags this round:
--- outer @shape@ | @radiate@, bridge @phase@, inner @trajectory@ | @timing@,
--- nodes @dir-bias@. Unknown tags (including future spec-0003 tags) are load
--- errors listing the valid tags for that slot. All new errors go through
--- the frozen 'LoadError' machinery as 'JsonError' with an aeson JSON path
+-- Runes are tagged by a @"rune"@ field. Valid tags: outer @shape@ |
+-- @radiate@ | @range@, bridge @phase@ | @converge@ | @amplify@, inner
+-- @trajectory@ | @timing@ | @formula@, nodes @dir-bias@ (the Expr-payload
+-- tags added by spec 0004 §4.6). Unknown tags are load errors listing the
+-- valid tags for that slot. All new errors go through the frozen
+-- 'LoadError' machinery as 'JsonError' with an aeson JSON path
 -- (e.g. @$.circle.inner[0]@) — no new constructors.
+--
+-- Formula fields are strings parsed here with 'parseExpr' (spec 0003's
+-- gatekeeper: syntax, unknown names, the node budget and non-literal
+-- @chan@ arguments are all rejected at load time); a failure becomes an
+-- aeson 'Parser' failure whose message is 'renderExprParseError' (with
+-- line/column), wrapped in 'JsonError' with the JSON path.
 --
 -- Parameter validation happens here, at the boundary (the core does no
 -- defensive checks): geometry must be positive (@rInner < rOuter@),
@@ -55,6 +62,8 @@ import Data.List (isInfixOf, isPrefixOf, tails)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Magic.Circle (Circle (..), Core (..), Nodes (..), TwoOf (..), emptyCircle)
+import Magic.Expr (Expr, ExprV3 (..))
+import Magic.Expr.Parse (parseExpr, renderExpr, renderExprParseError)
 import Magic.Rune
   ( BridgeRune (..)
   , Element (..)
@@ -219,10 +228,11 @@ runeTag slotName valid v k = withObject slotName go v
 
 parseOuterRune :: Value -> Parser OuterRune
 parseOuterRune = \v ->
-  runeTag "outer ring slot" ["shape", "radiate"] v $ \tag o -> case tag of
+  runeTag "outer ring slot" ["shape", "radiate", "range"] v $ \tag o -> case tag of
     "shape" -> do
       shapeValue <- o .: "shape"
       ShapeRune <$> (parseFaceShape shapeValue <?> Key "shape")
+    "range" -> RangeRune <$> exprField o "expr"
     _ -> RadiateRune <$> (o .: "mode" >>= parseRadiationMode)
 
 parseFaceShape :: Value -> Parser FaceShape
@@ -259,14 +269,20 @@ parseRadiationMode = withText "mode" $ \t -> case t of
 
 parseBridgeRune :: Value -> Parser BridgeRune
 parseBridgeRune = \v ->
-  runeTag "bridge slot" ["phase"] v $ \_tag o -> do
-    shift <- o .: "shift" >>= nonNegative "shift"
-    pure (PhaseRune (Seconds shift))
+  runeTag "bridge slot" ["phase", "converge", "amplify"] v $ \tag o -> case tag of
+    "converge" -> ConvergeRune <$> exprField o "expr"
+    "amplify" -> AmplifyRune <$> exprField o "expr"
+    _ -> do
+      shift <- o .: "shift" >>= nonNegative "shift"
+      pure (PhaseRune (Seconds shift))
 
 parseInnerRune :: Value -> Parser InnerRune
 parseInnerRune = \v ->
-  runeTag "inner ring slot" ["trajectory", "timing"] v $ \tag o -> case tag of
+  runeTag "inner ring slot" ["trajectory", "timing", "formula"] v $ \tag o -> case tag of
     "trajectory" -> TrajectoryRune <$> parseTrajectory o
+    "formula" ->
+      FormulaRune
+        <$> (ExprV3 <$> exprField o "x" <*> exprField o "y" <*> exprField o "z")
     _ -> TimingRune <$> parseEnvelope o
 
 parseTrajectory :: Object -> Parser Trajectory
@@ -336,6 +352,18 @@ parseNodeRune = \v ->
   runeTag "core node slot" ["dir-bias"] v $ \_tag o ->
     DirBias <$> o .: "strength"
 
+-- | A formula string field: parsed with 'parseExpr' right here at the
+-- boundary, so a 'Right' circle never carries an unchecked formula. The
+-- failure message is 'renderExprParseError' (line/column position); aeson
+-- prepends the JSON path (spec 0004 §4.6).
+exprField :: Object -> AK.Key -> Parser Expr
+exprField o key = do
+  raw <- o .: key :: Parser Text
+  case parseExpr raw of
+    Right e -> pure e
+    Left err ->
+      fail ("invalid formula:\n" ++ renderExprParseError err) <?> Key key
+
 -- Validation helpers ---------------------------------------------------------
 
 positive :: String -> Double -> Parser Double
@@ -375,6 +403,7 @@ encodeOuterRune :: OuterRune -> Value
 encodeOuterRune rune = case rune of
   ShapeRune shape -> object ["rune" .= ("shape" :: Text), "shape" .= encodeFaceShape shape]
   RadiateRune mode -> object ["rune" .= ("radiate" :: Text), "mode" .= encodeRadiationMode mode]
+  RangeRune e -> object ["rune" .= ("range" :: Text), "expr" .= renderExpr e]
 
 encodeFaceShape :: FaceShape -> Value
 encodeFaceShape shape = case shape of
@@ -389,11 +418,17 @@ encodeRadiationMode mode = case mode of
   RadialOutward -> "radial-outward"
 
 encodeBridgeRune :: BridgeRune -> Value
-encodeBridgeRune (PhaseRune (Seconds shift)) =
-  object ["rune" .= ("phase" :: Text), "shift" .= shift]
+encodeBridgeRune rune = case rune of
+  PhaseRune (Seconds shift) -> object ["rune" .= ("phase" :: Text), "shift" .= shift]
+  ConvergeRune e -> object ["rune" .= ("converge" :: Text), "expr" .= renderExpr e]
+  AmplifyRune e -> object ["rune" .= ("amplify" :: Text), "expr" .= renderExpr e]
 
 encodeInnerRune :: InnerRune -> Value
 encodeInnerRune rune = case rune of
+  -- A formula trajectory is only reachable through 'FormulaRune' in the
+  -- schema, so both spellings encode to the same "formula" object (they
+  -- compile identically).
+  TrajectoryRune (Formula v3) -> encodeFormula v3
   TrajectoryRune t -> object (("rune" .= ("trajectory" :: Text)) : trajectoryFields t)
   TimingRune (Envelope (Seconds d) (Seconds dur) (Seconds life)) ->
     object
@@ -402,6 +437,16 @@ encodeInnerRune rune = case rune of
       , "duration" .= dur
       , "lifetime" .= life
       ]
+  FormulaRune v3 -> encodeFormula v3
+
+encodeFormula :: ExprV3 -> Value
+encodeFormula (ExprV3 x y z) =
+  object
+    [ "rune" .= ("formula" :: Text)
+    , "x" .= renderExpr x
+    , "y" .= renderExpr y
+    , "z" .= renderExpr z
+    ]
 
 trajectoryFields :: Trajectory -> [Pair]
 trajectoryFields t = case t of
@@ -410,6 +455,10 @@ trajectoryFields t = case t of
     ["kind" .= ("spiral" :: Text), "speed" .= speed, "radius" .= radius, "freq" .= freq]
   Orbit radius freq ->
     ["kind" .= ("orbit" :: Text), "radius" .= radius, "freq" .= freq]
+  -- Unreachable: encodeInnerRune intercepts formula trajectories above;
+  -- kept total for the exhaustiveness check.
+  Formula (ExprV3 x y z) ->
+    ["x" .= renderExpr x, "y" .= renderExpr y, "z" .= renderExpr z]
 
 encodeCore :: Core -> Value
 encodeCore c =

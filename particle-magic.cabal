@@ -92,6 +92,10 @@ test-suite spec
                     , ExprParseSpec
                     , ExprRenderSpec
                     , ExprGoldenSpec
+                    , CompileExprSpec
+                    , RuneCodecSpec
+                    , SampleExprSpec
+                    , Acceptance4Spec
                     , App.Effects
                     , App.HotReload
                     , App.Loop

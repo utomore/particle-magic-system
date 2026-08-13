@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "name": "lissajous",
+  "circle": {
+    "outer": [
+      { "rune": "shape", "shape": { "kind": "ring", "rInner": 0.05, "rOuter": 0.12 } },
+      { "rune": "radiate", "mode": "along-normal" }
+    ],
+    "bridge": null,
+    "inner": [
+      { "rune": "formula", "x": "sin(t*3)*0.6", "y": "sin(t*2)*0.6", "z": "t*2" },
+      { "rune": "timing", "delay": 0.0, "duration": 4.0, "lifetime": 2.0 }
+    ],
+    "core": {
+      "center": { "element": "lightning", "power": 1.0 },
+      "nodes": { "north": null, "south": null, "east": null, "west": null }
+    }
+  }
+}
