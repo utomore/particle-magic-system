@@ -1,11 +1,18 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TypeOperators #-}
 
--- | The main loop (func-spec 0001 §5.2): pure step planning from
--- 'Magic.Step', spell stepping through 'Magic.Interface', all IO behind
--- the 'Clock' / 'FileWatch' / 'Raylib' effects — so the exact same loop
--- runs against the real window and against the headless test
--- interpreters.
+-- | The main loop (func-spec 0001 §5.2, extended by 0005): pure step
+-- planning from 'Magic.Step', spell stepping through 'Magic.Interface',
+-- all IO behind the 'Clock' / 'FileWatch' / 'Raylib' effects — so the
+-- exact same loop runs against the real window and against the headless
+-- test interpreters.
+--
+-- Spec 0005 adds three things to it: time advance and sampling are
+-- separated ('advanceSpell' n times, 'observeSpell' exactly once per
+-- rendered frame), load failures become observable instead of silent
+-- (they keep the previous spell alive and put their full text on the
+-- HUD), and the demo can cycle through the example spells from the
+-- keyboard.
 module App.Loop
   ( LoopConfig (..)
   , LoopStats (..)
@@ -15,7 +22,7 @@ module App.Loop
 
 import qualified Data.ByteString as BS
 import Effectful (Eff, (:>))
-import Magic.Codec (loadCircle)
+import Magic.Codec (loadCircle, renderLoadError)
 import Magic.Interface
   ( ActiveSpell
   , CastContext
@@ -24,35 +31,48 @@ import Magic.Interface
   , DeltaTime (..)
   , FrameInput (..)
   , FrameOutput (..)
+  , RenderBatch (..)
   , Time (..)
   , V3 (..)
+  , advanceSpell
   , castSpell
   , isFinished
+  , observeSpell
+  , pbCount
   , spellAge
-  , stepSpell
   )
 import Magic.Step (StepPlan (..), plan)
 
 import App.Effects
   ( Camera (..)
   , Clock
+  , DemoInput (..)
   , FileWatch
+  , HudView (..)
   , Raylib
+  , ReloadStatus (..)
   , checkChanged
-  , drawBatch
+  , drawHud
+  , drawScene
   , now
+  , pollInput
   , readBytes
   , shouldClose
   , withFrame
   , withWindow
   )
+import App.Hud (fpsEma)
 
 data LoopConfig = LoopConfig
   { lcSimDt :: !Double
   -- ^ Fixed simulation timestep (1/60).
   , lcMaxStepsPerFrame :: !Int
   -- ^ Spiral-of-death clamp (8).
-  , lcSpellPath :: !FilePath
+  , lcSpellPaths :: ![FilePath]
+  -- ^ Spell files the demo cycles through; scanned once at startup and
+  -- non-empty (Main's job). Rescanning the directory is out of scope.
+  , lcSpellIndex :: !Int
+  -- ^ Index into 'lcSpellPaths' to start from.
   , lcCamera :: !Camera
   , lcCastCtx :: !CastContext
   , lcWindowSize :: !(Int, Int)
@@ -82,16 +102,25 @@ defaultCamera =
     , camFovY = 45
     }
 
+-- | Smoothing factor of the HUD frame-rate readout.
+fpsAlpha :: Double
+fpsAlpha = 0.1
+
 data LoopState = LoopState
   { stCircle :: !(Maybe Circle)
   -- ^ Latest successfully loaded circle (kept for finish restarts).
   , stSpell :: !(Maybe ActiveSpell)
-  , stOutput :: !FrameOutput
   , stAcc :: !Double
   , stLastTime :: !Double
   , stFrames :: !Int
   , stSimSteps :: !Int
   , stCasts :: !Int
+  , stIndex :: !Int
+  -- ^ Position in 'lcSpellPaths'.
+  , stPath :: !FilePath
+  -- ^ The file currently loaded and watched.
+  , stReload :: !ReloadStatus
+  , stFpsEma :: !Double
   }
 
 runLoop
@@ -100,19 +129,26 @@ runLoop
   -> Eff es LoopStats
 runLoop cfg =
   withWindow (fst (lcWindowSize cfg)) (snd (lcWindowSize cfg)) (lcWindowTitle cfg) $ do
-    (circle0, spell0, casts0) <- loadAndCast cfg
     t0 <- now
+    let index0 = normalizeIndex cfg (lcSpellIndex cfg)
+        path0 = pathAt cfg index0
+    loaded <- loadAndCast cfg path0
     frameLoop
       cfg
       LoopState
-        { stCircle = circle0
-        , stSpell = spell0
-        , stOutput = FrameOutput []
+        { stCircle = either (const Nothing) (Just . fst) loaded
+        , stSpell = either (const Nothing) (Just . snd) loaded
         , stAcc = 0
         , stLastTime = t0
         , stFrames = 0
         , stSimSteps = 0
-        , stCasts = casts0
+        , stCasts = either (const 0) (const 1) loaded
+        , stIndex = index0
+        , stPath = path0
+        , -- A failing initial load is reported like any other failure, so
+          -- the demo shows the reason instead of a black window.
+          stReload = either (ReloadFailed t0) (const ReloadIdle) loaded
+        , stFpsEma = 0
         }
 
 frameLoop
@@ -135,73 +171,137 @@ frameLoop cfg st = do
       tNow <- now
       let elapsed = tNow - stLastTime st
 
-      -- Hot reload: mtime change => reload + re-cast (state reset,
-      -- architecture §8.3 POC strategy).
-      changed <- checkChanged (lcSpellPath cfg)
+      input <- pollInput
+      let index' = shiftIndex cfg input (stIndex st)
+
       st1 <-
-        if changed
+        if index' /= stIndex st
           then do
-            (c, s, casts) <- loadAndCast cfg
-            pure $ case s of
-              -- Load/compile errors keep the old spell running.
-              Nothing -> st
-              Just _ -> st {stCircle = c, stSpell = s, stCasts = stCasts st + casts}
-          else pure st
+            -- Switching spell: load the new file, re-cast, and let the
+            -- watcher follow the new path from here on.
+            let path' = pathAt cfg index'
+            loaded <- loadAndCast cfg path'
+            pure (applyLoad tNow (st {stIndex = index', stPath = path'}) loaded)
+          else do
+            -- Hot reload: mtime change => reload + re-cast (state reset,
+            -- architecture §8.3 POC strategy).
+            changed <- checkChanged (stPath st)
+            if changed
+              then applyLoad tNow st <$> loadAndCast cfg (stPath st)
+              else pure (recastOnRequest cfg input st)
 
       -- A finished spell restarts from the kept circle (walking-skeleton
       -- demo keeps the fountain alive).
-      st2 <- case (stSpell st1, stCircle st1) of
-        (Just spell, Just circle)
-          | isFinished spell ->
-              case castSpell (CastRequest circle (lcCastCtx cfg)) of
-                Right fresh ->
-                  pure st1 {stSpell = Just fresh, stCasts = stCasts st1 + 1}
-                Left _ -> pure st1 {stSpell = Nothing}
-        _ -> pure st1
+      let st2 = case (stSpell st1, stCircle st1) of
+            (Just spell, Just circle)
+              | isFinished spell -> recastFrom cfg circle st1
+            _ -> st1
 
-      -- Fixed-step planning (pure), then n pure spell steps.
+      -- Fixed-step planning (pure), then n pure time advances and exactly
+      -- one sampling — the frame's whole render cost, by construction.
       let StepPlan n acc' = plan (lcSimDt cfg) (lcMaxStepsPerFrame cfg) elapsed (stAcc st2)
-          (spell', output', stepsRun) = case stSpell st2 of
-            Nothing -> (Nothing, stOutput st2, 0)
-            Just spell -> stepTimes n spell (stOutput st2)
+          (spell', stepsRun) = case stSpell st2 of
+            Nothing -> (Nothing, 0)
+            Just spell -> (Just (advanceTimes cfg n spell), max 0 n)
+          output' = maybe (FrameOutput []) observeSpell spell'
+          fps' = fpsEma fpsAlpha elapsed (stFpsEma st2)
+          hud =
+            HudView
+              { hvFps = fps'
+              , hvParticles = sum (map (pbCount . rbParticles) (batches output'))
+              , hvSpellPath = stPath st2
+              , hvSpellAge = maybe 0 (\s -> let Time a = spellAge s in a) spell'
+              , hvReload = stReload st2
+              }
 
-      -- Render the newest output every frame (even when n == 0).
-      withFrame $ mapM_ (drawBatch (lcCamera cfg)) (batches output')
+      withFrame $ do
+        drawScene (lcCamera cfg) (batches output')
+        drawHud hud
 
       frameLoop
         cfg
         st2
           { stSpell = spell'
-          , stOutput = output'
           , stAcc = acc'
           , stLastTime = tNow
           , stFrames = stFrames st2 + 1
           , stSimSteps = stSimSteps st2 + stepsRun
+          , stFpsEma = fps'
           }
-  where
-    stepTimes n spell out
-      | n <= 0 = (Just spell, out, 0)
-      | otherwise =
-          let go 0 s o k = (Just s, o, k)
-              go m s _ k =
-                let (s', o') = stepSpell (FrameInput (DeltaTime (lcSimDt cfg))) s
-                 in go (m - 1) s' o' (k + 1)
-           in go n spell out (0 :: Int)
 
--- | Read + decode + cast. Returns (circle, spell, casts-performed).
+-- | @n@ pure time advances, no sampling.
+advanceTimes :: LoopConfig -> Int -> ActiveSpell -> ActiveSpell
+advanceTimes cfg n spell0 = go n spell0
+  where
+    dt = FrameInput (DeltaTime (lcSimDt cfg))
+    go k s
+      | k <= 0 = s
+      | otherwise = go (k - 1) (advanceSpell dt s)
+
+-- | Where the arrow keys move us. Pressing both, or having nothing to
+-- switch to, leaves the index alone — and an unchanged index means no
+-- re-cast at all.
+shiftIndex :: LoopConfig -> DemoInput -> Int -> Int
+shiftIndex cfg input i = case lcSpellPaths cfg of
+  [] -> i
+  ps ->
+    let delta = (if diNextSpell input then 1 else 0) - (if diPrevSpell input then 1 else 0)
+     in (i + delta) `mod` length ps
+
+normalizeIndex :: LoopConfig -> Int -> Int
+normalizeIndex cfg i = case lcSpellPaths cfg of
+  [] -> 0
+  ps -> i `mod` length ps
+
+pathAt :: LoopConfig -> Int -> FilePath
+pathAt cfg i = case lcSpellPaths cfg of
+  [] -> ""
+  ps -> ps !! (i `mod` length ps)
+
+-- | @R@: re-cast the spell that is already loaded (age back to zero). It
+-- deliberately does not re-read the file — that is what hot reload is for.
+recastOnRequest :: LoopConfig -> DemoInput -> LoopState -> LoopState
+recastOnRequest cfg input st
+  | not (diRecast input) = st
+  | otherwise = case stCircle st of
+      Nothing -> st
+      Just circle -> recastFrom cfg circle st
+
+-- | Re-cast from a known-good circle, counting the cast.
+recastFrom :: LoopConfig -> Circle -> LoopState -> LoopState
+recastFrom cfg circle st =
+  case castSpell (CastRequest circle (lcCastCtx cfg)) of
+    Right fresh -> st {stSpell = Just fresh, stCasts = stCasts st + 1}
+    Left _ -> st {stSpell = Nothing}
+
+-- | Fold a load result into the state: success swaps in the new spell and
+-- counts the cast, failure keeps the old spell running and records the
+-- full error for the HUD.
+applyLoad :: Double -> LoopState -> Either String (Circle, ActiveSpell) -> LoopState
+applyLoad t st = \case
+  Left err -> st {stReload = ReloadFailed t err}
+  Right (circle, spell) ->
+    st
+      { stCircle = Just circle
+      , stSpell = Just spell
+      , stCasts = stCasts st + 1
+      , stReload = ReloadOk t
+      }
+
+-- | Read + decode + cast. The error side carries the rendered text the
+-- HUD shows — 'renderLoadError' finally has a call site (ADR-0005).
 loadAndCast
   :: (FileWatch :> es)
   => LoopConfig
-  -> Eff es (Maybe Circle, Maybe ActiveSpell, Int)
-loadAndCast cfg = do
-  bytesOrErr <- readBytes (lcSpellPath cfg)
-  pure $ case bytesOrErr >>= decodeAndCast of
-    Left _ -> (Nothing, Nothing, 0)
-    Right (circle, spell) -> (Just circle, Just spell, 1)
+  -> FilePath
+  -> Eff es (Either String (Circle, ActiveSpell))
+loadAndCast cfg path = do
+  bytesOrErr <- readBytes path
+  pure (bytesOrErr >>= decodeAndCast)
   where
     decodeAndCast :: BS.ByteString -> Either String (Circle, ActiveSpell)
     decodeAndCast bytes = do
-      circle <- either (Left . show) Right (loadCircle bytes)
+      circle <- either (Left . renderLoadError) Right (loadCircle bytes)
       spell <-
         either
           (Left . show)
