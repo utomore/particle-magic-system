@@ -125,6 +125,13 @@ test-suite spec
                     , SpellSwitchSpec
                     , OptFlagsSpec
                     , Acceptance5Spec
+                    , PhasePlanSpec
+                    , PhaseCodecSpec
+                    , CompileLifecycleSpec
+                    , FormationSpec
+                    , PhaseSampleSpec
+                    , BackCompatSpec
+                    , Acceptance6Spec
                     , App.Effects
                     , App.HotReload
                     , App.Loop

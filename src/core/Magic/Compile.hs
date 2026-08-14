@@ -1,10 +1,12 @@
 -- | Circle → CompiledSpell interpreter (spec 0002 §4.4–§4.6,
 -- architecture §6). The inside-out fold, for real:
 --
--- >   step 1  core        → SpellSeed       (essence: table, budget, drift)
--- >   step 2  inner A→B   → BehaviorProto   (behavior: trajectory, envelope)
--- >   step 3  interlayer  → ModulatedProto  (modulation: envelope shift)
--- >   step 4  outer A→B   → EmitterSpec     (presentation: shape, radiation)
+-- >   step 1    core        → SpellSeed       (essence: table, budget, drift)
+-- >   step 2    inner A→B   → BehaviorProto   (behavior: trajectory, envelope)
+-- >   step 3    interlayer  → ModulatedProto  (modulation: envelope shift)
+-- >   step 3.5  phases      → ModulatedProto  (casting envelope delayed by castStart)
+-- >   step 4    outer A→B   → EmitterSpec     (presentation: shape, radiation)
+-- >   step 5    phases      → [EmitterSpec]   (formation geometry emitters)
 --
 -- An empty core means a Neutral plain discharge ("素放") — the same fold
 -- path, no special case (architecture §3.3). Within a ring, layer A (inner)
@@ -14,9 +16,17 @@
 -- 'CompiledSpell' and its component records are permanent types (frozen
 -- once spec 0002 delivers); 'Motion' and 'Appearance' are data, not
 -- functions, so a compiled spell is serializable and budget-analyzable
--- (architecture §4.4). This round the fold always produces exactly one
--- emitter; the 'Vector' interface is reserved for the lifecycle spec's
--- formation-geometry emitters.
+-- (architecture §4.4). Spec 0006 fixes the 'spellEmitters' 'Vector' this
+-- round: index 0 is always the casting emitter, the rest (if any) are the
+-- formation geometry emitters synthesized from 'Magic.Circle.circlePhases'.
+--
+-- Spec 0006's compatibility law (its first citizen, func-spec 0006 §1):
+-- any 'Circle' with @circlePhases = Nothing@ compiles to exactly one
+-- emitter and a degenerate 'PhasePlan' (@ppDrawEnd = ppConvergeEnd = 0@),
+-- bit-for-bit identical to the 0004-era fold. The casting envelope shift
+-- (step 3.5) branches around the arithmetic entirely when @castStart = 0@
+-- rather than adding zero, and step 5 produces no formation emitters —
+-- so the law holds by construction, not by a special case.
 module Magic.Compile
   ( -- * Compiled products (permanent)
     CompiledSpell (..)
@@ -29,6 +39,11 @@ module Magic.Compile
   , ColorRamp (..)
   , BlendMode (..)
 
+    -- * Lifecycle (permanent, spec 0006)
+  , Phase (..)
+  , PhasePlan (..)
+  , phaseAt
+
     -- * Compilation
   , compile
   , CompileError (..)
@@ -39,41 +54,47 @@ module Magic.Compile
   , spellBlend
   ) where
 
+import Data.Bits ((.&.))
 import Data.Maybe (fromMaybe)
 import qualified Data.Vector as V
 import Data.Word (Word32)
-import Magic.Circle (Circle (..), Core (..), Nodes (..), TwoOf (..))
-import Magic.Expr (Expr)
+import Magic.Circle (Circle (..), Core (..), Nodes (..), PhaseConfig (..), TwoOf (..))
+import Magic.Expr (BinOp (..), Expr (..), Fun3 (..), Var (..))
 import Magic.Rune
   ( BridgeRune (..)
   , Element (..)
   , Envelope (..)
   , EssenceRune (..)
-  , FaceShape
+  , FaceShape (..)
   , InnerRune (..)
   , NodeRune (..)
   , OuterRune (..)
   , RadiationMode (..)
   , Trajectory (..)
   )
-import Magic.Types (Seconds (..), V3 (..))
+import Magic.Types (Seconds (..), Time (..), V3 (..))
 
 -- | How a batch should be blended by the renderer.
 data BlendMode = BlendAlpha | BlendAdditive
   deriving (Eq, Show)
 
 -- | Result of interpreting a circle. Permanent interface; 0001 fields kept
--- as-is, 'spellEmitters' added this round (only additions allowed).
+-- as-is, 'spellEmitters' added by 0002, 'spellPhases' added by 0006 (only
+-- additions allowed).
 data CompiledSpell = CompiledSpell
   { spellLifetime :: !Seconds
-  -- ^ Total spell duration (= envDelay + envDuration + envLifetime, the
-  -- moment the last batch of particles dies);
-  -- 'Magic.Interface.isFinished' triggers past it.
+  -- ^ Total spell duration (= the moment the last batch of particles
+  -- dies, casting's window included); 'Magic.Interface.isFinished'
+  -- triggers past it. Always equals 'ppEnd' of 'spellPhases'.
   , spellBudget :: !Int
-  -- ^ Particle budget; from this round on = Σ emCount, computed at
-  -- compile time.
+  -- ^ Particle budget; from spec 0006 on = Σ emCount across every
+  -- emitter (casting + formation), computed at compile time.
   , spellEmitters :: !(V.Vector EmitterSpec)
-  -- ^ The emitters driving the analytic sampler (this round: exactly 1).
+  -- ^ The emitters driving the analytic sampler. Index 0 is always the
+  -- casting emitter; spec 0006 first grows this past length 1 with the
+  -- formation-geometry emitters.
+  , spellPhases :: !PhasePlan
+  -- ^ Absolute time landmarks of the four lifecycle stages (spec 0006).
   }
   deriving (Eq, Show)
 
@@ -83,8 +104,52 @@ data EmitterSpec = EmitterSpec
   , emSpawn :: !Envelope
   , emMotion :: !Motion
   , emAppearance :: !Appearance
+  , emPhase :: !Phase
+  -- ^ Pure metadata (spec 0006): which lifecycle stage this emitter
+  -- belongs to. The sampler never reads it — time classification always
+  -- goes through 'phaseAt'.
   }
   deriving (Eq, Show)
+
+-- | The four lifecycle stages (architecture §3.3). Extensible sum.
+-- 'Converging' and 'Dissipating' label time spans, not emitters — no
+-- emitter is ever tagged with either.
+data Phase = Drawing | Converging | Casting | Dissipating
+  deriving (Eq, Show, Enum, Bounded)
+
+-- | Absolute time landmarks (seconds since cast) carving up a cast into
+-- its four stages. Invariant:
+-- @0 <= ppDrawEnd <= ppConvergeEnd <= ppCastingEnd <= ppEnd@. Permanent
+-- type; frozen once spec 0006 delivers.
+data PhasePlan = PhasePlan
+  { ppDrawEnd :: !Seconds
+  -- ^ = phDraw (degenerate circlePhases = Nothing: 0).
+  , ppConvergeEnd :: !Seconds
+  -- ^ = castStart = phDraw + phConverge (degenerate: 0).
+  , ppCastingEnd :: !Seconds
+  -- ^ = castStart + envDelay + envDuration of the casting emitter (the
+  -- moment casting's own spawn window closes).
+  , ppEnd :: !Seconds
+  -- ^ = spellLifetime (invariant: the two always agree).
+  }
+  deriving (Eq, Show)
+
+-- | Total classification function: @t < 0@ classifies as @t = 0@ (so
+-- Drawing holds at the very start of a cast, or Casting immediately in
+-- the degenerate/skip case — architecture §3.3's "empty circle skips
+-- Drawing/Converging" falls out of this for free when
+-- @ppDrawEnd = ppConvergeEnd = 0@, no special case needed).
+phaseAt :: PhasePlan -> Time -> Phase
+phaseAt plan (Time t)
+  | t' < drawEnd = Drawing
+  | t' < convergeEnd = Converging
+  | t' < castingEnd = Casting
+  | otherwise = Dissipating
+  where
+    t' = max 0 t
+    Seconds drawEnd = ppDrawEnd plan
+    Seconds convergeEnd = ppConvergeEnd plan
+    Seconds castingEnd = ppCastingEnd plan
 
 -- | The activation point, in the caster's coordinate frame (resolved at
 -- sample time with 'Magic.Types.CastContext': local +Z is 'casterFacing',
@@ -150,7 +215,9 @@ data CompileError
   deriving (Eq, Show)
 
 -- | Hard particle cap for this round: 4096 still renders per-particle;
--- a guardrail for the skeleton renderer, not a performance design.
+-- a guardrail for the skeleton renderer, not a performance design. Since
+-- spec 0006, this bounds Σ emCount across every emitter (casting +
+-- formation), not just casting's.
 budgetCap :: Int
 budgetCap = 4096
 
@@ -184,7 +251,8 @@ elementAppearance element = case element of
   Water -> Appearance (ColorRamp 0x66CCFFFF 0x1A4DCC33) 0.05 BlendAlpha Nothing
   Lightning -> Appearance (ColorRamp 0xFFFFCCFF 0x8033FF66) 0.05 BlendAdditive Nothing
 
--- | Blend mode of the spell's render batch (first emitter's; the shell
+-- | Blend mode of the spell's render batch (first emitter's — always the
+-- casting emitter, spec 0006 keeps index 0 reserved for it; the shell
 -- reads this through 'Magic.Interface').
 spellBlend :: CompiledSpell -> BlendMode
 spellBlend spell = case V.toList (spellEmitters spell) of
@@ -214,28 +282,76 @@ data BehaviorProto = BehaviorProto
 compile :: Circle -> Either CompileError CompiledSpell
 compile circle = do
   seed0 <- interpretCore (core circle)
-  let behavior = foldRing applyInner (innerRings circle) (defaultBehavior seed0)
-      modulated = foldSlot applyBridge (interLayer circle) behavior
+  let mPhases = circlePhases circle
+      castStart = castStartOf mPhases
+      behavior = foldRing applyInner (innerRings circle) (defaultBehavior seed0)
+      modulated0 = foldSlot applyBridge (interLayer circle) behavior
+      modulated = applyCastShift castStart modulated0
       motion = foldRing applyOuter (outerRings circle) (defaultMotion modulated)
       envelope = bpEnvelope modulated
       Seconds delay = envDelay envelope
       Seconds duration = envDuration envelope
       Seconds lifetime = envLifetime envelope
       count = ssCount (bpSeed modulated)
-      emitter =
+      castingEmitter =
         EmitterSpec
-          { emAnchor = Anchor {anchorOffset = V3 0 0 0, anchorNormal = V3 0 0 1}
+          { emAnchor = originAnchor
           , emCount = count
           , emSpawn = envelope
           , emMotion = motion
           , emAppearance = ssAppearance (bpSeed modulated)
+          , emPhase = Casting
           }
-  pure
-    CompiledSpell
-      { spellLifetime = Seconds (delay + duration + lifetime)
-      , spellBudget = count
-      , spellEmitters = V.singleton emitter
-      }
+      formationEmitters = case mPhases of
+        Nothing -> []
+        Just pc -> formationEmittersFor circle pc castStart element
+      element = essenceElementOf (core circle)
+      allEmitters = castingEmitter : formationEmitters
+      totalCount = sum (map emCount allEmitters)
+      -- 'delay' is already absolute (step 3.5 baked castStart into it), so
+      -- the closing landmarks are delay + duration [+ lifetime] with no
+      -- second addition of castStart — degenerate case (castStart = 0)
+      -- reduces to exactly the pre-0006 formula either way.
+      plan =
+        PhasePlan
+          { ppDrawEnd = maybe (Seconds 0) phDraw mPhases
+          , ppConvergeEnd = castStart
+          , ppCastingEnd = Seconds (delay + duration)
+          , ppEnd = Seconds (delay + duration + lifetime)
+          }
+  if totalCount > budgetCap
+    then Left (BudgetExceeded totalCount budgetCap)
+    else
+      Right
+        CompiledSpell
+          { spellLifetime = ppEnd plan
+          , spellBudget = totalCount
+          , spellEmitters = V.fromList allEmitters
+          , spellPhases = plan
+          }
+
+-- | The caster-frame origin anchor shared by casting and every
+-- ring/center formation emitter (only the four node emitters offset it).
+originAnchor :: Anchor
+originAnchor = Anchor {anchorOffset = V3 0 0 0, anchorNormal = V3 0 0 1}
+
+-- | castStart = phDraw + phConverge (spec 0006 §4.3); the degenerate
+-- 'Nothing' case is 0 — the compatibility law's anchor value.
+castStartOf :: Maybe PhaseConfig -> Seconds
+castStartOf Nothing = Seconds 0
+castStartOf (Just (PhaseConfig (Seconds d) (Seconds c))) = Seconds (d + c)
+
+-- | Fold step 3.5 — casting's envelope delayed by the whole drawing +
+-- converging prelude. Compatibility law's implementation guarantee: at
+-- @castStart = 0@ the code path branches around the shift entirely
+-- (rather than adding zero), so the degenerate case touches no
+-- arithmetic spec 0004 didn't already run.
+applyCastShift :: Seconds -> BehaviorProto -> BehaviorProto
+applyCastShift (Seconds 0) proto = proto
+applyCastShift (Seconds shift) proto =
+  let env = bpEnvelope proto
+      Seconds delay = envDelay env
+   in proto {bpEnvelope = env {envDelay = Seconds (delay + shift)}}
 
 -- | Fold step 1 — the core: essence to appearance, power to particle
 -- count (clamped below at 1; above the cap is a compile error), node
@@ -254,6 +370,14 @@ interpretCore c = do
       , ssCount = count
       , ssDrift = nodeDrift (coreNodes c)
       }
+
+-- | The essence element a circle casts with (defaulting to Neutral),
+-- independent of 'interpretCore' so the formation-appearance lookup
+-- (step 5) can share it without threading state through the 'Either'.
+essenceElementOf :: Core -> Element
+essenceElementOf c =
+  let EssenceRune element _ = fromMaybe (EssenceRune Neutral 1.0) (coreCenter c)
+   in element
 
 -- | Σ directionᵢ × biasᵢ in face coordinates: north = +y (face up),
 -- east = +x (face right), south/west their negations.
@@ -327,3 +451,134 @@ foldRing f (TwoOf a b) z = foldSlot f b (foldSlot f a z)
 
 foldSlot :: (b -> a -> b) -> Maybe a -> b -> b
 foldSlot f slot z = maybe z (f z) slot
+
+-- Fold step 5 — formation geometry emitters (spec 0006 §4.4) -----------------
+
+-- | Circle geometry → the formation-drawing emitters (func-spec 0006
+-- §4.4's export table). Only called when 'circlePhases' is 'Just'; the
+-- boundary ring is unconditional ("陣" always has a silhouette, even the
+-- all-empty circle — 'bare-sigil.json's judgment call), every other
+-- element only appears when its slot is occupied.
+formationEmittersFor :: Circle -> PhaseConfig -> Seconds -> Element -> [EmitterSpec]
+formationEmittersFor circle pc castStart element =
+  concat
+    [ [ringSlotEmitter 96 (SpawnOnShape (Ring 1.45 1.55))]
+    , outerRingSlot 64 1.25 1.35 (ringB (outerRings circle))
+    , outerRingSlot 64 1.10 1.20 (ringA (outerRings circle))
+    , plainSlot 64 0.95 1.05 (interLayer circle)
+    , plainSlot 64 0.80 0.90 (ringB (innerRings circle))
+    , plainSlot 64 0.65 0.75 (ringA (innerRings circle))
+    , nodeSlotEmitter 12 (V3 0 0.35 0) (north (coreNodes (core circle)))
+    , nodeSlotEmitter 12 (V3 0 (-0.35) 0) (south (coreNodes (core circle)))
+    , nodeSlotEmitter 12 (V3 0.35 0 0) (east (coreNodes (core circle)))
+    , nodeSlotEmitter 12 (V3 (-0.35) 0 0) (west (coreNodes (core circle)))
+    , centerSlotEmitter 16 (coreCenter (core circle))
+    ]
+  where
+    formEnv = formEnvFor castStart
+    mKc = case pc of
+      PhaseConfig _ (Seconds c) | c > 0 -> Just (kcExprFor castStart (Seconds c))
+      _ -> Nothing
+    appearance = formationAppearance element
+
+    ringSlotEmitter cnt spawn =
+      EmitterSpec
+        { emAnchor = originAnchor
+        , emCount = cnt
+        , emSpawn = formEnv
+        , emMotion = formationMotion spawn mKc
+        , emAppearance = appearance
+        , emPhase = Drawing
+        }
+
+    -- Outer-ring slots: a 'ShapeRune' occupant previews the player's
+    -- drawn shape instead of the nominal band (§4.4 exception).
+    outerRingSlot :: Int -> Double -> Double -> Maybe OuterRune -> [EmitterSpec]
+    outerRingSlot cnt rIn rOut mRune = case mRune of
+      Nothing -> []
+      Just (ShapeRune shape) -> [ringSlotEmitter cnt (SpawnOnShape shape)]
+      Just _ -> [ringSlotEmitter cnt (SpawnOnShape (Ring rIn rOut))]
+
+    -- Bridge/inner-ring slots: occupied ⇒ the nominal band, no exception.
+    plainSlot :: Int -> Double -> Double -> Maybe a -> [EmitterSpec]
+    plainSlot cnt rIn rOut mRune = case mRune of
+      Nothing -> []
+      Just _ -> [ringSlotEmitter cnt (SpawnOnShape (Ring rIn rOut))]
+
+    nodeSlotEmitter :: Int -> V3 -> Maybe NodeRune -> [EmitterSpec]
+    nodeSlotEmitter cnt offset mRune = case mRune of
+      Nothing -> []
+      Just _ ->
+        [ EmitterSpec
+            { emAnchor = Anchor {anchorOffset = offset, anchorNormal = V3 0 0 1}
+            , emCount = cnt
+            , emSpawn = formEnv
+            , emMotion = formationMotion (SpawnAtAnchor 0) mKc
+            , emAppearance = appearance
+            , emPhase = Drawing
+            }
+        ]
+
+    centerSlotEmitter :: Int -> Maybe EssenceRune -> [EmitterSpec]
+    centerSlotEmitter cnt mRune = case mRune of
+      Nothing -> []
+      Just _ ->
+        [ EmitterSpec
+            { emAnchor = originAnchor
+            , emCount = cnt
+            , emSpawn = formEnv
+            , emMotion = formationMotion (SpawnAtAnchor 0) mKc
+            , emAppearance = appearance
+            , emPhase = Drawing
+            }
+        ]
+
+formationMotion :: SpawnPattern -> Maybe Expr -> Motion
+formationMotion spawn mKc =
+  Motion
+    { motSpawn = spawn
+    , motTraject = Forward 0
+    , motRadiation = AlongNormal
+    , motDrift = V3 0 0 0
+    , motRange = Nothing
+    , motConverge = mKc
+    }
+
+-- | The formation particles' envelope (spec 0006 §4.3 derivation chain):
+-- the whole drawing+converging prelude is the spawn window, capped at a
+-- 0.6s lifetime so long preludes still pulse with short-lived particles
+-- instead of one long-tailed batch; every index is guaranteed to be born
+-- (the stagger span never exceeds the spawn window) and the last batch
+-- dies out exactly at 'castStart'.
+formEnvFor :: Seconds -> Envelope
+formEnvFor (Seconds castStartD) =
+  let formLife = min 0.6 (castStartD / 2)
+   in Envelope
+        { envDelay = Seconds 0
+        , envDuration = Seconds (castStartD - formLife)
+        , envLifetime = Seconds formLife
+        }
+
+-- | The lateral-convergence curve driving formation collapse: 1 while
+-- drawing (@t <= castStart - phConverge@, i.e. before Converging starts),
+-- ramping linearly to 0 exactly at 'castStart' — the same
+-- 'Magic.Rune.ConvergeRune' machinery (spec 0004) the sampler already
+-- evaluates, just synthesized by the compiler instead of a player rune.
+kcExprFor :: Seconds -> Seconds -> Expr
+kcExprFor (Seconds castStartD) (Seconds convergeD) =
+  Fun3
+    FClamp
+    (Bin Div (Bin Sub (Lit (realToFrac castStartD)) (Var VarT)) (Lit (realToFrac convergeD)))
+    (Lit 0)
+    (Lit 1)
+
+-- | Formation particles' look: the element's own start color, fading to
+-- the same RGB with alpha cleared (a natural per-particle fade, no
+-- popping); smaller than normal casting particles, same blend mode as
+-- the rest of the spell (architecture §10: one blend per spell).
+formationAppearance :: Element -> Appearance
+formationAppearance element =
+  let Appearance (ColorRamp start _) _ blend _ = elementAppearance element
+   in Appearance (ColorRamp start (clearAlpha start)) 0.03 blend Nothing
+  where
+    clearAlpha c = c .&. 0xFFFFFF00

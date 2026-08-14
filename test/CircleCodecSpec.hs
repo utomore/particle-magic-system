@@ -89,6 +89,9 @@ genEssence =
 genNode :: Gen NodeRune
 genNode = DirBias <$> genSigned
 
+-- | This round always generates @circlePhases = Nothing@ (spec 0006 §0.2):
+-- the phases roundtrip property lives in its own 'PhaseCodecSpec', so this
+-- generator's edit surface stays minimal.
 genCircle :: Gen Circle
 genCircle =
   Circle
@@ -96,6 +99,7 @@ genCircle =
     <*> genMaybe genBridge
     <*> (TwoOf <$> genMaybe genInner <*> genMaybe genInner)
     <*> (Core <$> genMaybe genEssence <*> genNodes)
+    <*> pure Nothing
   where
     genMaybe g = oneof [pure Nothing, Just <$> g]
     genNodes =
@@ -164,6 +168,7 @@ spec = describe "Magic.Codec full slot schema (spec 0002 S2)" $ do
                 { coreCenter = Just (EssenceRune Fire 1.5)
                 , coreNodes = Nodes (Just (DirBias 0.4)) Nothing Nothing Nothing
                 }
+          , circlePhases = Nothing
           }
 
   it "rejects an unknown rune tag with the position and the valid tags" $

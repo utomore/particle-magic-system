@@ -80,6 +80,7 @@ instance Arbitrary ExprCircle where
         , interLayer = bridge
         , innerRings = inner
         , core = Core center (Nodes Nothing Nothing Nothing Nothing)
+        , circlePhases = Nothing
         }
     where
       genMaybe g = oneof [pure Nothing, Just <$> g]
