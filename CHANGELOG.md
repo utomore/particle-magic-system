@@ -28,3 +28,9 @@ delivered function spec (details in `docs/func-spec/`).
   semi-implicit Euler, stable particle identity, three field kinds
   (gravity/attractor/vortex); packaging debt (MIT license, public
   sublibraries, PVP bounds, this README/CHANGELOG). (designed, gated on 0006)
+- **0009 C ABI foreign library** — ADR-0011: `foreign-library` stanza produces
+  `.dll`/`.so`, `include/particle_magic.h` is the frozen contract, JSON in and
+  six SoA columns copied out, `pm_cast → pm_advance → pm_observe → pm_free`
+  handle lifecycle; determinism holds across the boundary as a tested
+  equivalence (FFI path ≡ Haskell path). Core and boundary unchanged.
+  (delivered)

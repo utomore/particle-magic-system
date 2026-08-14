@@ -16,6 +16,10 @@ category:           Graphics
 build-type:         Simple
 extra-doc-files:    README.md
                     CHANGELOG.md
+-- The C ABI contract and its example host (func-spec 0009): shipped so a
+-- non-Haskell consumer gets the header and a working reference host.
+extra-source-files: include/particle_magic.h
+                    examples/c/main.c
 
 source-repository head
     type:     git
@@ -84,13 +88,44 @@ executable particle-magic
     default-language: GHC2021
     ghc-options:      -Wall -threaded -O2
 
+-- The second supported consumption mode (ADR-0011, func-spec 0009): the
+-- same boundary layer behind a C ABI, so non-Haskell hosts (Unity, Godot,
+-- a C/C++ engine) can drive the spell lifecycle and render the six SoA
+-- columns themselves. Shell-layer component, same discipline as the
+-- executable: magic-core is NOT reachable from here, only the public
+-- boundary plus the two marshalling libraries its signatures are written
+-- in (bytestring for loadCircle's input, vector for the buffer's columns).
+-- Guarded by test/FFIContractSpec.hs.
+foreign-library particle-magic-ffi
+    type:             native-shared
+    if os(windows)
+        options:      standalone
+        -- Without an explicit export list the DLL links but resolves
+        -- nothing for a host; see the .def file's own note.
+        mod-def-file: particle-magic-ffi.def
+    hs-source-dirs:   src/ffi
+    other-modules:    Magic.FFI
+    c-sources:        cbits/pm_init.c
+    include-dirs:     include
+    install-includes: particle_magic.h
+    build-depends:    base
+                    , particle-magic:magic-boundary
+                    , bytestring
+                    , vector
+    default-language: GHC2021
+    ghc-options:      -Wall -O2 -threaded
+
 test-suite spec
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
     -- app/ is included so the loop + interpreters are tested as-built;
     -- the raylib-touching modules (Main, App.Render.Raylib3D) are NOT
     -- listed, keeping the test suite headless and h-raylib-free.
-    hs-source-dirs:   test, app
+    -- src/ffi is included so the C ABI shell is tested in-process: the
+    -- foreign-exported functions are ordinary Haskell functions, called
+    -- here through real CStrings and Ptrs (func-spec 0009 §2). Loading the
+    -- built shared object is the manual smoke, §8 S6.
+    hs-source-dirs:   test, app, src/ffi
     other-modules:    BoundarySpec
                     , TypesSpec
                     , CircleSpec
@@ -132,6 +167,13 @@ test-suite spec
                     , PhaseSampleSpec
                     , BackCompatSpec
                     , Acceptance6Spec
+                    , FFIHarness
+                    , FFILifecycleSpec
+                    , FFIObserveSpec
+                    , FFIErrorSpec
+                    , FFIContractSpec
+                    , Acceptance9Spec
+                    , Magic.FFI
                     , App.Effects
                     , App.HotReload
                     , App.Loop
