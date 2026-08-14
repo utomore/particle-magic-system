@@ -2,7 +2,7 @@
 
 > 狀態：設計定案，待實作
 > 性質：一般 —— `ViewPlane`／`orthographic`／`depthOrder` 交付後成為凍結詞彙（`Magic.Project` 的投影面），供未來 2D 宿主與效能 spec 引用。
-> 前置依賴：**無**（spec 0001／0002／0005 皆已完成）。**與 spec 0007 平行**：0007（設計定案，待實作）鎖定 `src/core/Magic/{Rune,Circle,Compile}.hs`、`Magic/Particle/Analytic.hs`、`src/boundary/Magic/{Codec,Interface}.hs` 與新檔 `Magic/Particle/Field.hs`——本 spec 檔案清單與之**零交集**（§0.2 附盤點證明），兩 spec 可同時認領實作。
+> 前置依賴：**無**（spec 0001／0002／0005 皆已完成）。**與 spec 0007、0009 三方平行**：0007（設計定案，待實作）鎖定 `src/core/Magic/{Rune,Circle,Compile}.hs`、`Magic/Particle/Analytic.hs`、`src/boundary/Magic/{Codec,Interface}.hs` 與新檔 `Magic/Particle/Field.hs`；0009（FFI 外殼）觸碰的 src 全為新目錄（`src/ffi/`、`cbits/`、`include/`、`examples/`）——本 spec 檔案清單與兩者**皆零交集**（§0.2 附盤點證明；共用檔僅 cabal/SKILL.md 的不同行，union merge），三 spec 可同時認領實作。
 > 依據：[ADR-0008](../adr/0008-dimension-agnostic-3d-first.md)（核心在抽象 3D、投影是外殼層職責、「2D＝正交投影：丟一軸＋深度排序策略」）；[architecture.md](../architecture.md) §1.5（維度無關）、§2（`App.Render.Ortho2D` 虛線預留位、`Magic.Project` 投影抽象）、§8.6（「2D 後端實際落地時的投影語意……可能要在 `Magic.Project` 加深度排序/壓平策略」——本 spec 兌現此掛帳）、§10（「新投影（2D）」擴充點）。
 > 範圍：兌現 ADR-0008 的另一半，把「2D、3D 遊戲都能納入」從型別層保證變成**可執行的實證**：`Magic.Project` 從 identity stub 長出真正的正交投影＋painter 深度排序，demo 內按鍵即時切換 3D 透視／2D 側視／2D 俯視——同一份 `FrameOutput`，零核心變更。
 >

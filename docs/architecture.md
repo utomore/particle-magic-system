@@ -43,6 +43,7 @@ flowchart TD
         HotReload["App.HotReload<br/>JSON 檔案監看與重載"]
         Render3D["App.Render.Raylib3D<br/>h-raylib 動態 quad mesh 渲染（ADR-0009）"]
         Render2D["App.Render.Ortho2D<br/>（未來）2D 正交後端"]
+        FFIShell["Magic.FFI<br/>（未來）foreign-library C ABI 外殼（ADR-0011）"]
     end
 
     subgraph Boundary["邊界層 （純，定義對外格式）"]
@@ -65,6 +66,8 @@ flowchart TD
     HotReload --> Codec
     Render3D --> Interface
     Render2D -.-> Interface
+    FFIShell -.-> Interface
+    FFIShell -.-> Codec
 
     Interface --> Compile
     Interface --> Analytic
@@ -383,6 +386,8 @@ advanceSpell :: FrameInput -> ActiveSpell -> ActiveSpell
 observeSpell :: ActiveSpell -> FrameOutput
 ```
 
+**第二種消費模式——C ABI（ADR-0011，spec 0009 設計定案）**：非 Haskell 宿主（Unity／Godot／C/C++ 引擎）經 cabal `foreign-library` 產出的 `.dll`/`.so` 串接，合約為 `include/particle_magic.h`：JSON 字串進（重用 `Magic.Codec`）、SoA 六欄 copy-out 出、`pm_cast → pm_advance → pm_observe → pm_free` 的 handle 生命週期；FFI 外殼與 exe 同位階、同依賴紀律（僅 magic-boundary），核心零變更，決定論跨邊界成立（FFI 路徑 ≡ Haskell 路徑為可測等價律）。繪圖始終在庫外——宿主拿六條陣列自行餵頂點緩衝。
+
 ---
 
 ## 6. 解釋器設計（由內而外）
@@ -484,3 +489,5 @@ observeSpell :: ActiveSpell -> FrameOutput
 | [ADR-0007](adr/0007-effectful-boundary.md) | effectful 效果邊界，核心零 IO |
 | [ADR-0008](adr/0008-dimension-agnostic-3d-first.md) | 維度無關核心，3D 優先投影 |
 | [ADR-0009](adr/0009-dynamic-quad-mesh-rendering.md) | 渲染路徑採動態 quad mesh，不採 instancing |
+| [ADR-0010](adr/0010-force-field-composition.md) | 力場層組合點語意：加法位移疊加、穩定槽位身分、熱重載歸零 |
+| [ADR-0011](adr/0011-ffi-c-abi-boundary.md) | C ABI FFI 邊界：foreign-library、JSON 進、SoA copy-out、handle 生命週期 |
