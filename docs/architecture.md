@@ -58,7 +58,7 @@ flowchart TD
         Expr["Magic.Expr<br/>數學 AST 與純求值器"]
         Compile["Magic.Compile<br/>解釋器：Circle → CompiledSpell"]
         Analytic["Magic.Particle.Analytic<br/>解析層：時間函數取樣"]
-        Field["Magic.Particle.Field<br/>（未來）力場層：固定時步純積分"]
+        Field["Magic.Particle.Field<br/>力場層：固定時步純積分"]
         Buffer["Magic.Particle.Buffer<br/>SoA 粒子緩衝"]
         Project["Magic.Project<br/>投影抽象：project=id（3D）、<br/>orthographic/depthOrder（2D，spec 0008）"]
     end
@@ -73,7 +73,7 @@ flowchart TD
 
     Interface --> Compile
     Interface --> Analytic
-    Interface -.-> Field
+    Interface --> Field
     Codec --> Circle
     Codec --> Expr
 
@@ -83,7 +83,7 @@ flowchart TD
     Circle --> Rune
     Rune --> Expr
     Analytic --> Buffer
-    Field -.-> Buffer
+    Field --> Rune
     Interface --> Project
     Projection --> Project
     Project --> Buffer
@@ -115,19 +115,22 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    Clock["dt, t<br/>（App.Loop）"] --> Sample
-    Spell["CompiledSpell"] --> Sample
-    Ctx["CastContext<br/>施法者位置/面向/種子"] --> Sample
-    Sample["解析層取樣<br/>Analytic.sample（純）"] --> Buf1["ParticleBuffer<br/>（SoA）"]
-    Buf1 --> FieldStep{"有力場？"}
-    FieldStep -->|"是"| Integrate["力場步進<br/>Field.step（純，固定時步）"]
-    FieldStep -->|"否"| Batch
-    Integrate --> Batch["RenderBatch 組裝<br/>Interface（純）"]
+    Clock["dt<br/>（App.Loop）"] --> Adv
+    Spell["CompiledSpell<br/>（含 spellFields）"] --> Adv
+    Ctx["CastContext<br/>施法者位置/面向/種子"] --> Adv
+    Adv["advanceSpell（純，每固定步 ×n）<br/>推進時鐘"] --> FieldStep{"spellFields 空？"}
+    FieldStep -->|"否"| Integrate["力場步進 Field.step（純）<br/>Casting 槽位半隱式尤拉"]
+    FieldStep -->|"是"| Obs
+    Integrate --> Obs["observeSpell（純，每幀 ×1）"]
+    Obs --> Sample["解析層取樣<br/>Analytic.sample"]
+    Sample --> Buf1["ParticleBuffer<br/>（SoA）"]
+    Buf1 --> Add["逐 row 疊加場位移<br/>（aliveSlots 對齊；無場則直通）"]
+    Add --> Batch["RenderBatch 組裝<br/>Interface（純）"]
     Batch --> Proj["投影<br/>Project（純）"]
     Proj --> Draw["raylib 繪製<br/>App.Render（IO）"]
 ```
 
-**純與不純的分界**：整條管線只有最左端（讀時鐘、讀檔）與最右端（繪製）有 IO。中間一切是 `純函數(輸入) → 輸出`，同樣的 `(CompiledSpell, CastContext, t)` 永遠產生同一幀畫面——這就是可重播性的來源。
+**純與不純的分界**：整條管線只有最左端（讀時鐘、讀檔）與最右端（繪製）有 IO。中間一切是 `純函數(輸入) → 輸出`，同樣的 `(CompiledSpell, CastContext, dt 序列)` 永遠產生同一串畫面——這就是可重播性的來源。無力場的魔法退化為每幀一次 `sample`（ADR-0010 D9：結構性跳過整層，逐位元等同力場層存在之前）。
 
 ### 3.3 魔法生命週期
 
@@ -252,7 +255,7 @@ data ExprV3 = ExprV3 Expr Expr Expr    -- 三分量向量式
 
 ### 4.4 編譯結果（`Magic.Compile`）
 
-實際凍結合約（spec 0002 交付、0006 補 phases；`fields`/`ParticleBudget` 留待力場 spec 與效能 spec）：
+實際凍結合約（spec 0002 交付、0006 補 phases、0007 補 fields；結構化 `ParticleBudget` 留待效能 spec）：
 
 ```haskell
 data CompiledSpell = CompiledSpell
@@ -260,6 +263,7 @@ data CompiledSpell = CompiledSpell
   , spellBudget   :: !Int                -- Σ emCount（編譯期算出；結構化 ParticleBudget 待效能 spec）
   , spellEmitters :: !(Vector EmitterSpec) -- 各階段發射器（含 0006 的陣形繪製發射器）
   , spellPhases   :: !PhasePlan          -- Drawing/Converging/Casting/Dissipating 絕對時間界標（spec 0006）
+  , spellFields   :: ![ForceField]       -- 陣的力場環境（spec 0007；由 circleFields 直通，不參與 fold）
   }
 
 data EmitterSpec = EmitterSpec
@@ -291,15 +295,30 @@ SoA + `Data.Vector.Unboxed`：無指標追蹤、快取友善、GC 只見少數�
 
 ### 4.6 混合粒子模型的每幀函數
 
+實際交付簽名（spec 0007；ADR-0010 把組合點語意釘死為「相加式位移疊加」）：
+
 ```haskell
 -- 解析層：無狀態。同樣輸入 → 同樣輸出
 sample :: CompiledSpell -> CastContext -> Time -> ParticleBuffer
 
--- 力場層：純狀態轉移。位移場疊加在解析結果之上
-data FieldState  -- 力場累積位移（SoA）
-step :: [ForceField] -> DeltaTime -> ParticleBuffer -> FieldState
-     -> (FieldState, ParticleBuffer)
+-- 解析層的兩個外露半邊（單一事實來源，供力場層對齊）
+particlePosition :: CastContext -> Time -> EmitterSpec -> Int -> Double -> V3
+aliveSlots       :: CompiledSpell -> Time -> [(Int, Int)]   -- = buffer row 順序
+
+-- 力場層：純狀態轉移，鍵為穩定槽位 (emitterIndex, particleIndex)
+data FieldState        -- 每槽位 (lastAge, 速度, 累積位移)
+data SlotState = SlotState { ssVel :: !V3, ssDisp :: !V3 }
+
+fieldAccel :: [ForceField] -> V3 -> V3
+step :: [ForceField] -> DeltaTime
+     -> Vector (Vector (Maybe (Double, V3)))   -- 各槽位本步的 (age, 解析基準位置)
+     -> FieldState -> FieldState
+displacementsInOrder :: FieldState -> [(Int, Int)] -> [V3]
+
+-- 組合：renderedPos = analyticPos + disp（Interface 內，簽名零變更）
 ```
+
+`step` 不吃 `ParticleBuffer`：buffer 的 row 每幀變動，不能當身分（ADR-0010 D2）。力場層以編譯期固定的槽位空間為鍵，疊加時用 `aliveSlots` 這一份列舉對齊 row。
 
 無力場的魔法：每幀就是一次 `sample`，零狀態、可任意快轉倒帶。有力場的魔法：`FieldState` 是唯一跨幀狀態，且轉移是純函數＋固定時步——重播只需重放 `(dt 序列, Seed)`。
 
@@ -340,6 +359,12 @@ data RenderBatch = RenderBatch
   "version": 1,
   "name": "spiral-fire-burst",
   "circle": {
+    "phases": { "draw": 1.2, "converge": 0.6 },
+    "fields": [
+      { "kind": "gravity",   "accel": [0, -3.0, 0] },
+      { "kind": "attractor", "center": [0, 0, 4], "strength": 6.0, "softening": 0.5 },
+      { "kind": "vortex",    "center": [0, 0, 0], "axis": [0, 0, 1], "strength": 2.0, "falloff": 0.3 }
+    ],
     "outer": [
       { "rune": "shape", "shape": { "kind": "hollow-square", "size": 3.0 } },
       { "rune": "radiate", "mode": "along-normal" }
@@ -360,6 +385,7 @@ data RenderBatch = RenderBatch
 規則：
 
 - 一切槽位可為 `null`（Optional 語意）；全 `null` 即「素放」。
+- `phases`（spec 0006）與 `fields`（spec 0007）是**陣層級屬性**而非符文槽，兩者皆選配：缺鍵或 `null` 等同「無」，因此 v1 的舊魔法檔逐位元照舊（`fields` 缺鍵＝`[]`＝力場層結構性跳過，ADR-0010 D9）。`fields` 的三種 `kind`（`gravity`/`attractor`/`vortex`）參數在邊界驗證：`softening > 0`、`falloff >= 0`、`axis` 非零。
 - 數學式為文字，文法（spec 0003 凍結）：實數、常數 `pi`、變數 `t`/`life`/`pindex`、隨機通道 `chan(n)`、`+ - * / ^`、函數 `sin cos abs sqrt floor sign min max clamp`、括號。剖析失敗＝載入錯誤，附行列位置。
 - **版本策略**：`version` 遞增時，`Magic.Codec` 保留舊版解碼器並提供 `migrate :: CircleV1 -> CircleV2`；核心永遠只處理最新版 ADT。
 
@@ -438,13 +464,15 @@ observeSpell :: ActiveSpell -> FrameOutput
 
 **明確不做**（POC 範圍外）：GPU compute/transform feedback、粒子間碰撞、空間分割結構。力場層僅支援「場對粒子」（重力、吸引、渦流），不支援「粒子對粒子」。
 
+**力場層的成本模型**（spec 0007 交付後）：帶場的魔法每個**固定步**（非每幀）要對存活的 Casting 槽位重算解析基準位置並積分，成本 O(存活 Casting 粒子)×每步；上限由 `Magic.Step.plan` 的 maxSteps clamp 保護。零場的魔法**結構性跳過**整層（ADR-0010 D9），成本與力場層不存在時完全相同。`FieldState` 目前是 boxed vector（明文不凍結，spec 0007 §4.7），SoA 化與帶場 bench 是效能 spec 的工作。
+
 ---
 
 ## 8. 未來可能遇到的問題
 
 1. **符文組合爆炸與平衡性**：固定職責限制了語意發散，但外圈×夾層×內圈×核心的組合數仍隨符文種類多項式成長。編譯期的 `ParticleBudget` 與能量預算（`essPower` 封頂）是第一道閘門；長期需要「魔法代價」系統在遊戲層約束。
 2. **Expr 求值效能**：AST 直譯在十萬粒子 × 每粒子多個式子時可能成為熱點。緩解路徑（依序）：求值器對常見形狀 SPECIALIZE → 編譯期常數摺疊/共同子式消去 → 將 `Expr` 編成扁平的 bytecode 陣列以緊密迴圈求值。AST 介面不變，只換求值器。
-3. **熱重載下的狀態遷移**：魔法陣 JSON 改變時，進行中的 `ActiveSpell` 怎麼辦？POC 策略：重載＝重新施法（狀態歸零）。未來若要「編輯中即時 morphing」，解析式模型天然支援（同一個 `t` 用新 spell 取樣即可），但 `FieldState` 無法對應遷移，需定義淡出/淡入規則。
+3. **熱重載下的狀態遷移**：魔法陣 JSON 改變時，進行中的 `ActiveSpell` 怎麼辦？POC 策略：重載＝重新施法（狀態歸零）——spec 0007 交付力場層後這條由預告變成實際政策（ADR-0010 D8：`castSpell` 一律以全靜止的 `FieldState` 起步，不遷移）。未來若要「編輯中即時 morphing」，解析式模型天然支援（同一個 `t` 用新 spell 取樣即可），但 `FieldState` 無法對應遷移，需定義淡出/淡入規則。
 4. **多魔法並行的緩衝管理**：多個 `ActiveSpell` 各持有預算緩衝，總量需要全域上限與配額策略（先到先得？按 power 分配？）——目前介面已預留 `ParticleBudget`，策略留待遊戲層。
 5. **h-raylib 的 FFI 邊界開銷**：每幀把 SoA 緩衝交給 raylib instanced 繪製，若 h-raylib 的綁定強制逐元素 marshalling 會抵銷 SoA 的優勢；需要確保走 `unsafeWith`/指標直傳路徑（見 §9）。
 6. **2D 後端實際落地時的投影語意**：正交投影丟一軸在數學上簡單，但「沿法線擴充立體」的魔法在 2D 下的可讀性（深度重疊）需要視覺設計介入，可能要在 `Magic.Project` 加深度排序/壓平策略。——**已由 spec 0008 落地**：`Magic.Project` 加了 `ViewPlane`/`orthographic`/`depthOrder`（painter 穩定置換），demo 可即時切 3D／2D 側視／2D 俯視。深度排序這一半已兌現；**可讀性的視覺設計解仍未做**——俯視就是把重疊問題暴露出來的實驗台，壓平比例、輪廓強調等留給後續視覺 spec。

@@ -73,6 +73,7 @@ fullCircle element power =
                 (Just (DirBias 0.1))
           }
     , circlePhases = Just (PhaseConfig (Seconds 1.2) (Seconds 0.6))
+    , circleFields = []
     }
 
 bareCircle :: Circle
