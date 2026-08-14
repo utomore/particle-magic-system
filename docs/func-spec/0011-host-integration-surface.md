@@ -1,0 +1,171 @@
+# Func-Spec 0011：宿主整合面（投影上 C ABI＋參考綁定）
+
+> 狀態：**設計定案，待實作**
+> 性質：一般 —— 新增的 C 匯出與 header 宣告交付即凍結（只加不改，ADR-0011 D7 延續）；`Magic.Columns` 交付後凍結。
+> 前置依賴：**無**（0008 交付 `Magic.Projection`、0009 交付 C ABI 外殼，皆已完成；本 spec 全部是它們之上的加法）。**與 spec 0010、0013 三方平行**：本 spec 鎖 `src/ffi`＋`include`＋`.def`＋`test/FFIContractSpec.hs`＋新目錄，0010 鎖 core／`Interface.hs`／bench，0013 鎖 `app/*`——檔案零交集（§0.2 附證明）。
+> 依據：[ADR-0011](../adr/0011-ffi-c-abi-boundary.md)（C ABI 消費模式全部決策沿用）；ADR-0008（2D＝正交投影——本 spec 把它送到非 Haskell 宿主手上）；[roadmap.md](../roadmap.md) §4.2–§4.4（`pm_max_particles` 管道、0009 §9-1 已解鎖的投影匯出、兩個文件缺口）；[integration.md](../integration.md)（本 spec 把其中的程式碼片段變成真的會編譯的檔案）。
+> 範圍：三個純增補 C 匯出（`pm_max_particles`／`pm_project`／`pm_depth_order`）、契約測試的 4096 釘選改寫為查詢鏡射律（為 0012 的上限提升解鎖）、header 兩處純註解增補（顏色位元組序、座標手性）、C# 參考綁定與 Unity 最小範例。
+
+---
+
+## 0. 起點：引用的凍結介面、檔案盤點
+
+### 0.1 引用的凍結介面（全部唯讀 import 或 add-only 擴充）
+
+| 凍結物 | 本 spec 的用法 |
+|---|---|
+| `include/particle_magic.h` 全文＋10 個 C 進入點（0009 §10 凍結，add-only） | 只加：3 函數宣告、2 plane 常數、1 錯誤碼、2 段註解。**既有宣告與常數值一字不改**（含 `PM_MAX_PARTICLES 4096`——它降級為「第 1 代編譯時的值」，永遠釘 4096） |
+| `Magic.Projection`：`ViewPlane(..)`／`orthographic :: ViewPlane -> V3 -> (V2, Float)`／`depthOrder :: ViewPlane -> ParticleBuffer -> U.Vector Int`（0008 凍結） | `pm_project`＝`orthographic` 逐點映射；`pm_depth_order`＝`depthOrder` 原樣呼叫——FFI 零新語意（0009 §2 紀律延續）。**0010 會換 `depthOrder` 內部實作但輸出逐位元不變**，本 spec 只依賴其凍結簽名與 painter 律，與 0010 無時序耦合 |
+| `Magic.Particle.Buffer`（core）：`ParticleBuffer(..)` 完整匯出（含建構子） | **不直接 import**（foreign-library 白名單無 magic-core）；經新 boundary 模組 `Magic.Columns` 的受控建構面取用（§0.3） |
+| `Magic.Interface`：`V3(..)`（0005 凍結） | `pm_project` 逐點組 `V3` |
+| foreign-library 依賴白名單 {base, magic-boundary, bytestring, vector}（0009 M1；`FFIContractSpec` 守護） | 不變（`Magic.Columns` 屬 magic-boundary） |
+| `FFIContractSpec` 的五文本守護（0009 S4） | 本 spec **修改**它：凍結清單 8→11、新常數、4096 釘選改寫（§1 完成定義 3）——契約測試本身不是凍結介面，是凍結介面的守衛，隨合約加法同步是它的本職 |
+| `StablePtr`＋`IORef` handle、copy-out、錯誤協定（ADR-0011 D3/D4） | 新匯出沿用；`pm_project`/`pm_depth_order` 無 handle（純陣列進出），錯誤協定見 §3 |
+
+### 0.2 檔案盤點（與 0010／0013 的三方零交集證明）
+
+**修改（4）**：
+
+| 檔案 | 變更 |
+|---|---|
+| `src/ffi/Magic/FFI.hs` | +3 `foreign export`（`pm_max_particles`/`pm_project`/`pm_depth_order`）＋plane/錯誤碼常數 |
+| `include/particle_magic.h` | +3 宣告、+`PM_PLANE_SIDE_XY 0`/`PM_PLANE_TOP_XZ 1`、+`PM_ERR_ARGS (-4)`、+2 段註解（§4.4） |
+| `particle-magic-ffi.def` | EXPORTS +3 行 |
+| `test/FFIContractSpec.hs` | 凍結清單 8→11；新常數斷言；**4096 釘選改寫**（§2） |
+
+**新增**：`src/boundary/Magic/Columns.hs`（§0.3）、`bindings/csharp/ParticleMagic.cs`、`examples/unity/README.md`＋`examples/unity/SpellRenderer.cs`、`test/ColumnsSpec.hs`、`test/FFIProjectSpec.hs`、`test/BindingContractSpec.hs`、`test/Acceptance11Spec.hs`。
+
+**共用（行級聯集合併）**：`particle-magic.cabal`（magic-boundary `exposed-modules` +`Magic.Columns` 一行；test-suite `other-modules` +4 行——與 0010/0013 同檔異行）；`SKILL.md`（索引 +0011 列）。
+
+**明文不碰**：`src/core/*` 全部、`src/boundary/{Codec,Interface,Projection,Step,Expr/Parse}.hs`（既有五模組零觸碰——新增檔案不算修改）、`app/*` 全部、`bench/*`、`cbits/pm_init.c`、既有 assets。
+
+**三方交集**：0010 觸 core 六檔＋`Interface.hs`＋`bench/Bench.hs`；0013 觸 `app/*`。與本清單逐檔比對：**交集 = ∅**。
+
+### 0.3 一個設計發現：`pm_depth_order` 需要新的 boundary 建構面
+
+`depthOrder` 吃 `ParticleBuffer`，但 boundary 的凍結匯出**刻意**只開 fields 不開建構子（0005 的唯讀消費紀律），而 foreign-library 不得 import magic-core——FFI 拿到宿主的裸陣列後**無法**組出 `ParticleBuffer`。在 FFI 端重造排序 = 違反「零新語意」紀律，被否決。
+
+解：新增 boundary 模組 **`Magic.Columns`**——受控的「六欄 → buffer」建構面，長度驗證後才交出 buffer（`bufferInvariant` 依建構即真）。這是新檔案＋cabal 一行，與 0010（只碰 `Interface.hs`）零交集不破。`Magic.Interface` 的「fields 不開建構子」紀律不動——`Columns` 是給「已經持有裸欄」的消費者（FFI、未來的宿主工具）的窄門，兩個匯出面各守各的不變量。
+
+## 1. 目標與完成定義
+
+**目標**：把 2D 投影能力送到非 Haskell 宿主手上、鋪好上限查詢管道、補上兩個只存在於原始碼裡的合約事實、交付 C#／Unity 參考材料。
+
+**完成定義**（全部可驗證）：
+
+1. `pm_max_particles()` 回傳 4096，且 `FFIContractSpec` 斷言其與 `Magic.Compile.budgetCap` 相等（**查詢鏡射律**——0012 改核心上限時此律自動要求 FFI 跟上，header 一字不必動）（S1）。
+2. `pm_project` 對任意輸入 ≡ `orthographic` 逐點結果，逐位元（含 y-flip 無、depth 取負等 0008 語意原樣）；`pm_depth_order` ≡ `depthOrder`，逐元素（S3／S4）。
+3. `FFIContractSpec` 更新後全綠：header↔export↔`.def` 三向一致（11 函數）、`PM_PLANE_*`／`PM_ERR_ARGS` 與 Haskell 常數一致、`PM_MAX_PARTICLES == 4096`（永釘，註解標明第 1 代值）＋查詢鏡射律、依賴白名單不變（S1）。
+4. header 含兩段新註解：`color` 欄的 `0xRRGGBBAA` 位元組序、右手座標系（X 右、Y 上、+Z 朝觀者；Unity/Unreal 須翻 Z）——由 `FFIContractSpec` 以文字哨兵守護存在性（S5）。
+5. `bindings/csharp/ParticleMagic.cs` 的 `DllImport` 清單與 header 函數雙向一致（`BindingContractSpec` 文字守護）（S6）。
+6. `examples/unity/` 可依 README 在 Unity 專案中手動驗證（手動 smoke，§9 回填）（S7）。
+7. 跨界等價律擴充：同六欄輸入下 FFI 投影路徑 ≡ Haskell 投影路徑，120 幀全程（S8）。
+
+## 2. 使用到的架構與技巧
+
+- **零新語意紀律（0009 §2 延續）**：三個新匯出全部是凍結 boundary 函數的型別穿越。`pm_project` = `map (orthographic plane)`；`pm_depth_order` = `fromColumns` → `depthOrder` → copy-out。S8 等價律把這句話變成測試。
+- **無 handle 的純陣列函數**：投影不需要 spell 狀態——簽名收裸陣列＋長度，宿主可以拿**任何**來源的位置欄來投（不限 `pm_observe` 的輸出）。NULL／負長度／未知 plane → `PM_ERR_ARGS`（新錯誤碼，加法），**錯誤路徑零寫出**（0009 pm_observe 的 all-or-nothing 慣例）。
+- **查詢鏡射律取代常數釘選**：`FFIContractSpec` 現況斷言 `PM_MAX_PARTICLES == pmMaxParticles == budgetCap == 4096` 三方相等——這把核心上限焊死在凍結 header 上。改寫為兩條獨立律：(a) `PM_MAX_PARTICLES == 4096` 永遠成立（第 1 代值，向後相容的緩衝下限）；(b) `pm_max_particles()` ≡ `budgetCap`（鏡射律）。0012 提升上限時只需改 (b) 兩側的實值，header 與既有宿主零受擾——這正是 roadmap §4.2「乾淨解」的落地。
+- **`Magic.Columns` 窄門**：`fromColumns` 驗證六欄等長才建構（`Either ColumnError ParticleBuffer`），`pm_depth_order` 只用位置三欄時以零欄補齊其餘（`depthOrder` 只讀位置與 count，補零不影響輸出——S4 附此律測試）。
+- **文字合約守護外推到 C#**：`BindingContractSpec` 行式剖析 `ParticleMagic.cs` 的 `[DllImport]`+`static extern` 行，斷言函數名集合 ≡ header 宣告集合。同一手法第三次使用（BoundarySpec → FFIContractSpec → BindingContractSpec），綁定漂移在 `cabal test` 就炸。
+- **Unity 範例＝手動 smoke**：與 `examples/c/main.c` 同定位——不進 CI、README 寫明步驟與預期畫面，§9 回填實測結果。內容即 integration.md §5 的 `SpellRenderer` 成品化（含 Z 翻轉、`RuntimeInitializeOnLoadMethod` 一次性 `pm_init`、絕不呼叫 `pm_shutdown` 的警告）。
+
+## 3. ADT／C API
+
+```c
+/* 追加宣告（header add-only；值/佈局永久凍結） */
+#define PM_PLANE_SIDE_XY 0   /* 側視：丟 Z，depth = -z */
+#define PM_PLANE_TOP_XZ  1   /* 俯視：丟 Y，depth = -y */
+#define PM_ERR_ARGS (-4)     /* NULL 指標、負長度或未知 plane */
+
+int pm_max_particles(void);  /* 核心當前粒子上限；今天 == PM_MAX_PARTICLES(4096)，
+                                之後核心提升時本查詢跟著變、header 不再動。
+                                新宿主一律以本查詢配置緩衝。 */
+
+int pm_project(int plane,
+               const float* pos_x, const float* pos_y, const float* pos_z,
+               int count,
+               float* out_x, float* out_y, float* out_depth);
+/* 逐點正交投影（0008 語意）。回 PM_OK 或 PM_ERR_ARGS；錯誤時零寫出。 */
+
+int pm_depth_order(int plane,
+                   const float* pos_x, const float* pos_y, const float* pos_z,
+                   int count, int* out_indices);
+/* painter 置換：遠到近、等深保輸入序（與 Haskell depthOrder 逐元素同）。 */
+```
+
+```haskell
+-- src/boundary/Magic/Columns.hs（新；交付後凍結）
+module Magic.Columns (ParticleBuffer, ColumnError (..), fromColumns) where
+data ColumnError = LengthMismatch ![Int] deriving (Eq, Show)
+fromColumns :: U.Vector Float -> U.Vector Float -> U.Vector Float  -- pos x/y/z
+            -> U.Vector Float -> U.Vector Float -> U.Vector Word32 -- size/life/color
+            -> Either ColumnError ParticleBuffer
+
+-- src/ffi/Magic/FFI.hs（加法）
+foreign export ccall pm_max_particles :: IO CInt        -- v1 = pmMaxParticles（4096）
+foreign export ccall pm_project
+  :: CInt -> Ptr CFloat -> Ptr CFloat -> Ptr CFloat -> CInt
+  -> Ptr CFloat -> Ptr CFloat -> Ptr CFloat -> IO CInt
+foreign export ccall pm_depth_order
+  :: CInt -> Ptr CFloat -> Ptr CFloat -> Ptr CFloat -> CInt -> Ptr CInt -> IO CInt
+-- 常數：pmPlaneSideXY = 0; pmPlaneTopXZ = 1; pmErrArgs = -4
+-- plane 解碼：0 -> SideXY; 1 -> TopXZ; 其他 -> PM_ERR_ARGS
+```
+
+### 3.1 header 註解增補（純註解，仍 add-only）
+
+1. `uint32_t* color` 欄旁：`/* Packed 0xRRGGBBAA: R in the highest byte, A in the lowest. */`＋C 拆包示例。
+2. 檔頭 Usage 區後：座標系段——右手系、X 右、Y 上、+Z 朝觀者；左手系宿主（Unity/Unreal）須翻 Z，否則 `vortex` 場旋向靜默反轉。
+   兩段各含一個固定哨兵詞（`0xRRGGBBAA`、`right-handed`），`FFIContractSpec` 斷言存在。
+
+## 5. 資料流（pipeline）
+
+```mermaid
+flowchart LR
+  subgraph host [宿主（C/C#/Unity）]
+    H1[六欄 SoA 陣列] --> H2[頂點緩衝／自繪]
+  end
+  subgraph ffi [FFI 殼（IO，零新語意）]
+    P1[pm_project] ; P2[pm_depth_order] ; P3[pm_max_particles]
+  end
+  subgraph boundary [magic-boundary（純）]
+    B1[orthographic] ; B2[Columns.fromColumns --> depthOrder]
+  end
+  H1 --> P1 --> B1 --> H2
+  H1 --> P2 --> B2 --> H2
+  P3 -.鏡射 budgetCap.-> H1
+```
+
+## 6. 搭建方式（風險優先）
+
+1. **S1 `pm_max_particles`＋契約改寫＋header 註解**——最小的匯出、最重要的鬆綁（0012 的解鎖條件）；兩段註解與哨兵同步落地。
+2. **S2 `Magic.Columns`**——`pm_depth_order` 的前置。
+3. **S3 `pm_project`＋`pm_depth_order`**——主體（同一組投影匯出，一個測試模組雙 describe）。
+4. **S4 C# 綁定＋守護**、**S5 Unity 範例**——依賴前三步的最終 header。
+5. **S6 端到端等價律**。
+
+## 7. Todo List 與 1-to-1 測試對應
+
+| # | Todo | 測試 |
+|---|---|---|
+| S1 | `pm_max_particles` 匯出（header／`.def`／FFI.hs）＋`FFIContractSpec` 改寫（凍結清單 8→9、`PM_MAX_PARTICLES` 永釘 4096、查詢鏡射律 `pm_max_particles ≡ budgetCap`）＋header 兩段註解與哨兵 | `test/FFIContractSpec.hs`（更新後全綠即驗收：三向一致、鏡射律、兩個註解哨兵） |
+| S2 | `Magic.Columns.fromColumns`＋cabal 一行 | `test/ColumnsSpec.hs`（等長成功／不等長列出全部長度、`bufferInvariant` 依建構即真、與 `fromParticles` 往返等價） |
+| S3 | `pm_project`＋`pm_depth_order`（含 `PM_PLANE_*`／`PM_ERR_ARGS`；凍結清單 →11） | `test/FFIProjectSpec.hs`（`pm_project` ≡ `orthographic` 逐點逐位元 property；`pm_depth_order` ≡ `depthOrder` 逐元素 property＋補零欄不影響律；NULL/負長/壞 plane → `PM_ERR_ARGS` 零寫出） |
+| S4 | `bindings/csharp/ParticleMagic.cs`（DllImport 全函數＋常數＋`Unpack` 顏色助手＋Z 翻轉助手） | `test/BindingContractSpec.hs`（`.cs` DllImport 名集合 ≡ header 宣告集合、常數值一致） |
+| S5 | `examples/unity/`（`SpellRenderer.cs`＋README：DLL 放置、RTS 警告、Z 翻轉、固定時步） | **手動 smoke**（Unity 專案實測，§9 回填；比照 0009 S6） |
+| S6 | 端到端驗收 | `test/Acceptance11Spec.hs`（golden spell 120 幀：`pm_observe` 六欄 → `pm_project`/`pm_depth_order` ≡ Haskell `observeSpell`→`orthographic`/`depthOrder`，逐位元） |
+
+## 8. 非目標
+
+1. 上限值的實際提升（spec 0012 S1；本 spec 只鋪查詢管道）。
+2. 多 spell 聚合 FFI API（依賴 0012 的場景層；記帳 roadmap §3.3）。
+3. GDScript／C++ 包裝層（C# 綁定是第一個參考實作；其餘等真實宿主需求）。
+4. 多執行緒安全／內部鎖（0009 §9-2 立場不變）。
+5. 熱重載 FFI API（政策已定：重載＝重施法，宿主自行 `pm_cast`）。
+6. Unity 範例的 CI 化（手動 smoke 定位；Unity 專案不進 repo 建置）。
+7. `pm_project` 的透視投影／自訂投影矩陣（核心只有正交語意；3D 深度排序屬宿主——見 integration.md §7）。
+
+## 9. 驗收紀錄
+
+（實作時回填：日期、`cabal test` 結果、S7 Unity 手動 smoke 結果與截圖說明；凍結清單：11 個 C 進入點全文、`PM_PLANE_*`／`PM_ERR_ARGS` 常數、`Magic.Columns` 匯出面。）
