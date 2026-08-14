@@ -5,8 +5,10 @@
 module HudSpec (spec) where
 
 import Data.List (isInfixOf)
-import App.Effects (HudView (..), ReloadStatus (..), ViewMode (..))
+import App.Effects (FlatView (..), HudView (..), ReloadStatus (..), ViewMode (..))
 import App.Hud (formatHud, fpsEma)
+import App.Loop (defaultCamera, flatViewFor)
+import Magic.Projection (ViewPlane (..))
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck
@@ -20,6 +22,8 @@ baseView =
     , hvSpellAge = 1.5
     , hvReload = ReloadIdle
     , hvView = View3D
+    , hvCamera = defaultCamera
+    , hvFlat = flatViewFor (1280, 720) SideXY
     }
 
 hudText :: HudView -> String
@@ -34,6 +38,31 @@ spec = do
       out `shouldSatisfy` ("256" `isInfixOf`)
       out `shouldSatisfy` ("assets/spells/ring-fire.json" `isInfixOf`)
       out `shouldSatisfy` ("1.50" `isInfixOf`)
+
+    it "reports where the orbit camera is while 3D is live" $ do
+      let out = hudText baseView
+      out `shouldSatisfy` ("cam:" `isInfixOf`)
+      -- defaultCamera sits sqrt 76 ≈ 8.7 units from its target.
+      out `shouldSatisfy` ("8.7" `isInfixOf`)
+
+    it "reports the 2D scale and tint instead once the flat view is live" $ do
+      let flat = flatViewFor (1280, 720) TopXZ
+          out = hudText baseView {hvView = View2D TopXZ, hvFlat = flat}
+      out `shouldSatisfy` ("zoom:" `isInfixOf`)
+      out `shouldSatisfy` ("60 px/unit" `isInfixOf`)
+      out `shouldSatisfy` ("tint: off" `isInfixOf`)
+      out `shouldSatisfy` (not . ("cam:" `isInfixOf`))
+
+    it "says so when the depth tint is on" $ do
+      let flat = (flatViewFor (1280, 720) TopXZ) {fvDepthTint = 0.5}
+      hudText baseView {hvView = View2D TopXZ, hvFlat = flat}
+        `shouldSatisfy` ("tint: on" `isInfixOf`)
+
+    it "documents the keys and the mouse gestures that steer the view" $ do
+      let out = hudText baseView
+      out `shouldSatisfy` ("[T]" `isInfixOf`)
+      out `shouldSatisfy` ("[drag]" `isInfixOf`)
+      out `shouldSatisfy` ("[wheel]" `isInfixOf`)
 
     it "says the reload state is idle before anything is reloaded" $
       hudText baseView `shouldSatisfy` ("idle" `isInfixOf`)
@@ -64,7 +93,13 @@ spec = do
 
     prop "every line is newline-free for any view" $
       \fps n path age ->
-        let view = HudView fps n (filter (/= '\n') path) age ReloadIdle View3D
+        let view =
+              baseView
+                { hvFps = fps
+                , hvParticles = n
+                , hvSpellPath = filter (/= '\n') path
+                , hvSpellAge = age
+                }
          in all (notElem '\n') (formatHud view)
 
   describe "fpsEma" $ do

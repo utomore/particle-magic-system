@@ -80,9 +80,11 @@ executable particle-magic
                     , App.HotReload
                     , App.Loop
                     , App.TestInterp
+                    , App.Camera
                     , App.Render.Raylib3D
                     , App.Render.Quads
                     , App.Render.Flat
+                    , App.Render.Order
                     , App.Hud
     build-depends:    base
                     , particle-magic:magic-boundary
@@ -196,12 +198,19 @@ test-suite spec
                     , FieldStepObserveSpec
                     , FieldRebirthSpec
                     , Acceptance7Spec
+                    , CameraSpec
+                    , OrderSpec
+                    , FlatCameraSpec
+                    , DepthTintSpec
+                    , Acceptance13Spec
                     , App.Effects
                     , App.HotReload
                     , App.Loop
                     , App.TestInterp
+                    , App.Camera
                     , App.Render.Quads
                     , App.Render.Flat
+                    , App.Render.Order
                     , App.Hud
     build-depends:    base
                     , particle-magic:magic-core

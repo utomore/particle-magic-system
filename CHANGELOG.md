@@ -43,3 +43,12 @@ delivered function spec (details in `docs/func-spec/`).
   handle lifecycle; determinism holds across the boundary as a tested
   equivalence (FFI path ≡ Haskell path). Core and boundary unchanged.
   (delivered)
+- **0013 visual expressiveness (the `app/*` half)** — the demo becomes an
+  instrument you can look through: alpha batches are staged back to front by
+  camera distance (`App.Render.Order`, additive batches left alone since the
+  sum is order-independent), the 3D view gets an orbit camera (drag) and a
+  wheel dolly, the 2D view gets pan, cursor-anchored zoom and window-resize
+  adaptation, and the top view gets an optional depth tint against the flat
+  blob it used to be. Every control is the identity on idle input, so an
+  untouched run renders exactly what func-spec 0008 delivered — asserted
+  end-to-end. Core, boundary, FFI and `app/Main.hs` untouched. (delivered)

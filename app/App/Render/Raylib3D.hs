@@ -40,11 +40,12 @@ import Raylib.Types
   ( Camera3D (..)
   , CameraProjection (CameraPerspective)
   , Color (..)
-  , KeyboardKey (KeyLeft, KeyR, KeyRight, KeyTab, KeyV)
+  , ConfigFlag (WindowResizable)
+  , KeyboardKey (KeyLeft, KeyR, KeyRight, KeyT, KeyTab, KeyV)
   , Material
   , Matrix
   , Mesh (..)
-  , Vector2
+  , MouseButton (MouseButtonLeft)
   , Vector3
   , p'mesh'triangleCount
   , pattern Vector2
@@ -64,7 +65,8 @@ import App.Effects
   )
 import App.Hud (formatHud)
 import App.Render.Flat (buildFlatQuads)
-import App.Render.Quads (QuadBatch (..), buildQuads, quadIndices)
+import App.Render.Order (orderedQuads)
+import App.Render.Quads (QuadBatch (..), quadIndices)
 import Magic.Interface
   ( BlendMode (..)
   , RenderBatch (..)
@@ -96,7 +98,11 @@ runRaylibIO action = do
     ( \env -> \case
         WithWindow width height title inner ->
           localSeqUnliftIO env $ \unlift ->
-            RU.withWindow width height title 60 $ \_res ->
+            RU.withWindow width height title 60 $ \_res -> do
+              -- A fixed window would make the 2D screen mapping a
+              -- constant again; the loop follows the size every frame
+              -- through 'WindowSize' (func-spec 0013 §4).
+              RL.setWindowState [WindowResizable]
               bracket initQuadGpu freeQuadGpu $ \gpu ->
                 bracket_
                   (writeIORef gpuRef (Just gpu))
@@ -113,6 +119,7 @@ runRaylibIO action = do
         DrawHud view -> liftIO (drawHudIO view)
         ShouldClose -> liftIO RL.windowShouldClose
         PollInput -> liftIO pollInputIO
+        WindowSize -> liftIO ((,) <$> RL.getScreenWidth <*> RL.getScreenHeight)
     )
     action
   where
@@ -188,12 +195,18 @@ emptyQuadMesh cap =
 
 -- | Draw every batch of one frame: 3D mode once, grid once, then per
 -- batch a blend-mode bracket around a single mesh update + draw.
+--
+-- 'orderedQuads' is where func-spec 0013 lands on this path: an alpha
+-- batch arrives already sorted back to front, so overlapping particles
+-- composite in the order the blend equation assumes. The IO budget is
+-- unchanged — the sort happens on the staging side, and the GPU still
+-- sees one mesh update and one draw call per batch.
 drawSceneIO :: QuadGpu -> Camera -> [RenderBatch] -> IO ()
 drawSceneIO gpu cam batches =
   bracket_ (RL.beginMode3D (toRaylibCamera cam)) RL.endMode3D $ do
     RLM.drawGrid 10 1
     forM_ batches $ \batch -> do
-      let quads = buildQuads (camPos cam) (camTarget cam) (camUp cam) (rbParticles batch)
+      let quads = orderedQuads cam batch
           additive = rbBlend batch == BlendAdditive
       when (qbCount quads > 0) $
         bracket_
@@ -283,6 +296,14 @@ drawHudIO view =
   forM_ (zip [0 ..] (formatHud view)) $ \(i, line) ->
     RLT.drawText line 12 (12 + i * 22) 18 (Color 220 230 255 255)
 
+-- | This frame's keyboard and mouse, translated out of raylib's
+-- vocabulary into ours.
+--
+-- The left-button drag is offered to both view controls at once
+-- ('diOrbitDrag' and 'diPanDrag'): one gesture, and the loop decides
+-- which view it steers. A held button that did not move reports
+-- 'Nothing' rather than a zero delta, so an idle frame is idle input by
+-- construction.
 pollInputIO :: IO DemoInput
 pollInputIO = do
   nxt <- RL.isKeyPressed KeyRight
@@ -290,6 +311,14 @@ pollInputIO = do
   rec' <- RL.isKeyPressed KeyR
   backend <- RL.isKeyPressed KeyTab
   plane <- RL.isKeyPressed KeyV
+  tint <- RL.isKeyPressed KeyT
+  dragging <- RL.isMouseButtonDown MouseButtonLeft
+  Vector2 dx dy <- RL.getMouseDelta
+  wheel <- RL.getMouseWheelMove
+  Vector2 mx my <- RL.getMousePosition
+  let drag
+        | dragging && (dx /= 0 || dy /= 0) = Just (dx, dy)
+        | otherwise = Nothing
   pure
     DemoInput
       { diNextSpell = nxt
@@ -297,4 +326,9 @@ pollInputIO = do
       , diRecast = rec'
       , diToggleBackend = backend
       , diTogglePlane = plane
+      , diToggleTint = tint
+      , diOrbitDrag = drag
+      , diPanDrag = drag
+      , diWheel = wheel
+      , diCursor = (mx, my)
       }

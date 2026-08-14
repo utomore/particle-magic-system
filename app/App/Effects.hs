@@ -49,6 +49,7 @@ module App.Effects
   , drawHud
   , pollInput
   , shouldClose
+  , windowSize
   ) where
 
 import qualified Data.ByteString as BS
@@ -90,6 +91,13 @@ data FlatView = FlatView
   , fvOrigin :: !(Float, Float)
   -- ^ Where the world origin sits, in screen pixels.
   , fvPixelsPerUnit :: !Float
+  , fvDepthTint :: !Float
+  -- ^ How much the dropped axis darkens a particle, in @[0, 1]@ (0 =
+  -- off, the default). The top view stacks the whole spell onto one
+  -- plane, and without a depth cue the result reads as a flat blob;
+  -- shading by depth is the cheapest cue that needs no new geometry
+  -- (func-spec 0013 §2). Presentation state, so it lives here with the
+  -- origin and the scale.
   }
   deriving (Eq, Show)
 
@@ -154,6 +162,14 @@ data HudView = HudView
   , hvView :: !ViewMode
   -- ^ The backend this frame was drawn through (func-spec 0008): the HUD
   -- is where a headless test reads the view state off.
+  , hvCamera :: !Camera
+  -- ^ Where the 3D camera is, live (func-spec 0013). Shown as its orbit
+  -- summary, and — like 'hvView' — this is how a headless test reads the
+  -- camera state off without a window.
+  , hvFlat :: !FlatView
+  -- ^ The live 2D view: scale, pan and depth tint. Only meaningful while
+  -- 'hvView' is 'View2D', but always carried, for the same reason
+  -- 'hvView' carries the plane in 3D — the state exists either way.
   }
   deriving (Eq, Show)
 
@@ -179,6 +195,22 @@ data DemoInput = DemoInput
   -- ^ Tab: switch between the 3D and the 2D backend.
   , diTogglePlane :: !Bool
   -- ^ V: switch the orthographic plane (side ↔ top).
+  , diToggleTint :: !Bool
+  -- ^ T: switch the 2D depth tint on and off (func-spec 0013 §4).
+  , diOrbitDrag :: !(Maybe (Float, Float))
+  -- ^ Mouse drag while the left button is held, in pixels, or 'Nothing'
+  -- when nothing is being dragged. Drives the 3D orbit; the pixels are
+  -- turned into degrees by the loop, not by the backend.
+  , diPanDrag :: !(Maybe (Float, Float))
+  -- ^ The same drag, offered to the 2D path as a screen-pixel pan. Two
+  -- fields rather than one because the two views read the same gesture
+  -- differently, and a backend that only supports one of them can say so
+  -- by leaving the other 'Nothing'.
+  , diWheel :: !Float
+  -- ^ Wheel notches this frame, positive away from the user. Zooms
+  -- whichever view is live.
+  , diCursor :: !(Float, Float)
+  -- ^ Cursor position in screen pixels — the fixed point of the 2D zoom.
   }
   deriving (Eq, Show)
 
@@ -190,6 +222,11 @@ noInput =
     , diRecast = False
     , diToggleBackend = False
     , diTogglePlane = False
+    , diToggleTint = False
+    , diOrbitDrag = Nothing
+    , diPanDrag = Nothing
+    , diWheel = 0
+    , diCursor = (0, 0)
     }
 
 -- | Paired-call raylib operations (bracket pattern, higher-order effect)
@@ -211,6 +248,10 @@ data Raylib :: Effect where
   -- 'DrawScene' was: the same batches, consumed through an orthographic
   -- projection instead of a camera.
   DrawFlat :: FlatView -> [RenderBatch] -> Raylib m ()
+  -- | The window's current size in pixels (func-spec 0013): a resizable
+  -- window means the 2D view's screen mapping is no longer a constant,
+  -- and the loop is where that mapping is decided.
+  WindowSize :: Raylib m (Int, Int)
 
 type instance DispatchOf Raylib = Dynamic
 
@@ -237,3 +278,6 @@ pollInput = send PollInput
 
 shouldClose :: (Raylib :> es) => Eff es Bool
 shouldClose = send ShouldClose
+
+windowSize :: (Raylib :> es) => Eff es (Int, Int)
+windowSize = send WindowSize
