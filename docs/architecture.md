@@ -84,7 +84,7 @@ flowchart TD
 
 **關鍵約束**：
 
-- `Magic.*` 之間不 import 任何 `App.*` 或 IO；用模組邊界＋（未來）`cabal` 的 internal library 強制。
+- `Magic.*` 之間不 import 任何 `App.*` 或 IO；以模組邊界＋cabal sublibrary 依賴清單強制（`BoundarySpec` 機械守護；`magic-core`/`magic-boundary` 為 `visibility: public` 的公開 sublibrary，外部專案可直接依賴）。
 - 外殼只透過 `Magic.Interface` 使用核心——它是系統對外的**唯一依賴點**（Init.md「完美的介面化」目標）。
 - `Magic.Codec` 屬邊界層而非核心：核心只認識 ADT，不認識 JSON 或數學式文字語法。
 
@@ -365,7 +365,7 @@ data RenderBatch = RenderBatch
 
 ### 5.3 對外唯一入口
 
-外殼（或未來任何宿主遊戲）只允許 import `Magic.Interface` 與 `Magic.Codec`。核心其餘模組未來以 cabal internal library 隱藏（現況：exe 不依賴 `magic-core` 已由測試強制）。宿主的完整使用面積（spec 0001 交付；0005 加 `advanceSpell`/`observeSpell`）：
+外殼（或任何宿主遊戲）只允許 import `Magic.Interface` 與 `Magic.Codec`。套件層現況（2026-08-13 套件化回合落地）：`magic-core`/`magic-boundary` 是 `visibility: public` 的具名 sublibrary、依賴帶 PVP 上界（`^>=`），**外部 cabal 專案可經 `source-repository-package` 直接 `build-depends: particle-magic:magic-boundary`**（作法見 README.md）；exe 不依賴 `magic-core` 由 `BoundarySpec` 測試強制。宿主的完整使用面積（spec 0001 交付；0005 加 `advanceSpell`/`observeSpell`）：
 
 ```haskell
 -- Magic.Codec
@@ -443,7 +443,7 @@ observeSpell :: ActiveSpell -> FrameOutput
 ## 9. 目前技術困難
 
 1. **h-raylib 在 Windows 的首次建置**：h-raylib 內含 raylib C 原始碼，首次 `cabal build` 需要可用的 C 工具鏈（ghcup 附的 MinGW 可用）且耗時長。GHC 9.14.1 很新，h-raylib 對新版 GHC 的相容性需在骨架階段最先驗證——這是整個技術棧風險最高的一點。
-2. **h-raylib 的 instancing 支援面**：~~raylib C API 有 `DrawMeshInstanced`，但 h-raylib 綁定的完整度與零拷貝傳遞需要實測~~——**已裁決（[ADR-0009](adr/0009-dynamic-quad-mesh-rendering.md)）**：instancing 否決，改走動態 quad mesh＋`c'` 指標路徑；待 spec 0005 S0 spike 實機確證。
+2. **h-raylib 的 instancing 支援面**：~~raylib C API 有 `DrawMeshInstanced`，但 h-raylib 綁定的完整度與零拷貝傳遞需要實測~~——**已裁決（[ADR-0009](adr/0009-dynamic-quad-mesh-rendering.md)）**：instancing 否決，改走動態 quad mesh＋`c'` 指標路徑；已由 spec 0005 S0 spike 實機確證並交付（0005 §10 驗收，bench 基線：4096 粒 buildQuads ≈71µs、每幀純 CPU ≈0.73ms）。
 3. **effectful 與 raylib 命令式 API 的整合**：raylib 是 `IO` 命令式風格（`beginDrawing`/`endDrawing` 配對）。需要一層 `Raylib :: Effect` 封裝配對呼叫（bracket 模式），樣板量中等，但屬一次性成本。
 4. **GC 停頓**：十萬粒子若逐幀產生新 boxed 結構，minor GC 會吃掉幀預算。§7 的緩衝重用＋unboxed 策略是針對性解法，但需要以 `-s`/eventlog 實測驗證，不能只靠推測。
 5. **數學式剖析器**：需要一個小型剖析器（建議 megaparsec）處理文字式子→`Expr`，含錯誤位置回報。技術上成熟，但錯誤訊息品質（玩家會直接面對）需要投入。
