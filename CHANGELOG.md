@@ -23,8 +23,13 @@ delivered function spec (details in `docs/func-spec/`).
 - **0006 lifecycle phases & formation emitters** — Drawing/Converging/
   Casting/Dissipating, formation-geometry emitters, opt-in `"phases"` JSON;
   sampler untouched, bit-for-bit compatibility for existing spells.
-  (designed, implementation in progress)
-- **0007 force-field layer** — ADR-0010: additive displacement overlay,
-  semi-implicit Euler, stable particle identity, three field kinds
-  (gravity/attractor/vortex); packaging debt (MIT license, public
-  sublibraries, PVP bounds, this README/CHANGELOG). (designed, gated on 0006)
+  (delivered)
+- **0007 force-field layer** — ADR-0010: additive displacement overlay on
+  the analytic layer, semi-implicit Euler at the fixed step, particle
+  identity keyed by stable `(emitter, index)` slot, three field kinds
+  (gravity/attractor/vortex) behind an opt-in `"fields"` JSON key. The
+  system's first cross-frame state (`FieldState`), reset on every cast;
+  fieldless spells branch around the whole layer and render bit-for-bit
+  what they rendered before. `app/*` untouched. Packaging debt from the
+  same round: MIT license, public sublibraries, PVP bounds, this
+  README/CHANGELOG. (delivered)
