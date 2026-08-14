@@ -18,6 +18,10 @@ module App.Effects
   ( -- * Camera (renderer-agnostic)
     Camera (..)
 
+    -- * View selection (func-spec 0008)
+  , ViewMode (..)
+  , FlatView (..)
+
     -- * Clock
   , Clock (..)
   , now
@@ -41,6 +45,7 @@ module App.Effects
   , withFrame
   , drawBatch
   , drawScene
+  , drawFlat
   , drawHud
   , pollInput
   , shouldClose
@@ -51,6 +56,7 @@ import Effectful (Dispatch (Dynamic), DispatchOf, Eff, Effect, IOE, liftIO, (:>)
 import Effectful.Dispatch.Dynamic (interpret, send)
 import GHC.Clock (getMonotonicTime)
 import Magic.Interface (RenderBatch, V3)
+import Magic.Projection (ViewPlane)
 import System.IO.Error (catchIOError)
 
 import App.HotReload (WatchState, checkStampIO, newWatchState)
@@ -61,6 +67,29 @@ data Camera = Camera
   , camTarget :: !V3
   , camUp :: !V3
   , camFovY :: !Float
+  }
+  deriving (Eq, Show)
+
+-- | Which backend the frame is drawn through (func-spec 0008 §4.3). The
+-- simulation is unaffected by it: 'FrameOutput' carries no dimension
+-- assumption (ADR-0008), so this only selects the consumer.
+data ViewMode
+  = View3D
+  -- ^ Perspective camera, quads billboarded towards it.
+  | View2D !ViewPlane
+  -- ^ Orthographic projection onto the given plane, painter-sorted and
+  -- drawn in screen pixels — how a real 2D host would consume us.
+  deriving (Eq, Show)
+
+-- | Everything the flat backend needs to place a projected particle on
+-- screen. Renderer-agnostic (pixels, not raylib), and not frozen: origin
+-- and scale are shell-side presentation choices.
+data FlatView = FlatView
+  { fvPlane :: !ViewPlane
+  , fvScreenSize :: !(Int, Int)
+  , fvOrigin :: !(Float, Float)
+  -- ^ Where the world origin sits, in screen pixels.
+  , fvPixelsPerUnit :: !Float
   }
   deriving (Eq, Show)
 
@@ -122,6 +151,9 @@ data HudView = HudView
   , hvSpellPath :: !FilePath
   , hvSpellAge :: !Double
   , hvReload :: !ReloadStatus
+  , hvView :: !ViewMode
+  -- ^ The backend this frame was drawn through (func-spec 0008): the HUD
+  -- is where a headless test reads the view state off.
   }
   deriving (Eq, Show)
 
@@ -143,11 +175,22 @@ data DemoInput = DemoInput
   { diNextSpell :: !Bool
   , diPrevSpell :: !Bool
   , diRecast :: !Bool
+  , diToggleBackend :: !Bool
+  -- ^ Tab: switch between the 3D and the 2D backend.
+  , diTogglePlane :: !Bool
+  -- ^ V: switch the orthographic plane (side ↔ top).
   }
   deriving (Eq, Show)
 
 noInput :: DemoInput
-noInput = DemoInput {diNextSpell = False, diPrevSpell = False, diRecast = False}
+noInput =
+  DemoInput
+    { diNextSpell = False
+    , diPrevSpell = False
+    , diRecast = False
+    , diToggleBackend = False
+    , diTogglePlane = False
+    }
 
 -- | Paired-call raylib operations (bracket pattern, higher-order effect)
 -- plus the draw and input commands. No raylib types appear here.
@@ -164,6 +207,10 @@ data Raylib :: Effect where
   DrawScene :: Camera -> [RenderBatch] -> Raylib m ()
   DrawHud :: HudView -> Raylib m ()
   PollInput :: Raylib m DemoInput
+  -- | The 2D path (func-spec 0008), added the same additive way
+  -- 'DrawScene' was: the same batches, consumed through an orthographic
+  -- projection instead of a camera.
+  DrawFlat :: FlatView -> [RenderBatch] -> Raylib m ()
 
 type instance DispatchOf Raylib = Dynamic
 
@@ -178,6 +225,9 @@ drawBatch cam = send . DrawBatch cam
 
 drawScene :: (Raylib :> es) => Camera -> [RenderBatch] -> Eff es ()
 drawScene cam = send . DrawScene cam
+
+drawFlat :: (Raylib :> es) => FlatView -> [RenderBatch] -> Eff es ()
+drawFlat fv = send . DrawFlat fv
 
 drawHud :: (Raylib :> es) => HudView -> Eff es ()
 drawHud = send . DrawHud

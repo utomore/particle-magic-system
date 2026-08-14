@@ -7,8 +7,10 @@ effect *is* the magic: every slot and rune of a circle directly determines
 the particles' mathematical behavior.
 
 The public libraries are renderer- and engine-agnostic. This repository's
-executable is only a demo shell (h-raylib, 3D); a host game brings its own
-renderer and consumes the system's dimension-free `RenderBatch` output.
+executable is only a demo shell (h-raylib); a host game brings its own
+renderer and consumes the system's dimension-free `RenderBatch` output. The
+demo draws that one output through both a 3D perspective backend and a real
+2D orthographic one, switchable at runtime — the core does not know which.
 
 ## Architecture in one paragraph
 
@@ -21,8 +23,9 @@ Three rings, dependencies pointing strictly inward
   particle sampler (particle state is a pure function of time — fully
   deterministic and replayable). Depends only on `base`, `vector`, `deepseq`.
 - **Pure boundary** (`magic-boundary`): the system's only public surface —
-  `Magic.Interface` (cast/step/observe) and `Magic.Codec` (JSON in/out,
-  formula-text parsing).
+  `Magic.Interface` (cast/step/observe), `Magic.Codec` (JSON in/out,
+  formula-text parsing) and `Magic.Projection` (orthographic projection +
+  painter ordering, for 2D hosts).
 - **Effect shell** (this repo's executable): fixed-timestep loop, hot reload,
   h-raylib rendering. Host games replace this ring entirely.
 
@@ -44,8 +47,8 @@ source-repository-package
 build-depends: particle-magic:magic-boundary
 ```
 
-Your code imports `Magic.Interface` and `Magic.Codec` only — nothing else is
-part of the contract.
+Your code imports `Magic.Interface` and `Magic.Codec` only — plus
+`Magic.Projection` if you render in 2D. Nothing else is part of the contract.
 
 ## Using it from a non-Haskell engine (C ABI)
 
@@ -112,6 +115,11 @@ gameLoop spell = do
 Advanced: `advanceSpell` / `observeSpell` split stepping (advance the
 simulation several fixed steps, sample exactly once per rendered frame) —
 `stepSpell` is their composition. `spellAge` reports seconds since cast.
+
+Rendering in 2D: `Magic.Projection` does the dimension-dropping half for you
+— `orthographic plane pos` returns `(V2, depth)` for a chosen `ViewPlane`
+(`SideXY` or `TopXZ`), and `depthOrder plane buffer` returns a stable
+far-to-near index permutation to draw in. Screen origin and scale stay yours.
 
 Determinism guarantee: the same `(Circle, CastContext, dt sequence)` always
 produces bit-identical output — spells are replayable and testable as pure

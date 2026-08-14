@@ -15,7 +15,7 @@ module Magic.Circle
   , emptyCircle
   ) where
 
-import Magic.Rune (BridgeRune, EssenceRune, InnerRune, NodeRune, OuterRune)
+import Magic.Rune (BridgeRune, EssenceRune, ForceField, InnerRune, NodeRune, OuterRune)
 import Magic.Types (Seconds)
 
 -- | A fixed pair of ring layers. Convention: 'ringA' is the inner layer,
@@ -39,6 +39,12 @@ data Circle = Circle
   , circlePhases :: !(Maybe PhaseConfig)
   -- ^ Lifecycle staging (spec 0006 §3.3). 'Nothing' = instant cast, the
   -- compatibility law's degenerate case; 'emptyCircle' uses it.
+  , circleFields :: ![ForceField]
+  -- ^ The circle's physical environment (spec 0007, ADR-0010 D4): force
+  -- fields acting on the casting particles. Not runes and not in any
+  -- slot — a property of the circle as a whole, like 'circlePhases'.
+  -- @[]@ (the 'emptyCircle' value) is the zero-field compatibility case:
+  -- the whole field layer is branched around, not computed to zero.
   }
   deriving (Eq, Show)
 
@@ -82,4 +88,5 @@ emptyCircle =
     , innerRings = TwoOf Nothing Nothing
     , core = Core {coreCenter = Nothing, coreNodes = Nodes Nothing Nothing Nothing Nothing}
     , circlePhases = Nothing
+    , circleFields = []
     }

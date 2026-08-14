@@ -66,6 +66,7 @@ import Magic.Rune
   , Envelope (..)
   , EssenceRune (..)
   , FaceShape (..)
+  , ForceField (..)
   , InnerRune (..)
   , NodeRune (..)
   , OuterRune (..)
@@ -95,6 +96,12 @@ data CompiledSpell = CompiledSpell
   -- formation-geometry emitters.
   , spellPhases :: !PhasePlan
   -- ^ Absolute time landmarks of the four lifecycle stages (spec 0006).
+  , spellFields :: ![ForceField]
+  -- ^ The circle's force fields (spec 0007), carried through verbatim
+  -- from 'Magic.Circle.circleFields'. Deliberately /not/ folded: fields
+  -- are neither a slot's meaning nor a modulation of one (ADR-0010 D4),
+  -- so no fold step reads or rewrites them — they ride along as compiled
+  -- data for 'Magic.Particle.Field' to interpret.
   }
   deriving (Eq, Show)
 
@@ -328,6 +335,7 @@ compile circle = do
           , spellBudget = totalCount
           , spellEmitters = V.fromList allEmitters
           , spellPhases = plan
+          , spellFields = circleFields circle
           }
 
 -- | The caster-frame origin anchor shared by casting and every

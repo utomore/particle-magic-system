@@ -28,10 +28,13 @@ module Magic.Rune
   , EssenceRune (..)
   , Element (..)
   , NodeRune (..)
+
+    -- * Force fields (spec 0007; a circle-level property, not a rune)
+  , ForceField (..)
   ) where
 
 import Magic.Expr (Expr, ExprV3)
-import Magic.Types (Seconds, V2)
+import Magic.Types (Seconds, V2, V3)
 
 -- | Outer-ring runes: how the magic presents itself.
 data OuterRune
@@ -133,4 +136,29 @@ data Element = Neutral | Fire | Water | Lightning
 newtype NodeRune
   = -- | Constant drift-velocity bias along that node's face direction.
     DirBias Double
+  deriving (Eq, Show)
+
+-- | Force fields acting on the casting-phase particles (spec 0007,
+-- ADR-0010). Not a rune and not in any slot: a field is a property of
+-- the circle as a whole (its physical environment), so it hangs off
+-- 'Magic.Circle.circleFields' — ADR-0010 D4 spells out the four reasons.
+-- Lives here because this is the parameter vocabulary's home, next to
+-- 'Envelope' and 'Trajectory'.
+--
+-- Parameters are static world-space values (ADR-0010 D5); field-to-particle
+-- only (architecture §7). Extensible sum: existing constructors' meaning
+-- and JSON tags are frozen once spec 0007 delivers.
+data ForceField
+  = -- | Constant world-space acceleration (units/s²).
+    Gravity !V3
+  | -- | Center, strength (> 0 attracts, < 0 repels; the magnitude at
+    -- distance 1 with zero softening) and softening (> 0, keeps the
+    -- singularity at the center out):
+    -- @accel = strength · normalize(center − pos) / (dist² + softening²)@.
+    PointAttractor !V3 !Float !Float
+  | -- | Center, axis (normalized when evaluated), tangential strength and
+    -- radial falloff (>= 0; 0 = the swirl does not weaken with off-axis
+    -- distance): @accel = strength · tangent / (1 + falloff · offAxisDist)@
+    -- with @tangent = normalize(axis × offAxisVector)@.
+    Vortex !V3 !V3 !Float !Float
   deriving (Eq, Show)
