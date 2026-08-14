@@ -8,7 +8,21 @@
 -- else's engine. So this spec parses all three (plus @cbits\/pm_init.c@ and
 -- the core's own cap) the way @test\/BoundarySpec.hs@ parses the package
 -- boundary, and fails in CI instead.
-module FFIContractSpec (spec) where
+--
+-- Func-spec 0011 adds the three projection-era entry points to the same
+-- three-way check, and replaces the old @PM_MAX_PARTICLES == budgetCap@
+-- pin with the pair of laws that let the core's cap move without
+-- disturbing the frozen header (§2). Its header and define parsers are
+-- exported so @test\/BindingContractSpec.hs@ can hold the C# binding to
+-- the same header without a second copy of them.
+module FFIContractSpec
+  ( spec
+
+    -- * Header parsers (shared with "BindingContractSpec")
+  , headerFunctions
+  , headerDefines
+  , readUtf8
+  ) where
 
 import Control.Exception (evaluate)
 import Data.Char (isAlphaNum, isSpace)
@@ -16,12 +30,16 @@ import Data.List (isPrefixOf, nub, sort)
 import Magic.Compile (budgetCap)
 import Magic.FFI
   ( blendCode
+  , pm_max_particles
   , pmAbiVersion
+  , pmErrArgs
   , pmErrBudget
   , pmErrCapacity
   , pmErrJson
   , pmMaxParticles
   , pmOk
+  , pmPlaneSideXY
+  , pmPlaneTopXZ
   , shapeCode
   )
 import Magic.Interface (BillboardShape (..), BlendMode (..))
@@ -60,6 +78,9 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
         , "pm_age"
         , "pm_observe"
         , "pm_free"
+        , "pm_max_particles"
+        , "pm_project"
+        , "pm_depth_order"
         ]
 
   it "exports through the Windows .def file exactly what the header declares" $ do
@@ -71,11 +92,20 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
     source <- stripComments <$> readUtf8 cbitsFile
     mapM_ (\name -> source `shouldSatisfy` defines name) cbitsEntries
 
-  it "mirrors PM_MAX_PARTICLES from the core's own cap" $ do
+  -- The two halves of func-spec 0011 §2. Before it, one assertion tied
+  -- PM_MAX_PARTICLES, pmMaxParticles and budgetCap together, which welded
+  -- the core's cap onto a frozen header: raising the cap would have
+  -- silently changed a constant hosts compiled against. Split in two, the
+  -- header keeps its first-generation promise and the /query/ carries the
+  -- current truth.
+  it "pins PM_MAX_PARTICLES at the first generation's value (frozen header)" $ do
     header <- headerDefines
-    lookup "PM_MAX_PARTICLES" header `shouldBe` Just (fromIntegral pmMaxParticles)
-    fromIntegral pmMaxParticles `shouldBe` budgetCap
-    budgetCap `shouldBe` 4096
+    lookup "PM_MAX_PARTICLES" header `shouldBe` Just 4096
+
+  it "mirrors the core's cap through the pm_max_particles query" $ do
+    queried <- pm_max_particles
+    queried `shouldBe` pmMaxParticles
+    fromIntegral queried `shouldBe` budgetCap
 
   it "agrees with Haskell on the ABI version" $ do
     header <- headerDefines
@@ -88,8 +118,24 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
           , ("PM_ERR_JSON", pmErrJson)
           , ("PM_ERR_BUDGET", pmErrBudget)
           , ("PM_ERR_CAPACITY", pmErrCapacity)
+          , ("PM_ERR_ARGS", pmErrArgs)
           ]
     mapM_ (\(name, value) -> lookup name header `shouldBe` Just (fromIntegral value)) expected
+
+  it "agrees with Haskell on the view-plane selectors" $ do
+    header <- headerDefines
+    lookup "PM_PLANE_SIDE_XY" header `shouldBe` Just (fromIntegral pmPlaneSideXY)
+    lookup "PM_PLANE_TOP_XZ" header `shouldBe` Just (fromIntegral pmPlaneTopXZ)
+
+  -- Two facts that used to live only in docs/integration.md, i.e. only for
+  -- readers who found that file. A host reads the header (func-spec 0011
+  -- §3.1); getting either wrong is silent — reversed channels, or a
+  -- vortex spinning backwards — so the header has to say them, and a
+  -- sentinel word each keeps them from being edited away.
+  it "documents the colour packing and the coordinate handedness" $ do
+    header <- readUtf8 headerFile
+    header `shouldSatisfy` isInfixOf' "0xRRGGBBAA"
+    header `shouldSatisfy` isInfixOf' "right-handed"
 
   it "agrees with Haskell on the batch_info enums and stride" $ do
     header <- headerDefines

@@ -42,6 +42,9 @@ module Magic.FFI
   , pm_age
   , pm_observe
   , pm_free
+  , pm_max_particles
+  , pm_project
+  , pm_depth_order
 
     -- * Contract constants (mirrored in @include\/particle_magic.h@,
     -- guarded by @test\/FFIContractSpec.hs@)
@@ -51,8 +54,12 @@ module Magic.FFI
   , pmErrJson
   , pmErrBudget
   , pmErrCapacity
+  , pmErrArgs
+  , pmPlaneSideXY
+  , pmPlaneTopXZ
   , blendCode
   , shapeCode
+  , planeOf
 
     -- * Internals (not part of the C contract; exposed for testing)
   , SpellCell (..)
@@ -79,11 +86,12 @@ import Foreign.StablePtr
   , freeStablePtr
   , newStablePtr
   )
-import Foreign.Storable (peek, peekByteOff, poke, pokeByteOff, pokeElemOff)
+import Foreign.Storable (peek, peekByteOff, peekElemOff, poke, pokeByteOff, pokeElemOff)
 import GHC.Float (float2Double)
 import qualified GHC.Foreign as GHCF
 import GHC.IO.Encoding (utf8)
 import Magic.Codec (loadCircle, renderLoadError)
+import Magic.Columns (fromColumns)
 import Magic.Interface
   ( ActiveSpell
   , BillboardShape (..)
@@ -104,6 +112,7 @@ import Magic.Interface
   , observeSpell
   , spellAge
   )
+import Magic.Projection (V2 (..), ViewPlane (..), depthOrder, orthographic)
 
 -- Contract constants ---------------------------------------------------------
 
@@ -116,14 +125,42 @@ pmAbiVersion = 1
 -- synchronisation duty on the future throughput spec;
 -- @test\/FFIContractSpec.hs@ ties all three together so the drift is
 -- caught in CI, not in a host's memory corruption.
+--
+-- Func-spec 0011 makes this the /queryable/ copy: 'pm_max_particles'
+-- answers with it, and the contract spec asserts it equals the core's cap
+-- (the mirror law). @PM_MAX_PARTICLES@ in the header stays pinned at the
+-- first generation's 4096 forever — it is frozen — so when the core cap
+-- rises it is this constant that follows, and hosts that size their
+-- buffers from the query keep working with no recompile of the header.
 pmMaxParticles :: CInt
 pmMaxParticles = 4096
 
-pmOk, pmErrJson, pmErrBudget, pmErrCapacity :: CInt
+pmOk, pmErrJson, pmErrBudget, pmErrCapacity, pmErrArgs :: CInt
 pmOk = 0
 pmErrJson = -1
 pmErrBudget = -2
 pmErrCapacity = -3
+
+-- | A @NULL@ pointer where one is needed, a negative length, or a plane
+-- selector that is neither 'pmPlaneSideXY' nor 'pmPlaneTopXZ' (func-spec
+-- 0011 §3). Only the array entry points can return it.
+pmErrArgs = -4
+
+-- | Wire codes for 'ViewPlane', declaration order of the core's
+-- constructors — same convention as 'blendCode' (guarded by
+-- @test\/FFIContractSpec.hs@).
+pmPlaneSideXY, pmPlaneTopXZ :: CInt
+pmPlaneSideXY = 0
+pmPlaneTopXZ = 1
+
+-- | Decode a host's plane selector. Anything else is 'pmErrArgs' rather
+-- than a silently substituted default: a host that passes garbage here
+-- would otherwise get a plausible-looking picture along the wrong axis.
+planeOf :: CInt -> Maybe ViewPlane
+planeOf code
+  | code == pmPlaneSideXY = Just SideXY
+  | code == pmPlaneTopXZ = Just TopXZ
+  | otherwise = Nothing
 
 -- | Wire codes for 'BlendMode', declaration order of the core's
 -- constructors (guarded by @test\/FFIContractSpec.hs@).
@@ -166,6 +203,18 @@ foreign export ccall pm_abi_version :: IO CInt
 
 pm_abi_version :: IO CInt
 pm_abi_version = pure pmAbiVersion
+
+foreign export ccall pm_max_particles :: IO CInt
+
+-- | The particle cap this build of the core actually enforces — the
+-- capacity each of @pm_observe@'s six columns needs.
+--
+-- Today it answers @PM_MAX_PARTICLES@ (4096). The header constant is
+-- frozen at that value; this query is not, so a host that allocates from
+-- it survives a future cap rise without recompiling against a new header
+-- (func-spec 0011 §2, roadmap §4.2).
+pm_max_particles :: IO CInt
+pm_max_particles = pure pmMaxParticles
 
 foreign export ccall pm_cast
   :: CString
@@ -360,6 +409,131 @@ pm_free h
   | isNullSpell h = pure ()
   | otherwise = freeStablePtr h
 
+-- Projection (func-spec 0011 §3) ---------------------------------------------
+--
+-- Two entry points that take no handle at all: projection is a function of
+-- positions, not of spell state, so a host may feed them any columns it
+-- has — @pm_observe@'s output, a subrange of it, or its own particles.
+-- Both are 'Magic.Projection' called through a type crossing and nothing
+-- more (the zero-new-semantics rule; @test\/FFIProjectSpec.hs@ states it
+-- as an equivalence).
+
+foreign export ccall pm_project
+  :: CInt
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> CInt
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> IO CInt
+
+-- | Orthographic projection of @count@ abstract-space positions onto the
+-- chosen 'ViewPlane' (ADR-0008): plane coordinates into @out_x@ \/
+-- @out_y@, the painter's depth into @out_depth@ (larger = further away).
+--
+-- Returns 'pmOk', or 'pmErrArgs' with __nothing written at all__ — the
+-- argument check runs to completion before the first poke, as in
+-- 'pm_observe'.
+--
+-- Aliasing an input column onto an output column is safe for @out_x@ (the
+-- read of element @i@ precedes its write), and is /not/ safe in general;
+-- hosts should hand over distinct arrays.
+pm_project
+  :: CInt
+  -- ^ 'pmPlaneSideXY' or 'pmPlaneTopXZ'
+  -> Ptr CFloat
+  -- ^ position x
+  -> Ptr CFloat
+  -- ^ position y
+  -> Ptr CFloat
+  -- ^ position z
+  -> CInt
+  -- ^ number of positions
+  -> Ptr CFloat
+  -- ^ out: plane u
+  -> Ptr CFloat
+  -- ^ out: plane v
+  -> Ptr CFloat
+  -- ^ out: depth
+  -> IO CInt
+pm_project plane inX inY inZ count outU outV outDepth =
+  withColumns plane count [inX, inY, inZ, outU, outV, outDepth] $ \viewPlane n ->
+    let go i
+          | i >= n = pure pmOk
+          | otherwise = do
+              x <- peekFloat inX i
+              y <- peekFloat inY i
+              z <- peekFloat inZ i
+              let (V2 u v, depth) = orthographic viewPlane (V3 x y z)
+              pokeFloat outU i u
+              pokeFloat outV i v
+              pokeFloat outDepth i depth
+              go (i + 1)
+     in go 0
+
+foreign export ccall pm_depth_order
+  :: CInt -> Ptr CFloat -> Ptr CFloat -> Ptr CFloat -> CInt -> Ptr CInt -> IO CInt
+
+-- | The painter's permutation for @count@ positions: the indices
+-- @[0 .. count-1]@ ordered far to near, equal depths keeping their input
+-- order. Draw the particles in this order and nearer ones land on top
+-- without a depth buffer.
+--
+-- Only the position columns matter to 'depthOrder', so the buffer it
+-- sorts is completed with zero size\/life\/colour columns — a padding
+-- that provably cannot reach the result (@test\/FFIProjectSpec.hs@).
+--
+-- Returns 'pmOk', or 'pmErrArgs' with nothing written.
+pm_depth_order
+  :: CInt
+  -- ^ 'pmPlaneSideXY' or 'pmPlaneTopXZ'
+  -> Ptr CFloat
+  -- ^ position x
+  -> Ptr CFloat
+  -- ^ position y
+  -> Ptr CFloat
+  -- ^ position z
+  -> CInt
+  -- ^ number of positions
+  -> Ptr CInt
+  -- ^ out: @count@ indices, far to near
+  -> IO CInt
+pm_depth_order plane inX inY inZ count outIndices =
+  withColumns plane count [inX, inY, inZ, castPtr outIndices] $ \viewPlane n -> do
+    xs <- readFloats inX n
+    ys <- readFloats inY n
+    zs <- readFloats inZ n
+    let blank = U.replicate n 0
+    case fromColumns xs ys zs blank blank (U.replicate n 0) of
+      -- Unreachable: the six columns are built to one length. Reported
+      -- rather than thrown, because an exception crossing back into C is
+      -- undefined behaviour.
+      Left _ -> pure pmErrArgs
+      Right pb -> do
+        U.imapM_ (\i j -> pokeElemOff outIndices i (fromIntegral j)) (depthOrder viewPlane pb)
+        pure pmOk
+
+-- | The shared argument check of the two array entry points: decode the
+-- plane, reject a negative length, and — only when there is an element to
+-- touch — reject a @NULL@ among the columns. @NULL@ with @count == 0@ is
+-- accepted, matching 'pm_observe', where a host with nothing to draw need
+-- not own arrays at all.
+--
+-- Nothing is written before the continuation runs, which is what makes
+-- the error path all-or-nothing.
+withColumns :: CInt -> CInt -> [Ptr a] -> (ViewPlane -> Int -> IO CInt) -> IO CInt
+withColumns plane count ptrs k =
+  case planeOf plane of
+    Nothing -> pure pmErrArgs
+    Just viewPlane
+      | count < 0 -> pure pmErrArgs
+      | n > 0 && any (== nullPtr) ptrs -> pure pmErrArgs
+      | otherwise -> k viewPlane n
+      where
+        n = fromIntegral count
+
 -- Marshalling helpers --------------------------------------------------------
 
 -- | @CFloat@ and @Float@ share their representation, so the columns are
@@ -370,6 +544,19 @@ copyFloats ptr offset = U.imapM_ (\i x -> pokeElemOff (castPtr ptr) (offset + i)
 
 copyWords :: Ptr Word32 -> Int -> U.Vector Word32 -> IO ()
 copyWords ptr offset = U.imapM_ (\i x -> pokeElemOff ptr (offset + i) x)
+
+-- | Element access through the same cast pointer 'copyFloats' uses, for
+-- the same reason: @CFloat@ and @Float@ share a representation, so every
+-- bit pattern survives the crossing untouched.
+peekFloat :: Ptr CFloat -> Int -> IO Float
+peekFloat ptr = peekElemOff (castPtr ptr)
+
+pokeFloat :: Ptr CFloat -> Int -> Float -> IO ()
+pokeFloat ptr = pokeElemOff (castPtr ptr)
+
+-- | A host column read into the unboxed vector the core works in.
+readFloats :: Ptr CFloat -> Int -> IO (U.Vector Float)
+readFloats ptr n = U.generateM n (peekFloat ptr)
 
 -- | A @NULL@ vector reads as the origin, so a host may pass @NULL@ for a
 -- cast at the world origin facing +Z.

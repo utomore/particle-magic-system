@@ -1,6 +1,6 @@
 # Func-Spec 0011：宿主整合面（投影上 C ABI＋參考綁定）
 
-> 狀態：**設計定案，待實作**
+> 狀態：**已完成**（2026-08-14，驗收紀錄見 §9）
 > 性質：一般 —— 新增的 C 匯出與 header 宣告交付即凍結（只加不改，ADR-0011 D7 延續）；`Magic.Columns` 交付後凍結。
 > 前置依賴：**無**（0008 交付 `Magic.Projection`、0009 交付 C ABI 外殼，皆已完成；本 spec 全部是它們之上的加法）。**與 spec 0010、0013 三方平行**：本 spec 鎖 `src/ffi`＋`include`＋`.def`＋`test/FFIContractSpec.hs`＋新目錄，0010 鎖 core／`Interface.hs`／bench，0013 鎖 `app/*`——檔案零交集（§0.2 附證明）。
 > 依據：[ADR-0011](../adr/0011-ffi-c-abi-boundary.md)（C ABI 消費模式全部決策沿用）；ADR-0008（2D＝正交投影——本 spec 把它送到非 Haskell 宿主手上）；[roadmap.md](../roadmap.md) §4.2–§4.4（`pm_max_particles` 管道、0009 §9-1 已解鎖的投影匯出、兩個文件缺口）；[integration.md](../integration.md)（本 spec 把其中的程式碼片段變成真的會編譯的檔案）。
@@ -149,12 +149,12 @@ flowchart LR
 
 | # | Todo | 測試 |
 |---|---|---|
-| S1 | `pm_max_particles` 匯出（header／`.def`／FFI.hs）＋`FFIContractSpec` 改寫（凍結清單 8→9、`PM_MAX_PARTICLES` 永釘 4096、查詢鏡射律 `pm_max_particles ≡ budgetCap`）＋header 兩段註解與哨兵 | `test/FFIContractSpec.hs`（更新後全綠即驗收：三向一致、鏡射律、兩個註解哨兵） |
-| S2 | `Magic.Columns.fromColumns`＋cabal 一行 | `test/ColumnsSpec.hs`（等長成功／不等長列出全部長度、`bufferInvariant` 依建構即真、與 `fromParticles` 往返等價） |
-| S3 | `pm_project`＋`pm_depth_order`（含 `PM_PLANE_*`／`PM_ERR_ARGS`；凍結清單 →11） | `test/FFIProjectSpec.hs`（`pm_project` ≡ `orthographic` 逐點逐位元 property；`pm_depth_order` ≡ `depthOrder` 逐元素 property＋補零欄不影響律；NULL/負長/壞 plane → `PM_ERR_ARGS` 零寫出） |
-| S4 | `bindings/csharp/ParticleMagic.cs`（DllImport 全函數＋常數＋`Unpack` 顏色助手＋Z 翻轉助手） | `test/BindingContractSpec.hs`（`.cs` DllImport 名集合 ≡ header 宣告集合、常數值一致） |
-| S5 | `examples/unity/`（`SpellRenderer.cs`＋README：DLL 放置、RTS 警告、Z 翻轉、固定時步） | **手動 smoke**（Unity 專案實測，§9 回填；比照 0009 S6） |
-| S6 | 端到端驗收 | `test/Acceptance11Spec.hs`（golden spell 120 幀：`pm_observe` 六欄 → `pm_project`/`pm_depth_order` ≡ Haskell `observeSpell`→`orthographic`/`depthOrder`，逐位元） |
+| ✅ S1 | `pm_max_particles` 匯出（header／`.def`／FFI.hs）＋`FFIContractSpec` 改寫（凍結清單 8→9、`PM_MAX_PARTICLES` 永釘 4096、查詢鏡射律 `pm_max_particles ≡ budgetCap`）＋header 兩段註解與哨兵 | `test/FFIContractSpec.hs`（更新後全綠即驗收：三向一致、鏡射律、兩個註解哨兵） |
+| ✅ S2 | `Magic.Columns.fromColumns`＋cabal 一行 | `test/ColumnsSpec.hs`（等長成功／不等長列出全部長度、`bufferInvariant` 依建構即真、與 `fromParticles` 往返等價） |
+| ✅ S3 | `pm_project`＋`pm_depth_order`（含 `PM_PLANE_*`／`PM_ERR_ARGS`；凍結清單 →11） | `test/FFIProjectSpec.hs`（`pm_project` ≡ `orthographic` 逐點逐位元 property；`pm_depth_order` ≡ `depthOrder` 逐元素 property＋補零欄不影響律；NULL/負長/壞 plane → `PM_ERR_ARGS` 零寫出） |
+| ✅ S4 | `bindings/csharp/ParticleMagic.cs`（DllImport 全函數＋常數＋`Unpack` 顏色助手＋Z 翻轉助手） | `test/BindingContractSpec.hs`（`.cs` DllImport 名集合 ≡ header 宣告集合、常數值一致） |
+| ✅ S5 | `examples/unity/`（`SpellRenderer.cs`＋README：DLL 放置、RTS 警告、Z 翻轉、固定時步；另交付 `PmSmoke.cs`） | **手動 smoke**：Unity 6000.5.7f1 batchmode 實測 **27 PASS / 0 FAIL**（§9.3） |
+| ✅ S6 | 端到端驗收 | `test/Acceptance11Spec.hs`（golden spell 120 幀：`pm_observe` 六欄 → `pm_project`/`pm_depth_order` ≡ Haskell `observeSpell`→`orthographic`/`depthOrder`，逐位元） |
 
 ## 8. 非目標
 
@@ -168,4 +168,84 @@ flowchart LR
 
 ## 9. 驗收紀錄
 
-（實作時回填：日期、`cabal test` 結果、S7 Unity 手動 smoke 結果與截圖說明；凍結清單：11 個 C 進入點全文、`PM_PLANE_*`／`PM_ERR_ARGS` 常數、`Magic.Columns` 匯出面。）
+**日期**：2026-08-14　**環境**：GHC 9.14.1 / cabal 3.16.1.0 / Windows 11 x86_64
+
+### 9.1 自動測試
+
+- `cabal test`：**706 examples, 0 failures**（0009 交付時為 676；本輪 +30 = 新增 27＋`FFIContractSpec` 淨增 3）。
+- `cabal build spec`／`cabal build flib:particle-magic-ffi`：零警告（`-Wall`）。既有 `FFIHarness.hs` 的 `Word64` 冗餘 import 警告為 0009 遺留，未觸碰。
+- 本輪測試模組：`ColumnsSpec`(7)、`FFIProjectSpec`(13)、`BindingContractSpec`(4)、`Acceptance11Spec`(3)。
+- 逐位元等價律（S6）涵蓋 9 個範例陣 × 2 個投影平面 × 120 幀，`pm_observe → pm_project/pm_depth_order` 與 `observeSpell → orthographic/depthOrder` 全等。
+
+### 9.2 真實 DLL smoke（S3／S5 的 C 側）
+
+`cabal build flib:particle-magic-ffi` 產出的 `.dll` 匯出表確認含三個新符號（`objdump -p`：`pm_depth_order`／`pm_max_particles`／`pm_project`）。以 ghcup 附帶的 clang `-Wall -Iinclude` 編譯一支只引用 `particle_magic.h` 的 C 宿主、連結該 DLL 執行，輸出：
+
+```
+abi=1 max=4096 (PM_MAX_PARTICLES=4096)
+pm_project side rc=0: (1.0,10.0,d=5.0) (2.0,20.0,d=-5.0) (3.0,30.0,d=-0.0)
+pm_project top  rc=0: (1.0,-5.0,d=-10.0) (2.0,5.0,d=-20.0) (3.0,0.0,d=-30.0)
+pm_depth_order rc=0: 0 2 1 (expect 0 2 1)
+bad plane rc=-4 (expect -4)
+negative count rc=-4 (expect -4)
+```
+
+即：header 是合法且零警告的 C、三個新進入點在真實 ABI 上語意正確、`PM_ERR_ARGS` 路徑如約。（`d=-0.0` 是 `negate 0` 的正號位，與 Haskell 端逐位元相同。）
+
+### 9.3 S5 Unity 實測（**已完成**）
+
+環境：Unity **6000.5.7f1**（Unity CLI `unity run`，batchmode `-nographics`）。專案為臨時建立（不進 repo），內容物僅三個交付檔＋建置出的 DLL：
+
+```
+Assets/Scripts/ParticleMagic.cs      <- bindings/csharp/（原檔，未修改）
+Assets/Scripts/SpellRenderer.cs      <- examples/unity/（原檔，未修改）
+Assets/Editor/PmSmoke.cs             <- examples/unity/（本輪新增，見下）
+Assets/Plugins/x86_64/particle-magic-ffi.dll
+```
+
+指令與結果：
+
+```
+unity run <專案> --non-interactive -- -executeMethod PmSmoke.Run -pmSpellDir <repo>/assets/spells
+→ 27 PASS, 0 FAIL, exit 0
+```
+
+實測涵蓋 `cabal test` 與 §9.2 的 C smoke 都測不到的一段：**Unity 自己的 P/Invoke marshaller**、DLL 從 `Assets/Plugins/x86_64` 載入（不需要任何 `.meta` 設定）、以及 `SpellRenderer` 的 Mesh 路徑。逐項：
+
+- `pm_abi_version()==1`、`pm_max_particles()==4096`；
+- ring-fire 推進 1.0s → 97 顆粒子，位置全部有限、`life ∈ [0,1]`、alpha 非零（顏色位元組序若相反，最後一項會當場失敗）；
+- `pm_project` 兩個平面**逐位元**等於 `(x,y,−z)`／`(x,z,−y)`（97/97）；
+- `pm_depth_order` 是 `[0,97)` 的置換且深度非遞增；
+- 壞 plane（42）與負長度 → `PM_ERR_ARGS`，且輸出陣列的哨兵一格未動；
+- `pm_free` 後在同一 process 再 `pm_cast` 成功（沒有人偷叫 `pm_shutdown`）；
+- `SpellRenderer`：Awake 依 `pm_max_particles()` 配置、Cast 取得 handle、10 次 pump 後 mesh 有 **388 頂點 = 97 × 4**、全部有限、bounds 的 z 已翻轉（`Center z=1.50`，對應庫的 z ∈ [−3,0]）、`OnDestroy` 釋放 handle；
+- alpha 批次的 quad 發射順序**等於 `pm_depth_order` 回的置換**（`empty` 129 quads、`gravity-well` 193 quads）。
+
+**新增交付物 `examples/unity/PmSmoke.cs`**：把上述檢查變成一行可重跑的指令（README §7）。定位仍是手動 smoke——不進 CI、不進 `cabal test`——但任何有 Unity CLI 的人可以一鍵複驗，而且驗的是**宿主真的會複製的那兩個檔案**，不是它們的改寫版。
+
+實測中發現、值得記下的兩件事（都不是缺陷）：
+
+1. **`SpellRenderer.Draw` 沒有 `Camera.main` 就整段跳過**（billboard 需要相機軸）。批次測試第一版忘了建相機，得到 0 頂點——這是元件的合理 early-out，但也是 Unity 宿主最容易踩到「什麼都沒畫」的原因，README 未特別提，元件註解已說明。
+2. **現行 9 個範例陣的 alpha 批次，buffer 順序本來就是由遠而近**（發射器沿法線擠出 ⇒ index 與深度單調相關），所以「開關排序看起來一樣」是資料性質而非排序失效。因此驗收斷言改成「發射順序 ≡ `pm_depth_order` 的置換」，不依賴資料是否亂序。README §7 已註明這件事，免得下一個人誤判。
+
+未涵蓋（需要人眼／Editor 互動，README §8 列為 checklist）：視覺美術判斷、**停止播放後再次 Play**（批次模式每次都是新 process，驗不到 §4 那個 RTS 坑真正的發作情境）、Profiler 的 GC Alloc。
+
+### 9.4 凍結清單（下游 spec 可直接引用）
+
+**C 進入點 11 個**（`foreign export` 清單，`.def` 與 header 三向一致）：
+`pm_abi_version`、`pm_cast`、`pm_cast_ex`、`pm_advance`、`pm_is_finished`、`pm_age`、`pm_observe`、`pm_free`、**`pm_max_particles`**、**`pm_project`**、**`pm_depth_order`**（＋`cbits` 的 `pm_init`／`pm_shutdown`，header 共 13 宣告）。
+
+新常數（值永久凍結）：`PM_PLANE_SIDE_XY 0`、`PM_PLANE_TOP_XZ 1`、`PM_ERR_ARGS (-4)`。
+
+`Magic.Columns` 匯出面：`ParticleBuffer`（抽象）、`ColumnError (..)`、`fromColumns :: 6 欄 -> Either ColumnError ParticleBuffer`。
+
+**兩條律，0012 直接繼承**：
+1. `PM_MAX_PARTICLES == 4096` 永釘（header 凍結，第 1 代編譯時值）。
+2. 查詢鏡射律 `pm_max_particles() ≡ pmMaxParticles ≡ budgetCap`——0012 提升上限時，改 `budgetCap` 與 `src/ffi/Magic/FFI.hs` 的 `pmMaxParticles` 兩處即可，**header 一字不動**，既有宿主不受擾。
+
+### 9.5 與計畫的差異
+
+1. `FFIContractSpec` 增列三個 header 解析器到匯出清單（`headerFunctions`／`headerDefines`／`readUtf8`），供 `BindingContractSpec` 共用，避免第三份複製的解析器。契約斷言本身未受影響。
+2. `particle-magic.cabal` 的 `extra-source-files` 多一行 `bindings/csharp/ParticleMagic.cs`（與 header、`examples/c/main.c` 同理由：非 Haskell 消費者要拿得到）。仍是同檔異行的聯集合併，與 0010／0013 無交集。
+3. C# 常數守護採「行內註解宣告自己對應哪個巨集」的寫法，而非在測試裡維護對照表——因此新增 header `#define` 而忘了補綁定會被雙向集合相等當場抓到。
+4. §0.2 的檔案盤點只列程式檔，實際另更新三份文件（SKILL.md 規則要求）：[integration.md](../integration.md)（對外介面變動必須同步；新增 §2.5 緩衝配置、§4.5 C 宿主投影，§5 的 C# 片段改為指向真檔案）、[roadmap.md](../roadmap.md)（驗收後盤點）、CHANGELOG。三份都與 0010／0013 同檔異行，仍是聯集合併。
