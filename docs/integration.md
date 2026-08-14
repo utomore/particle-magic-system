@@ -302,9 +302,10 @@ Unity 走的就是 §4 的 C ABI，只是隔著 P/Invoke。
 |---|---|
 | [`bindings/csharp/ParticleMagic.cs`](../bindings/csharp/ParticleMagic.cs) | 參考綁定：13 個 `DllImport`、全部常數、顏色拆包與 Z 翻轉助手。**不依賴 Unity**，Godot C#／純 .NET 照用 |
 | [`examples/unity/SpellRenderer.cs`](../examples/unity/SpellRenderer.cs) | 一個真的會畫東西的 `MonoBehaviour`：固定時步、緩衝重用、Z 翻轉、alpha 批次用 `pm_depth_order` 排序 |
-| [`examples/unity/README.md`](../examples/unity/README.md) | 放置步驟、材質設定、預期畫面、手動 smoke 檢查表 |
+| [`examples/unity/PmSmoke.cs`](../examples/unity/PmSmoke.cs) | 一行指令跑完整個 smoke（`unity run … -executeMethod PmSmoke.Run`），驗 marshaller、投影、排序與 Mesh |
+| [`examples/unity/README.md`](../examples/unity/README.md) | 放置步驟、材質設定、預期畫面、smoke 指令與人眼 checklist |
 
-`test/BindingContractSpec.hs` 斷言那份 `.cs` 的進入點與常數集合**雙向等於** header——header 加了東西而綁定沒跟上，`cabal test` 就紅。下面幾節解釋的是「為什麼那樣寫」。
+`test/BindingContractSpec.hs` 斷言那份 `.cs` 的進入點與常數集合**雙向等於** header——header 加了東西而綁定沒跟上，`cabal test` 就紅。整套在 Unity 6000.5.7f1 實測通過（27 PASS／0 FAIL，見 [0011 §9.3](func-spec/0011-host-integration-surface.md)）。下面幾節解釋的是「為什麼那樣寫」。
 
 ### 5.1 放置 DLL
 
@@ -452,7 +453,7 @@ void Update()
 | **DLL 約 46 MB** | `standalone` 內嵌整個 GHC RTS 的代價；換來的是宿主端零 Haskell 依賴 |
 | **只有 win64 被完整實測** | `.so` / `.dylib` 由 cabal stanza 天然涵蓋，但沒有列入驗收 |
 | **只有方形 billboard** | `PM_SHAPE_SQUARE` 是目前唯一的形狀碼 |
-| **C# 綁定未在 Unity Editor 實測** | 合約由 `test/BindingContractSpec.hs` 機械守護、ABI 行為由真實 DLL 的 C smoke 覆蓋，缺的是 Unity marshaller ＋ Mesh 那一段（[0011 §9.3](func-spec/0011-host-integration-surface.md)，檢查表在 `examples/unity/README.md` §7） |
+| **只有 Unity 被實測過** | C# 綁定在 Unity 6000.5.7f1 batchmode 實測通過（[0011 §9.3](func-spec/0011-host-integration-surface.md)，可用 `examples/unity/PmSmoke.cs` 一鍵複驗）；Godot／Unreal／其他 .NET 宿主只有合約保證，沒有實測 |
 
 ---
 

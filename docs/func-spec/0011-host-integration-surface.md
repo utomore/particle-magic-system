@@ -153,7 +153,7 @@ flowchart LR
 | ✅ S2 | `Magic.Columns.fromColumns`＋cabal 一行 | `test/ColumnsSpec.hs`（等長成功／不等長列出全部長度、`bufferInvariant` 依建構即真、與 `fromParticles` 往返等價） |
 | ✅ S3 | `pm_project`＋`pm_depth_order`（含 `PM_PLANE_*`／`PM_ERR_ARGS`；凍結清單 →11） | `test/FFIProjectSpec.hs`（`pm_project` ≡ `orthographic` 逐點逐位元 property；`pm_depth_order` ≡ `depthOrder` 逐元素 property＋補零欄不影響律；NULL/負長/壞 plane → `PM_ERR_ARGS` 零寫出） |
 | ✅ S4 | `bindings/csharp/ParticleMagic.cs`（DllImport 全函數＋常數＋`Unpack` 顏色助手＋Z 翻轉助手） | `test/BindingContractSpec.hs`（`.cs` DllImport 名集合 ≡ header 宣告集合、常數值一致） |
-| ✅ S5 | `examples/unity/`（`SpellRenderer.cs`＋README：DLL 放置、RTS 警告、Z 翻轉、固定時步） | **手動 smoke**（§9 回填；比照 0009 S6） |
+| ✅ S5 | `examples/unity/`（`SpellRenderer.cs`＋README：DLL 放置、RTS 警告、Z 翻轉、固定時步；另交付 `PmSmoke.cs`） | **手動 smoke**：Unity 6000.5.7f1 batchmode 實測 **27 PASS / 0 FAIL**（§9.3） |
 | ✅ S6 | 端到端驗收 | `test/Acceptance11Spec.hs`（golden spell 120 幀：`pm_observe` 六欄 → `pm_project`/`pm_depth_order` ≡ Haskell `observeSpell`→`orthographic`/`depthOrder`，逐位元） |
 
 ## 8. 非目標
@@ -192,11 +192,43 @@ negative count rc=-4 (expect -4)
 
 即：header 是合法且零警告的 C、三個新進入點在真實 ABI 上語意正確、`PM_ERR_ARGS` 路徑如約。（`d=-0.0` 是 `negate 0` 的正號位，與 Haskell 端逐位元相同。）
 
-### 9.3 S5 Unity 手動 smoke
+### 9.3 S5 Unity 實測（**已完成**）
 
-`examples/unity/`（`SpellRenderer.cs`＋README）已交付，定位同 `examples/c/main.c`：不進 CI、不進 repo 建置。README §7 附**照做即可勾選的檢查表**（ABI 版本、粒子出現與消散、二次 Play、alpha 排序開關的可見差異、GC Alloc 不隨粒子數成長）。
+環境：Unity **6000.5.7f1**（Unity CLI `unity run`，batchmode `-nographics`）。專案為臨時建立（不進 repo），內容物僅三個交付檔＋建置出的 DLL：
 
-**本輪未在 Unity Editor 中實測**——本機無 Unity 安裝。C# 兩檔的合約正確性由 `BindingContractSpec`（進入點與常數雙向集合相等）機械守護，ABI 行為由 §9.2 的真實 DLL smoke 覆蓋；缺的是「Unity marshaller 與 Mesh 路徑」這一段，需要有 Unity 環境的協作者跑一次 README §7 檢查表後回填此節。以 0009 S6 的同款標準記錄：**未完成的是實測，不是交付物**。
+```
+Assets/Scripts/ParticleMagic.cs      <- bindings/csharp/（原檔，未修改）
+Assets/Scripts/SpellRenderer.cs      <- examples/unity/（原檔，未修改）
+Assets/Editor/PmSmoke.cs             <- examples/unity/（本輪新增，見下）
+Assets/Plugins/x86_64/particle-magic-ffi.dll
+```
+
+指令與結果：
+
+```
+unity run <專案> --non-interactive -- -executeMethod PmSmoke.Run -pmSpellDir <repo>/assets/spells
+→ 27 PASS, 0 FAIL, exit 0
+```
+
+實測涵蓋 `cabal test` 與 §9.2 的 C smoke 都測不到的一段：**Unity 自己的 P/Invoke marshaller**、DLL 從 `Assets/Plugins/x86_64` 載入（不需要任何 `.meta` 設定）、以及 `SpellRenderer` 的 Mesh 路徑。逐項：
+
+- `pm_abi_version()==1`、`pm_max_particles()==4096`；
+- ring-fire 推進 1.0s → 97 顆粒子，位置全部有限、`life ∈ [0,1]`、alpha 非零（顏色位元組序若相反，最後一項會當場失敗）；
+- `pm_project` 兩個平面**逐位元**等於 `(x,y,−z)`／`(x,z,−y)`（97/97）；
+- `pm_depth_order` 是 `[0,97)` 的置換且深度非遞增；
+- 壞 plane（42）與負長度 → `PM_ERR_ARGS`，且輸出陣列的哨兵一格未動；
+- `pm_free` 後在同一 process 再 `pm_cast` 成功（沒有人偷叫 `pm_shutdown`）；
+- `SpellRenderer`：Awake 依 `pm_max_particles()` 配置、Cast 取得 handle、10 次 pump 後 mesh 有 **388 頂點 = 97 × 4**、全部有限、bounds 的 z 已翻轉（`Center z=1.50`，對應庫的 z ∈ [−3,0]）、`OnDestroy` 釋放 handle；
+- alpha 批次的 quad 發射順序**等於 `pm_depth_order` 回的置換**（`empty` 129 quads、`gravity-well` 193 quads）。
+
+**新增交付物 `examples/unity/PmSmoke.cs`**：把上述檢查變成一行可重跑的指令（README §7）。定位仍是手動 smoke——不進 CI、不進 `cabal test`——但任何有 Unity CLI 的人可以一鍵複驗，而且驗的是**宿主真的會複製的那兩個檔案**，不是它們的改寫版。
+
+實測中發現、值得記下的兩件事（都不是缺陷）：
+
+1. **`SpellRenderer.Draw` 沒有 `Camera.main` 就整段跳過**（billboard 需要相機軸）。批次測試第一版忘了建相機，得到 0 頂點——這是元件的合理 early-out，但也是 Unity 宿主最容易踩到「什麼都沒畫」的原因，README 未特別提，元件註解已說明。
+2. **現行 9 個範例陣的 alpha 批次，buffer 順序本來就是由遠而近**（發射器沿法線擠出 ⇒ index 與深度單調相關），所以「開關排序看起來一樣」是資料性質而非排序失效。因此驗收斷言改成「發射順序 ≡ `pm_depth_order` 的置換」，不依賴資料是否亂序。README §7 已註明這件事，免得下一個人誤判。
+
+未涵蓋（需要人眼／Editor 互動，README §8 列為 checklist）：視覺美術判斷、**停止播放後再次 Play**（批次模式每次都是新 process，驗不到 §4 那個 RTS 坑真正的發作情境）、Profiler 的 GC Alloc。
 
 ### 9.4 凍結清單（下游 spec 可直接引用）
 

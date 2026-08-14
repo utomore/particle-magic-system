@@ -42,7 +42,7 @@ architecture 回答「系統長什麼樣、為什麼」，func-spec 回答「這
 |---|---|---|---|
 | 架構與純度紀律 | **95%** | 三環依賴、`BoundarySpec` 機械守護、核心零 IO、依賴白名單 | — |
 | 魔法語意（表達力） | **70%** | Init.md 參數對照表 11 列落地 10 列；四階段生命週期、力場層、Expr 子系統 | 多陣合成（唯一未落地列）；各 sum type 的建構子數量仍是 POC 級（`FaceShape` 4 種、`ForceField` 3 種、`Element` 少數、`BillboardShape` 1 種） |
-| 對外介面 | **90%** | Haskell public sublibrary＋C ABI header 兩份凍結合約；決定論跨界為可測等價律；投影／painter 排序／上限查詢已上 C ABI（0011），C# 參考綁定受契約測試守護 | 無多 spell 聚合 API；無 release tag／Hackage；C# 綁定未在 Unity Editor 實測（0011 §9.3） |
+| 對外介面 | **90%** | Haskell public sublibrary＋C ABI header 兩份凍結合約；決定論跨界為可測等價律；投影／painter 排序／上限查詢已上 C ABI（0011），C# 參考綁定受契約測試守護且在 Unity 6000.5.7f1 實測通過 | 無多 spell 聚合 API；無 release tag／Hackage；GDScript／C++ 包裝層 |
 | 效能 | **20%** | 0005 的 bench 基線（4096 粒 `buildQuads` ≈71µs、每幀純 CPU ≈0.73ms）；SoA＋unboxed 已就位 | 目標 1e4–1e5，現行護欄 4096。architecture §7 表列六項手段（緩衝重用、結構化預算、發射器剔除、Expr 加速、GHC 調校、批次渲染）只有最後一項做了 |
 | 視覺表現力 | **35%** | 兩個投影後端、blend 生效、顏色曲線、painter 排序（2D） | 只有方形 quad；3D 無深度排序；無貼圖／拖尾／軟粒子；俯視的深度重疊可讀性問題已被 0008 **暴露但未解** |
 | 作者流程（工具） | **15%** | JSON 熱重載、載入錯誤上屏（含行列位置）、9 個範例陣 | 無編輯器、無給非工程作者的 schema 說明、無驗證 CLI、spell 清單啟動時定格 |
@@ -90,7 +90,8 @@ architecture 回答「系統長什麼樣、為什麼」，func-spec 回答「這
 | ~~`pm_project`／`pm_depth_order` 上 C ABI~~ | 0009 §9-1 | ✅ **0011 交付** |
 | 多 spell 聚合／全域配額 FFI API | 0009 §9-7、0011 §8-2 | 依賴 §3.2 的多陣合成（0012） |
 | GDScript／C++ 包裝層 | 0009 §9-6、0011 §8-3 | C# 已有參考實作（0011 S4）；其餘等真實宿主需求 |
-| C# 綁定在 Unity Editor 的實測 | 0011 §9.3 | 材料已交付、檢查表已寫；缺有 Unity 環境的協作者跑一次 |
+| ~~C# 綁定在 Unity Editor 的實測~~ | 0011 §9.3 | ✅ Unity 6000.5.7f1 batchmode 實測 27 PASS／0 FAIL；`examples/unity/PmSmoke.cs` 可一鍵複驗 |
+| Unity Editor 的「二次 Play」與視覺／GC 觀察 | 0011 §9.3 | 批次模式驗不到（每次新 process）；README §8 為人眼 checklist |
 | 多執行緒安全／內部鎖 | 0009 §9-2、0011 §8-4 | 等真實宿主需求 |
 | 熱重載 FFI API | 0009 §9-5、0011 §8-5 | 政策已定：重載＝重施法，宿主自行 `pm_cast` |
 | ~~座標系手性未見於任何文件~~ | §4.4 | ✅ **0011 寫進 header**（哨兵 `right-handed`，契約測試守護） |

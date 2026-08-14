@@ -12,6 +12,7 @@
 |---|---|
 | `bindings/csharp/ParticleMagic.cs` | `Assets/Scripts/ParticleMagic.cs` |
 | `examples/unity/SpellRenderer.cs` | `Assets/Scripts/SpellRenderer.cs` |
+| `examples/unity/PmSmoke.cs`（選用，見 §7） | `Assets/Editor/PmSmoke.cs` |
 | 建置產物 `particle-magic-ffi.dll` | `Assets/Plugins/x86_64/particle-magic-ffi.dll` |
 | 任一張魔法陣 JSON（`assets/spells/*.json`） | `Assets/Resources/ring-fire.json`（副檔名改 `.txt` 或用 `TextAsset` 匯入） |
 
@@ -67,12 +68,36 @@ GHC 的 RTS **停掉之後無法在同一個 process 重啟**，而 Unity Editor
 
 3D 相機的深度排序仍是宿主的事（`pm_depth_order` 給的是正交平面深度）；若你的相機不是側視，改用自己的視距排序即可——庫不阻止。
 
-## 7. 手動 smoke 檢查表
+## 7. Smoke：一行指令
 
-依序確認，全過即算 S5 通過：
+`PmSmoke.cs`（本資料夾）是這個範例的自動檢查，放進 `Assets/Editor/` 後用 [Unity CLI](https://docs.unity3d.com/) 跑：
 
-- [ ] Console 無 ABI mismatch（`pm_abi_version()` == 1）
-- [ ] 粒子出現、動、顏色漸變、結束後歸零
-- [ ] 停止播放 → 再按 Play → 仍正常（沒有 `pm_shutdown`）
-- [ ] 把 `Sort Alpha Batches` 關掉再開，alpha 批次的前後遮蔽關係有可見差異
+```bash
+unity run <你的專案> --non-interactive -- \
+    -executeMethod PmSmoke.Run -pmSpellDir <repo>/assets/spells
+```
+
+全過回傳 0，報告同時寫在 `<專案>/Logs/pm-smoke-result.txt` 與 editor log。批次模式、`-nographics`，不需要場景也不需要螢幕。
+
+它涵蓋 `cabal test` **測不到**的那一段——Unity 自己的 P/Invoke marshaller、DLL 從 `Assets/Plugins` 載入、以及 `SpellRenderer` 的 Mesh 路徑：
+
+| 檢查 | 為什麼是這裡才驗得到 |
+|---|---|
+| `pm_abi_version` / `pm_max_particles` | 綁定常數與 DLL 實際回傳一致 |
+| 六欄取樣後全部有限、`life ∈ [0,1]`、alpha 非零 | marshaller 真的搬了 float 與 `0xRRGGBBAA`（順序錯會在這裡露餡） |
+| `pm_project` 兩個平面逐位元等於 `(x,y,−z)` / `(x,z,−y)` | 跨 marshaller 之後仍然是**選軸**，沒有被轉成別的浮點 |
+| `pm_depth_order` 是置換且由遠而近 | 同上 |
+| 壞 plane／負長度 → `PM_ERR_ARGS` 且零寫出 | 錯誤路徑不會弄髒宿主陣列 |
+| `pm_free` 後再 `pm_cast` 仍可用 | 沒有人偷偷 `pm_shutdown` |
+| Mesh 頂點數 = 粒子數 × 4、全部有限、bounds 的 z 已翻轉 | 手性翻轉真的發生在頂點上 |
+| alpha 批次的 quad 順序**等於 `pm_depth_order` 回的置換** | 排序不是元件自己另外排的 |
+
+一個實測到的資料觀察：目前 9 個範例陣裡，alpha 批次的 buffer 順序**本來就**是由遠而近（發射器沿法線擠出，index 與深度單調相關），所以「排序前後看起來一樣」是正常的，不代表排序沒生效——上表最後一列驗的是置換本身相等，不受這件事影響。
+
+## 8. 還是要用眼睛看的三件事
+
+自動 smoke 驗不到的，按 Play 自己確認：
+
+- [ ] 粒子的動態與顏色漸變看起來對（美術判斷，沒有斷言可寫）
+- [ ] **停止播放 → 再按 Play → 仍正常**（Editor 不卸載 native plugin，這是 §4 那個坑真正會發作的地方；批次模式每次都是新 process，驗不到）
 - [ ] Profiler 中每幀 GC Alloc 不隨粒子數成長（緩衝有重複使用）

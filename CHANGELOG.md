@@ -51,5 +51,7 @@ delivered function spec (details in `docs/func-spec/`).
   validating column → buffer door the FFI shell needed. The header now
   states the colour byte order and the coordinate handedness. A C#
   reference binding (`bindings/csharp/`) and a Unity example
-  (`examples/unity/`), both held to the header by a contract test.
-  (delivered)
+  (`examples/unity/`), both held to the header by a contract test and
+  smoke-tested against Unity 6000.5.7f1 in batch mode — the marshaller,
+  the projection entry points and the example's mesh path, re-runnable
+  with `examples/unity/PmSmoke.cs`. (delivered)
