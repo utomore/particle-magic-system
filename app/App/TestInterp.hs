@@ -28,10 +28,12 @@ import App.Effects
   ( Clock (..)
   , DemoInput (..)
   , FileWatch (..)
+  , FlatView (..)
   , HudView
   , Raylib (..)
   , noInput
   )
+import Magic.Projection (ViewPlane)
 
 -- | A monotonic clock that advances by a fixed amount per 'Now' call
 -- (one call per frame in the loop => one virtual frame per call).
@@ -90,6 +92,10 @@ data HeadlessLog = HeadlessLog
   -- 'DrawScene', in order.
   , hlHuds :: ![HudView]
   -- ^ Every 'DrawHud' payload, in order.
+  , hlFlats :: ![(ViewPlane, BlendMode, Int)]
+  -- ^ @(plane, blend, particle count)@ summary of every batch handed to
+  -- 'DrawFlat', in order. A run that never toggles the backend leaves
+  -- this empty — a free regression sentinel for the 3D path.
   }
   deriving (Eq, Show)
 
@@ -125,6 +131,14 @@ runRaylibHeadlessWith inputs frameLimit =
             , hcScenes = reverse (map summarize batches) ++ hcScenes h
             }
         )
+    DrawFlat fv batches ->
+      state $ \h ->
+        ( ()
+        , h
+            { hcDraws = hcDraws h + length batches
+            , hcFlats = reverse (map (summarizeFlat (fvPlane fv)) batches) ++ hcFlats h
+            }
+        )
     DrawHud view ->
       state (\h -> ((), h {hcHuds = view : hcHuds h}))
     PollInput ->
@@ -133,6 +147,7 @@ runRaylibHeadlessWith inputs frameLimit =
         (i : is) -> (i, h {hcInputs = is})
   where
     summarize b = (rbBlend b, pbCount (rbParticles b))
+    summarizeFlat plane b = (plane, rbBlend b, pbCount (rbParticles b))
     initial =
       HeadlessCount
         { hcFrames = 0
@@ -140,6 +155,7 @@ runRaylibHeadlessWith inputs frameLimit =
         , hcPolls = 0
         , hcScenes = []
         , hcHuds = []
+        , hcFlats = []
         , hcInputs = inputs
         }
     repack (a, h) =
@@ -149,6 +165,7 @@ runRaylibHeadlessWith inputs frameLimit =
           , hlDrawCalls = hcDraws h
           , hlScenes = reverse (hcScenes h)
           , hlHuds = reverse (hcHuds h)
+          , hlFlats = reverse (hcFlats h)
           }
       )
 
@@ -159,5 +176,6 @@ data HeadlessCount = HeadlessCount
   , hcPolls :: !Int
   , hcScenes :: ![(BlendMode, Int)]
   , hcHuds :: ![HudView]
+  , hcFlats :: ![(ViewPlane, BlendMode, Int)]
   , hcInputs :: ![DemoInput]
   }

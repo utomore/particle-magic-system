@@ -51,6 +51,7 @@ library magic-boundary
     hs-source-dirs:   src/boundary
     exposed-modules:  Magic.Codec
                       Magic.Interface
+                      Magic.Projection
                       Magic.Step
                       Magic.Expr.Parse
     -- 'vector' joins the boundary layer in func-spec 0007: Magic.Interface
@@ -77,6 +78,7 @@ executable particle-magic
                     , App.TestInterp
                     , App.Render.Raylib3D
                     , App.Render.Quads
+                    , App.Render.Flat
                     , App.Hud
     build-depends:    base
                     , particle-magic:magic-boundary
@@ -138,6 +140,11 @@ test-suite spec
                     , PhaseSampleSpec
                     , BackCompatSpec
                     , Acceptance6Spec
+                    , ProjectSpec
+                    , FlatQuadSpec
+                    , FlatEffectsSpec
+                    , ViewToggleSpec
+                    , Acceptance8Spec
                     , AnalyticRefactorSpec
                     , FieldAccelSpec
                     , FieldStepSpec
@@ -152,6 +159,7 @@ test-suite spec
                     , App.Loop
                     , App.TestInterp
                     , App.Render.Quads
+                    , App.Render.Flat
                     , App.Hud
     build-depends:    base
                     , particle-magic:magic-core

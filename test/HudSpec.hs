@@ -5,7 +5,7 @@
 module HudSpec (spec) where
 
 import Data.List (isInfixOf)
-import App.Effects (HudView (..), ReloadStatus (..))
+import App.Effects (HudView (..), ReloadStatus (..), ViewMode (..))
 import App.Hud (formatHud, fpsEma)
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
@@ -19,6 +19,7 @@ baseView =
     , hvSpellPath = "assets/spells/ring-fire.json"
     , hvSpellAge = 1.5
     , hvReload = ReloadIdle
+    , hvView = View3D
     }
 
 hudText :: HudView -> String
@@ -63,7 +64,7 @@ spec = do
 
     prop "every line is newline-free for any view" $
       \fps n path age ->
-        let view = HudView fps n (filter (/= '\n') path) age ReloadIdle
+        let view = HudView fps n (filter (/= '\n') path) age ReloadIdle View3D
          in all (notElem '\n') (formatHud view)
 
   describe "fpsEma" $ do

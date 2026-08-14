@@ -23,7 +23,6 @@ delivered function spec (details in `docs/func-spec/`).
 - **0006 lifecycle phases & formation emitters** — Drawing/Converging/
   Casting/Dissipating, formation-geometry emitters, opt-in `"phases"` JSON;
   sampler untouched, bit-for-bit compatibility for existing spells.
-  (delivered)
 - **0007 force-field layer** — ADR-0010: additive displacement overlay on
   the analytic layer, semi-implicit Euler at the fixed step, particle
   identity keyed by stable `(emitter, index)` slot, three field kinds
@@ -33,3 +32,8 @@ delivered function spec (details in `docs/func-spec/`).
   what they rendered before. `app/*` untouched. Packaging debt from the
   same round: MIT license, public sublibraries, PVP bounds, this
   README/CHANGELOG. (delivered)
+- **0008 2D orthographic backend** — ADR-0008 made executable: `ViewPlane` /
+  `orthographic` / `depthOrder` (stable painter permutation) in
+  `Magic.Project`, re-exported through `Magic.Projection`; a real 2D draw
+  path (screen-space quads, painter order) beside the 3D one, switchable
+  live with Tab / V. Same `FrameOutput`, no core change. (delivered)

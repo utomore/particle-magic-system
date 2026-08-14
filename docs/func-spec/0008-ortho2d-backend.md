@@ -1,6 +1,6 @@
 # Func-Spec 0008：2D 正交後端（Ortho2D Backend）
 
-> 狀態：設計定案，待實作
+> 狀態：已交付（實作完成、驗收紀錄見 §10）
 > 性質：一般 —— `ViewPlane`／`orthographic`／`depthOrder` 交付後成為凍結詞彙（`Magic.Project` 的投影面），供未來 2D 宿主與效能 spec 引用。
 > 前置依賴：**無**（spec 0001／0002／0005 皆已完成）。**與 spec 0007、0009 三方平行**：0007（設計定案，待實作）鎖定 `src/core/Magic/{Rune,Circle,Compile}.hs`、`Magic/Particle/Analytic.hs`、`src/boundary/Magic/{Codec,Interface}.hs` 與新檔 `Magic/Particle/Field.hs`；0009（FFI 外殼）觸碰的 src 全為新目錄（`src/ffi/`、`cbits/`、`include/`、`examples/`）——本 spec 檔案清單與兩者**皆零交集**（§0.2 附盤點證明；共用檔僅 cabal/SKILL.md 的不同行，union merge），三 spec 可同時認領實作。
 > 依據：[ADR-0008](../adr/0008-dimension-agnostic-3d-first.md)（核心在抽象 3D、投影是外殼層職責、「2D＝正交投影：丟一軸＋深度排序策略」）；[architecture.md](../architecture.md) §1.5（維度無關）、§2（`App.Render.Ortho2D` 虛線預留位、`Magic.Project` 投影抽象）、§8.6（「2D 後端實際落地時的投影語意……可能要在 `Magic.Project` 加深度排序/壓平策略」——本 spec 兌現此掛帳）、§10（「新投影（2D）」擴充點）。
@@ -238,12 +238,12 @@ S1 →（S2 → S3 → S4 可依序推進）→ S5（落地即手動驗 R1）→
 
 | # | Todo | 測試模組 | 測試內容 |
 |---|---|---|---|
-| S1 | ☐ `Magic.Project` 加 `ViewPlane`/`orthographic`/`depthOrder`；新增 `Magic.Projection` 再匯出；cabal magic-boundary +1 行 | `test/ProjectSpec.hs` | **import `Magic.Projection`**（一石二鳥證再匯出鏈可用）。property：兩平面逐位元分量選取（SideXY=(x,y,−z)、TopXZ=(x,z,−y)）；`project = id` 凍結律；`depthOrder` 是 [0..n−1] 置換、置換後 depth 單調不增、等深穩定（保 buffer 序）、空 buffer → 空 |
-| S2 | ☐ `App.Render.Flat.buildFlatQuads` 純 staging | `test/FlatQuadSpec.hs` | 長度不變量（n·12／n·16）；所有 z 分量＝0；quad 中心＝螢幕映射公式（含 y-flip：+y 粒子的 sy < origin y）；邊長＝size·ppu；發射順序遵循 `depthOrder`（craft 異色 buffer 以顏色流見證）；ppu 縮放線性 |
-| S3 | ☐ 效果面擴充：`DrawFlat` op、`ViewMode`/`FlatView`、`DemoInput`/`HudView`/`HeadlessLog` 增欄、TestInterp 分支、HudSpec 機械補欄 | `test/FlatEffectsSpec.hs` | headless：`DrawFlat` 進 `hlFlats` 且計入 `hlDrawCalls`；`noInput` 新欄皆 `False`；無 toggle 腳本 `hlFlats == []`（回歸哨兵）；既有 SceneEffectsSpec/SpellSwitchSpec 照舊全綠 |
-| S4 | ☐ Loop 視圖狀態機＋HUD：`stView`/`stPlane`、`applyViewInput`、分派、`formatHud` view 行 | `test/ViewToggleSpec.hs` | 腳本按 Tab → 繪製改走 `hlFlats`、再按切回；V 於 2D 切 SideXY↔TopXZ；**plane 持久律**（3D 下先 V 再 Tab 進 top）；**模擬與視圖解耦律**：toggle 不觸發 re-cast、逐幀 (blend,count) 摘要與純 3D 跑法逐幀相等、`hvSpellAge` 連續；HUD view 行與狀態一致 |
-| S5 | ☐ Raylib3D `DrawFlat` IO 分支（mesh 2D 繪製、culling 括號）＋`KeyTab`/`KeyV` | **手動 smoke**（§10 回填） | 開窗：Tab/V 即時切換；側視噴泉向上、俯視陣形展開；alpha 範例無 draw-order 接縫（painter 生效）、additive 正常累加；若 mesh 路徑異常 → 啟用備援 `drawRectangleRec` 並記錄於 §10 |
-| S6 | ☐ 端到端驗收 | `test/Acceptance8Spec.hs` | ring-fire headless 於 2D side 跑 120 幀：`hlFlats` 摘要逐幀＝`observeSpell` 參考序列（ADR-0008「同輸出換投影」成為斷言）；中途 Tab 兩次來回，幀數守恆 `length hlScenes + length hlFlats == frames`；預設無輸入跑法與 0005 行為逐位元同 |
+| S1 | ☑ `Magic.Project` 加 `ViewPlane`/`orthographic`/`depthOrder`；新增 `Magic.Projection` 再匯出；cabal magic-boundary +1 行 | `test/ProjectSpec.hs` | **import `Magic.Projection`**（一石二鳥證再匯出鏈可用）。property：兩平面逐位元分量選取（SideXY=(x,y,−z)、TopXZ=(x,z,−y)）；`project = id` 凍結律；`depthOrder` 是 [0..n−1] 置換、置換後 depth 單調不增、等深穩定（保 buffer 序）、空 buffer → 空 |
+| S2 | ☑ `App.Render.Flat.buildFlatQuads` 純 staging | `test/FlatQuadSpec.hs` | 長度不變量（n·12／n·16）；所有 z 分量＝0；quad 中心＝螢幕映射公式（含 y-flip：+y 粒子的 sy < origin y）；邊長＝size·ppu；發射順序遵循 `depthOrder`（craft 異色 buffer 以顏色流見證）；ppu 縮放線性 |
+| S3 | ☑ 效果面擴充：`DrawFlat` op、`ViewMode`/`FlatView`、`DemoInput`/`HudView`/`HeadlessLog` 增欄、TestInterp 分支、HudSpec 機械補欄 | `test/FlatEffectsSpec.hs` | headless：`DrawFlat` 進 `hlFlats` 且計入 `hlDrawCalls`；`noInput` 新欄皆 `False`；無 toggle 腳本 `hlFlats == []`（回歸哨兵）；既有 SceneEffectsSpec/SpellSwitchSpec 照舊全綠 |
+| S4 | ☑ Loop 視圖狀態機＋HUD：`stView`/`stPlane`、`applyViewInput`、分派、`formatHud` view 行 | `test/ViewToggleSpec.hs` | 腳本按 Tab → 繪製改走 `hlFlats`、再按切回；V 於 2D 切 SideXY↔TopXZ；**plane 持久律**（3D 下先 V 再 Tab 進 top）；**模擬與視圖解耦律**：toggle 不觸發 re-cast、逐幀 (blend,count) 摘要與純 3D 跑法逐幀相等、`hvSpellAge` 連續；HUD view 行與狀態一致 |
+| S5 | ☑ Raylib3D `DrawFlat` IO 分支（mesh 2D 繪製、culling 括號）＋`KeyTab`/`KeyV` | **手動 smoke**（§10 回填） | 開窗：Tab/V 即時切換；側視噴泉向上、俯視陣形展開；alpha 範例無 draw-order 接縫（painter 生效）、additive 正常累加；若 mesh 路徑異常 → 啟用備援 `drawRectangleRec` 並記錄於 §10 |
+| S6 | ☑ 端到端驗收 | `test/Acceptance8Spec.hs` | ring-fire headless 於 2D side 跑 120 幀：`hlFlats` 摘要逐幀＝`observeSpell` 參考序列（ADR-0008「同輸出換投影」成為斷言）；中途 Tab 兩次來回，幀數守恆 `length hlScenes + length hlFlats == frames`；預設無輸入跑法與 0005 行為逐位元同 |
 
 ## 9. 非目標（明確不做）
 
@@ -256,10 +256,25 @@ S1 →（S2 → S3 → S4 可依序推進）→ S5（落地即手動驗 R1）→
 7. **獨立 2D 執行檔或宿主打包展示**——同執行檔 Tab 切換即本輪的「模擬 2D 宿主」；真正外部宿主故事已由 `visibility: public`＋README 承擔。
 8. **俯視可讀性的視覺設計解**（壓平比例、輪廓強調等）——本輪只**暴露**§8.6 的深度重疊問題（俯視可切換即實驗台），設計解留給後續視覺 spec。
 
-## 10. 驗收紀錄（實作時回填）
+## 10. 驗收紀錄
 
-- [ ] S1–S4、S6 測試綠（日期、commit）
-- [ ] S5 手動 smoke 結果（三視圖截圖或描述；mesh 路徑 or 備援路徑，若備援需記錄原因）
-- [ ] 既有測試全綠（含 BoundarySpec、0006/0007 若已併入的測試）
-- [ ] 凍結介面清單確認（§4.6）
-- [ ] architecture.md 落地註記（§2 模組圖 `App.Render.Ortho2D` 虛線轉實線＋`Magic.Projection` 入模組表；§8.6 追加「已由 spec 0008 落地」）——依 0007 慣例由實作輪處理
+環境：Windows 11、GHC 9.14.1、cabal-install 3.16.1.0、h-raylib 5.6.0.0（分支 `feat/ortho2d-backend-0008`，基底 `768b8f5`）。
+
+| 項目 | 日期 | 結果 |
+|---|---|---|
+| S1–S4、S6 測試綠 | 2026-08-14 | `cabal test` **429 examples, 0 failures**（本輪前基線 381 → 新增 48 例：`ProjectSpec` 9、`FlatQuadSpec` 11、`FlatEffectsSpec` 7、`ViewToggleSpec` 17、`Acceptance8Spec` 4）。S6 的核心斷言成立：整段 2D 跑法的 `hlFlats` 摘要**逐幀等於** `observeSpell` 參考序列，且與純 3D 跑法的 `hlScenes` 逐幀相同——「同一份輸出、換投影即換維度」不再是型別層宣稱 |
+| S5 開窗手動 smoke | 2026-08-14 | **通過，走 mesh 主線路徑，§2 的 `drawRectangleRec` 備援一次都沒用上**。三視圖以真實 exe（1280×720、ring-fire）逐一取窗截圖確認：**2D 側視**噴泉自原點十字向上噴發、y-flip 方向正確、additive 火色由根部亮黃漸層到頂端暗橘；**2D 俯視**陣形展開成環、圍繞畫面中心；**3D** 透視＋地格線一如既往。切換以實際按鍵注入（`SendInput`，需視窗持有焦點）驗證：`Tab` 3D↔2D 來回、`V` 側視→俯視即時生效，HUD `view:` 行同步。無 draw-order 接縫、無背面剔除造成的破洞（culling 括號生效），穩定 60 fps。R1 外部風險就此關閉 |
+| 既有測試全綠（含 BoundarySpec） | 2026-08-14 | 0001–0006 既有測試零觸碰、全綠；`BoundarySpec` 通過（`Magic.Projection` 在 magic-boundary，殼層仍未依賴 magic-core）。`cabal build all` 通過（含 exe 與 bench stanza）。回歸哨兵成立：無 toggle 的跑法 `hlFlats == []`，`hlScenes` 長度＝幀數。0007 尚未併入，故不在本輪回歸範圍 |
+| 凍結介面清單確認（§4.6） | 2026-08-14 | 確認凍結：`ViewPlane` 建構子集合與 depth 慣例（SideXY depth = −z、TopXZ depth = −y，「越大越遠」）、`orthographic`／`depthOrder` 簽名與語意（逐分量精確、穩定置換）、`Magic.Projection` 再匯出通道、`project = id` 原樣未動。未凍結項（`FlatView` 常數 ppu=60／origin、鍵位、HUD 文案、`hlFlats` 形狀）維持殼層可調 |
+| architecture.md 落地註記 | 2026-08-14 | §2 模組圖：`App.Render.Ortho2D`（虛線預留）改為實線的 `App.Render.Flat`，`Magic.Projection` 入邊界層、`Magic.Project` 節點補上新 API；§8.6 追記「已由 spec 0008 落地」並明確保留未做的那一半（俯視可讀性的視覺設計解）；§10 擴充點表「新投影（2D）」補實證註記 |
+
+實作補記（非偏差，皆在 spec 授權範圍內）：
+
+- **`Magic.Project` 額外再匯出 `V2 (..)`**（§4.1 的匯出清單未列）。必要性：`orthographic` 回傳 `V2`，而殼層依 BoundarySpec 只能依賴 magic-boundary，無從 import `Magic.Types` 取得建構子。此為 0001 既有型別的加法再匯出，不新增任何詞彙。
+- **`App.Render.Flat` 另匯出 `screenOf`**（螢幕映射函數）：讓 `FlatQuadSpec` 直接對映射公式斷言，而不是在測試裡複製一份公式——複製品會與實作一起錯。
+- **test-suite `other-modules` 加 6 行而非 §0.2 估的 5 行**：5 個測試模組之外，`App.Render.Flat` 本身也必須列入（測試套件把 `app/` 一起編）。exe 與 magic-boundary 的加行數與盤點一致。
+- **§4.5 的「選配」軸十字採用**（`drawFlatAxes`，`Raylib.Core.Shapes.drawLine` 兩條線）：2D 視圖沒有 3D 的地格線，缺了它施法者位置只能用猜的。每幀 2 次額外 FFI 呼叫，與 O(1)/幀的預算相容。
+- **`hlFlats` 摘要帶投影面**（`(ViewPlane, BlendMode, Int)`，§4.3 即如此規定）：`ViewToggleSpec` 的 plane 持久律靠它見證。
+- **`depthOrder` 以 `sortOn (Down . depth)` 實作**：`sortOn` 穩定，`Down` 只反轉不相等鍵的比較，故「遞減＋等深保 buffer 序」由 base 的穩定性直接給出，無需自訂比較。boxed 中間 list 的成本照 §6 記給效能 spec。
+- **測試面的浮點容差**：`FlatQuadSpec` 的邊長斷言用「螢幕量級」相對容差（同 0005 `QuadBatchSpec` 的 `floatTolerance` 思路）。原因是頂點＝螢幕座標±半邊長，小粒子（size≈0.016）在 640 px 量級座標下相減會抵消掉大部分有效位數——這是 Float 的性質，不是幾何的錯。
+- **h-raylib 的 `KeyV` = 86、`KeyTab` = 258**（GLFW 鍵碼），與 `KeyLeft`/`KeyRight`/`KeyR` 同源；自動化注入按鍵時必須讓視窗持有焦點，否則按鍵靜默丟失（smoke 過程中確認，非產品問題）。
