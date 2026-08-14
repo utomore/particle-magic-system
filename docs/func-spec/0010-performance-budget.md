@@ -1,6 +1,6 @@
 # Func-Spec 0010：效能與粒子預算治理
 
-> 狀態：**設計定案，待實作**
+> 狀態：**已完成**（2026-08-15 驗收，見 §9）
 > 性質：一般 —— 交付後凍結 `ParticleBudget` 型別與 `Magic.Interface` 的加法匯出（spec 0012 動工門檻＝本 spec 驗收，先例：0006→0007）。
 > 前置依賴：**無**（動工前提「spec 0005 的 bench 基線」已於 0005 §10 交付：4096 粒 `buildQuads` ≈71µs、每幀純 CPU ≈0.73ms）。**與 spec 0011、0013 三方平行**：本 spec 鎖 core／`Interface.hs`／bench，0011 鎖 `src/ffi`＋`include`＋新目錄，0013 鎖 `app/*`——檔案零交集（§0.2 附證明），三 spec 可同時認領實作。
 > 依據：architecture §7（效能設計整章——本 spec 是它的落地輪）、§8.2（Expr 加速階梯，只做第一階）；ADR-0006（SoA＋unboxed）、ADR-0007（核心零 IO——`ST` 內部可變、對外仍純）；[roadmap.md](../roadmap.md) §3.1（被 0002/0004/0005/0006/0007/0008 六份 spec §9 指名的欠款總表）。
@@ -174,4 +174,105 @@ IO 邊界不變：本 spec 全程在純環內，`ST` 只出現在 `runST` 封閉
 
 ## 9. 驗收紀錄
 
-（實作時回填：日期、`cabal test` 結果、S8 量測表——零場/帶場 advance、depthOrder、10k/50k/100k 吞吐與記憶體、對 0005 基線的倍率；凍結介面清單：`ParticleBudget(..)`、`budgetPlanOf`、`maxSpellParticles`、`emitterBounds`。）
+> 驗收日：2026-08-15。環境：GHC 9.14.1／cabal 3.16.1.0／Windows 11 x86_64，全套件 `-O2`。
+> `cabal build all` 綠（含 exe、bench、foreign-library）；`cabal test` **793 examples, 0 failures**（動工前 676 → 本輪 +117）。
+
+### 9.1 Todo 逐項
+
+| # | 結果 | 測試 |
+|---|---|---|
+| S1 | ✅ golden 於重構前產出並 commit：10 範例 × 240 幀 × (`pbCount`＋六欄 FNV-1a) = `test/golden/perf-0010/*.txt`（每檔 240 行） | `PerfGoldenSpec`（11 examples） |
+| S2 | ✅ `sample` count-then-fill；`fromParticles` 降為薄包裝 | `SampleFillSpec`（18 examples） |
+| S3 | ✅ `aliveRanges` 時間窗剔除，`sample`／`aliveSlots`／`fieldInputs` 共用同一份窗口 | `CullSpec`（12 examples） |
+| S4 | ✅ `FieldState` SoA；`fieldInputs`／`displaceBuffer` unboxed 化 | `FieldSoASpec`（8 examples） |
+| S5 | ✅ `depthOrder` in-place introsort（tie-break 全序） | `DepthSortSpec`（10 examples） |
+| S6 | ✅ `foldConstants`＋`INLINE`/`INLINABLE`；`compile` 接入 | `ExprFoldSpec`（12 examples） |
+| S7 | ✅ `ParticleBudget`＋`spellBudgetPlan`＋`emitterBounds`＋`Magic.Interface` 加法匯出 | `BudgetPlanSpec`（26 examples） |
+| S8 | ✅ bench 新組跑出數字（§9.2） | 手動量測 |
+| S9 | ✅ 端到端驗收 | `Acceptance10Spec`（20 examples） |
+
+**中心律成立**：全部 10 個範例 spell 的 240 幀輸出與重構前 golden **逐位元相同**，由 `PerfGoldenSpec`（直接比對）與 `Acceptance10Spec`（同一條公開路徑再跑一次，並逐幀檢查 `bufferInvariant`、有限值、`depthOrder` 為合法置換）雙重守護。既有 793 個測試全綠——`FieldPlumbingSpec` 的 pre-0007 幀摘要、`Acceptance9Spec` 的跨 C ABI 等價律、`ExprGoldenSpec`、`BackCompatSpec` 都沒有動一個位元。
+
+### 9.2 S8 量測表
+
+`cabal bench`，全套 `-O2`。括號內為 0005 §10 基線（同機、同 fixture）。
+
+| 項目 | 本輪 | 0005 基線 | 倍率 |
+|---|---|---|---|
+| `observeSpell` @1024 粒（age 30 幀） | **48.7 µs** | 137 µs | **2.8×** |
+| `observeSpell` @2049 粒（age 60 幀） | **98.8 µs** | 305 µs | **3.1×** |
+| `observeSpell` @4096 粒（age 120／240／480 幀） | **196／195／196 µs** | 677／665／660 µs | **3.4×** |
+| `buildQuads` @4096（`app/*`，本輪零觸碰） | 73.2 µs | 71.3 µs | 1.0× |
+| **每幀純 CPU @4096**（取樣＋quad） | **≈ 0.27 ms** | ≈ 0.73 ms | **2.7×** |
+
+新增組（無基線可比者，另附本輪自帶的參照實作）：
+
+| 項目 | 本輪 | 參照 |
+|---|---|---|
+| `advanceSpell` ×60 步，零場（ring-fire） | **66.8 ns**（全 60 步合計） | ADR-0010 D9 快路徑幾乎免費：~1.1 ns/步 |
+| `advanceSpell` ×60 步，帶場（gravity-well，2 場、384 槽） | **885 µs** | ≈ 38 ns/槽·步——主成本是 `fieldInputs` 每步重算一次解析位置，不是積分本身 |
+| `depthOrder` @4096 SideXY | **144 µs** | 舊 `sortOn` 路徑 **1.47 ms** → **10.2×** |
+| `depthOrder` @4096 TopXZ | **34.0 µs** | 舊 `sortOn` 路徑 144 µs → **4.2×** |
+| `sample` 合成 10 000 粒（全數存活） | **647 µs** | 65 ns/粒 |
+| `sample` 合成 50 000 粒 | **3.12 ms** | 62 ns/粒 |
+| `sample` 合成 100 000 粒 | **6.54 ms** | 65 ns/粒 |
+
+兩個平面的 `depthOrder` 差 4×，是資料分布造成的（舊實作有同樣的比例），不是 introsort 的病態案例。
+
+**對 10k–100k 目標的解讀（供 0012 選定新 cap 用）**：取樣成本對粒子數線性，常數因子 **65 ns/粒**（重構前約 161 ns/粒）。60 fps 的 16.7 ms 預算下：
+
+- **10 000 粒**：0.65 ms 取樣（3.9% 預算）——寬裕。
+- **50 000 粒**：3.1 ms（19%）——單陣可行，但已經吃掉五分之一。
+- **100 000 粒**：6.5 ms（39%）——單執行緒可跑，但沒有留給遊戲邏輯與多陣的餘裕。
+
+剩下的常數因子集中在解析模型本身（`sampleShape` 的 `sin`/`cos`／`sqrt`、`hashChan`、`rampColor` 的 `round`），不是資料結構——再往下要靠 §8 非目標 4（Expr bytecode）與 6（多執行緒取樣），本輪明文不做。**建議 0012 的新 cap 取 32 768–65 536**：前者留 88% 預算給宿主，後者仍在 25% 以內，兩者都遠離 100k 這個「能跑但沒餘裕」的邊界。
+
+### 9.3 凍結介面清單（供下游 spec 引用；0012 動工門檻＝本列表）
+
+`Magic.Compile`：
+
+```haskell
+data ParticleBudget = ParticleBudget
+  { budgetPerEmitter :: !(U.Vector Int)   -- 與 spellEmitters 索引對齊
+  , budgetTotal      :: !Int              -- == U.sum budgetPerEmitter
+  } deriving (Eq, Show)
+
+-- CompiledSpell 新欄位（既有欄位全數保留）
+spellBudgetPlan :: !ParticleBudget        -- 不變量：spellBudget == budgetTotal spellBudgetPlan
+
+emitterBounds :: CastContext -> Seconds -> EmitterSpec -> (V3, V3)
+```
+
+`Magic.Expr`：`foldConstants :: Expr -> Expr`（律：`evalExpr . foldConstants ≡ evalExpr`，逐位元）。
+
+`Magic.Interface` 加法匯出（既有簽名一個都沒改）：
+
+```haskell
+ParticleBudget (..)
+budgetPlanOf      :: ActiveSpell -> ParticleBudget
+maxSpellParticles :: Int                    -- == budgetCap，本輪仍為 4096
+EmitterSpec                                 -- 抽象型別（無建構子）
+emittersOf        :: ActiveSpell -> [EmitterSpec]
+emitterBounds     :: CastContext -> Seconds -> EmitterSpec -> (V3, V3)
+```
+
+`Magic.Particle.Buffer` 加法匯出：`WriteRow`、`buildBuffer :: Int -> (forall s. WriteRow s -> ST s ()) -> ParticleBuffer`。
+`Magic.Particle.Analytic` 加法匯出：`aliveRanges`、`aliveSlotIndices`、`emitterOffsets`。
+`Magic.Particle.Field`（0007 §4.7 明文不凍結，本輪換表徵、**仍不凍結**）：`FieldState(..)` SoA 欄位、`FieldInputs(..)`、`slotAt`、`fieldInputsOf`、`stepColumns`、`displacementColumns`；`step`／`displacementsInOrder`／`stepSlot`／`SlotState`／`quiescent` 的 0007 簽名**原樣保留**為相容入口。
+
+### 9.4 與設計書的偏差（逐條說明）
+
+1. **§2「存活索引是連續區間」不完全成立——實際上至多兩段**。`firstBirth` 對索引單調沒錯，但重生週期數 `floor((t − birth₀)/lifetime)` 在一個發射器的索引跨度內會**恰好跨一次**邊界（跨度 < 一個 lifetime ⇒ 至多兩個值），於是「窗口關閉後」的時段存活集合是「前綴 ∪ 後綴」兩段。實作 `aliveRanges` 回傳升冪不相交的 `[(lo, hi)]`，`CullSpec` 以 property 釘住「至多兩段」與「≡ 全掃描」。**取樣列序不受影響**（兩段仍是索引升冪）。
+2. **窗口邊界用二分搜尋求，不用閉式解**。設計書寫「由 Envelope 閉式解出」；改用**對 `firstBirth`／`particleAge` 本身**做 `O(log n)` 二分搜尋。理由是逐位元律：閉式解會引入第二套浮點算式，邊界上差一個 ULP 就是差一顆粒子；二分搜尋走的是同一個述詞，等價性是構造上的，而不是需要證明的。效能目標（死窗發射器零逐粒成本、剔除成本 `O(log n)`）一樣達成。
+3. **`emitterBounds` 的轉匯出需要兩個額外的加法匯出才可用**。設計書 §3 只列 `emitterBounds`，但它吃 `EmitterSpec`，而 `Magic.Interface` 不匯出 `CompiledSpell`——宿主拿不到參數。補上抽象型別 `EmitterSpec`（無建構子）與 `emittersOf`，共 6 個加法匯出而非 4 個。
+4. **`test/FieldStepSpec.hs` 動了一個 `it`（不在 §0.2 檔案盤點內）**。該案例直接解構 `FieldState` 的巢狀 `V.Vector` 表徵；SoA 化後改為斷言同一件事（每粒一槽、全部為空）的 SoA 版本。同檔其他 15 個案例、以及 `FieldRebirthSpec` 全檔一字未動——因為 0007 的 `step`／`displacementsInOrder` 簽名被保留為相容入口。
+5. **`benchmark bench` stanza 加 `particle-magic:magic-core` 依賴**。10k–100k 的 fixture 必須直接建構 `CompiledSpell`（§7 S8 已預期），而 boundary 不匯出其建構子。bench stanza 本就在 `BoundarySpec` 白名單之外（0005 §5 明文），`magic-core`／`magic-boundary`／executable 三個受管轄 stanza 的依賴一字未變。
+6. **`buildBuffer` 的六欄以零初始化配置（`MU.replicate`）而非 `MU.new`**。設計書未指定。取零初始化的理由：本輪的中心律是決定論，而 `unsafeFreeze` 一塊未初始化記憶體會讓「呼叫者算錯 count」這種錯誤表現為**非決定性輸出**而不是可見的空白粒子。memset 的成本相對於逐粒取樣可忽略（100k 量到的仍是 65 ns/粒）。
+7. **`depthOrder` 的 NaN 深度是新定義的行為**。舊 `sortOn (Down . snd)` 在 NaN 下的順序由 mergesort 的合併順序決定（`compare` 對 NaN 不是全序），沒有任何文件或測試描述過。新實作在建鍵時把 NaN 摺成 `-Infinity`（一次，不是每次比較），使比較成為真正的全序、分割迴圈不可能走出界。有限深度與 ±Infinity 下與舊實作**逐位元同置換**（`DepthSortSpec` property，含已排序／反序／全等／鋸齒四種對抗輸入）。`-0.0` 刻意不正規化，維持與 `0.0` 比較相等、由索引 tie-break——與舊實作一致。
+8. **§2 的「per-emitter 基底提升」比預期值錢，且順手多做了兩處同性質的提升**。`particlePosition` 原本每顆粒子重算 4 次 `normalize`＋2 次 `basisFromNormal`；提升到每發射器每幀一次（`EmitterFrame`）後，`observeSpell@4096` 從 471 µs 掉到 195 µs——**這一步就是本輪一半以上的加速**。附帶兩處：(a) `AlongNormal` 的 `(au, aw)` 就是 `basisFromNormal faceNormal`，與框架已有的 `(u, w)` 是同一個函數的同一個輸入，直接複用（相等而非近似，省兩次 `cross`）；(b) `rampColor` 的四個位移由 `foldr` over list 改為展開（同樣四項、同樣 `.|.`，省掉每粒一個 list 配置）。三者皆為逐位元恆等，由 golden 守護。
+9. **除 SKILL.md 索引外另動了三份文件**（§0.2 只列了 `SKILL.md`）。`docs/roadmap.md` 是 SKILL.md 明定「每次 func-spec 驗收後更新」的文件；`docs/integration.md` 是 SKILL.md 明定「`Magic.Interface` 變動時同步更新」的文件（本輪加了 6 個匯出，新增 §3.1）；`docs/architecture.md` §7 的現況註記與「緩衝重用」列在本輪之後會與實作矛盾，故就地標註狀態並記下改判理由（**不引入新決策**——改判的論證寫在本節第 10 條與 ADR-0007 既有的引用透明要求裡）。三份都是**加行/改列**，與 0011（會改 integration.md 的 C ABI 章節）走同檔異行的聯集合併，慣例同 cabal。
+10. **`observeSpell` 的每幀六次 exact-size 配置維持不變**（§2 明文不做跨幀緩衝重用）。量測支持這個判斷：100k 粒 6.54 ms 中，配置與零填只佔可忽略的一部分，主成本是逐粒的 `sin`/`cos`/`sqrt`。§8 非目標 2 的記帳照舊有效，但目前沒有數據支持它值得做。
+
+### 9.5 golden 的產生與再生
+
+`test/golden/perf-0010/*.txt` 由 `PerfGoldenSpec` 自身在檔案不存在時寫出，並把該案例報成 `pending`（不會靜默通過）。本輪的產生程序：**在動任何一行核心碼之前**跑一次 `cabal test`，10 檔落地並 commit；此後每一次 `cabal test` 都是比對。0012 提升 cap 時若 golden 需要重新產生（範例 spell 的輸出理應不變，故預期**不需要**），刪檔重跑即可，但那等同宣告「輸出變了」，必須在該輪的驗收紀錄裡說明為什麼。

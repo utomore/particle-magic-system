@@ -117,6 +117,7 @@ build-depends: particle-magic:magic-boundary
 ```haskell
 import Magic.Codec      (loadCircle, renderLoadError)
 import Magic.Interface  -- castSpell / advanceSpell / observeSpell / isFinished / spellAge
+                        -- ＋ maxSpellParticles / budgetPlanOf / emitterBounds（見 §3.1）
 import Magic.Projection (ViewPlane (..), orthographic, depthOrder)   -- 只有 2D 宿主需要
 ```
 
@@ -143,6 +144,38 @@ runSpell bytes =
 `stepSpell` 是 `advanceSpell` 後接 `observeSpell` 的合成，一幀一步時用它比較短。
 
 **2D 宿主**：`orthographic plane p` 回 `(V2, depth)`，`depthOrder plane buffer` 回一個**穩定的由遠而近索引置換**（等深時保持 buffer 原序）。螢幕原點與縮放仍然是你的事——庫只負責丟軸與排序這兩件純數學。
+
+### 3.1 預算與空間範圍（func-spec 0010 新增）
+
+同樣從 `Magic.Interface` 匯出，都是純函數，都可以在第一幀之前就問：
+
+```haskell
+maxSpellParticles :: Int                    -- 單一法術的粒子上限（= 編譯期護欄，目前 4096）
+budgetPlanOf      :: ActiveSpell -> ParticleBudget
+emittersOf        :: ActiveSpell -> [EmitterSpec]
+emitterBounds     :: CastContext -> Seconds -> EmitterSpec -> (V3, V3)
+
+data ParticleBudget = ParticleBudget
+  { budgetPerEmitter :: U.Vector Int   -- 每個發射器一格，與 emittersOf 同序
+  , budgetTotal      :: Int            -- 其總和：這次施法的最壞情況粒子數
+  }
+```
+
+- **`maxSpellParticles`** 是配置緩衝的正確依據，而不是把 4096 抄進你的程式碼。C ABI 側的等價查詢是 `pm_max_particles()`（func-spec 0011 交付）。
+- **`budgetPlanOf`** 給的是**這一次施法**的上限（`budgetTotal`），通常遠小於 `maxSpellParticles`。想預先配置剛好夠用的頂點緩衝就用它。
+- **`emitterBounds ctx horizon em`** 回一個**保守的世界座標 AABB**：這個發射器在 `[0, horizon]` 秒內取樣得到的每一顆粒子都在盒內。它刻意不做視錐剔除——核心沒有相機概念（ADR-0008），要不要因為整個發射器在畫面外而跳過它，是你的決定。`horizon` 是**你選的時窗**：傳一個涵蓋整個法術的秒數就得到全程包絡，傳 `0.5` 就是問「接下來半秒它最遠會跑到哪裡」。傳得越長，盒子越保守。
+- `EmitterSpec` 在這裡是**不透明型別**：從 `emittersOf` 拿到，交回給 `emitterBounds`，不要試圖解構它。
+
+```haskell
+-- 例：整個發射器在畫面外就不畫它（未來 0.5 秒內都不會進畫面）
+visibleEmitters :: CastContext -> ActiveSpell -> [(Int, (V3, V3))]
+visibleEmitters ctx spell =
+  [ (i, box)
+  | (i, em) <- zip [0 ..] (emittersOf spell)
+  , let box = emitterBounds ctx (Seconds 0.5) em
+  , yourFrustumTest box
+  ]
+```
 
 ---
 
@@ -473,7 +506,7 @@ public class SpellRenderer : MonoBehaviour
 
 | 限制 | 說明 |
 |---|---|
-| **粒子上限 4096** | `PM_MAX_PARTICLES`；架構目標是 1e4–1e5，效能 spec 尚未動工。超過上限的魔法陣在 `pm_cast` 就會被擋下（`PM_ERR_BUDGET`），不會在執行期爆掉 |
+| **粒子上限 4096** | `PM_MAX_PARTICLES`／`Magic.Interface.maxSpellParticles`。**這是護欄值，不是速度上限**：func-spec 0010 已把熱路徑做到 100 000 粒 6.5 ms（60 fps 預算的 39%），值本身的提升排在 func-spec 0012。超過上限的魔法陣在 `pm_cast`／`castSpell` 就會被擋下（`PM_ERR_BUDGET`），不會在執行期爆掉。Haskell 宿主**請用 `maxSpellParticles` 查詢，不要把 4096 抄進程式碼**——它會變；C 宿主目前只有 header 常數，執行期查詢 `pm_max_particles()` 由 func-spec 0011 交付 |
 | **一次一張陣** | 沒有多陣合成／疊加 API。想同時放多個法術＝持有多個 handle，總量控制是你的事 |
 | **單執行緒 handle** | 庫內無鎖 |
 | **RTS 不可重啟** | `pm_shutdown()` 之後不能再 `pm_init()`；一個 process 一份 GHC RTS |

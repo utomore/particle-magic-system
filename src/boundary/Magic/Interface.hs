@@ -38,21 +38,43 @@ module Magic.Interface
   , observeSpell
   , isFinished
   , spellAge
+
+    -- * Particle budget and spatial extent (func-spec 0010 S7)
+  , ParticleBudget (..)
+  , budgetPlanOf
+  , maxSpellParticles
+  , EmitterSpec
+  -- ^ Opaque here: a host receives these from 'emittersOf' and hands
+  -- them back to 'emitterBounds'; building one is the compiler's job.
+  , emittersOf
+  , emitterBounds
   ) where
 
+import Control.Monad.ST (runST)
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
+import qualified Data.Vector.Unboxed.Mutable as MU
 import Magic.Circle (Circle, emptyCircle)
 import Magic.Compile
   ( BlendMode (..)
   , CompileError (..)
   , CompiledSpell (..)
   , EmitterSpec (..)
+  , ParticleBudget (..)
   , Phase (Casting)
+  , budgetCap
   , compile
+  , emitterBounds
   , spellBlend
   )
-import Magic.Particle.Analytic (aliveSlots, particleAge, particlePosition, sample)
+import Magic.Particle.Analytic
+  ( aliveRanges
+  , aliveSlotIndices
+  , emitterOffsets
+  , particleAge
+  , particlePosition
+  , sample
+  )
 import Magic.Particle.Buffer (ParticleBuffer (..))
 import qualified Magic.Particle.Field as Field
 import Magic.Particle.Field (FieldState)
@@ -133,29 +155,68 @@ advanceSpell (FrameInput dt@(DeltaTime dtSeconds)) spell =
     fields ->
       advanced
         { asField =
-            Field.step fields dt (fieldInputs (asSpell spell) (asCtx spell) (Time elapsed')) (asField spell)
+            Field.stepColumns
+              fields
+              dt
+              (fieldInputs (asSpell spell) (asCtx spell) (Time elapsed'))
+              (asField spell)
         }
   where
     elapsed' = asElapsed spell + dtSeconds
     advanced = spell {asElapsed = elapsed'}
 
--- | This step's @(age, analytic base position)@ per stable slot, shaped
--- like the 'FieldState' (emitter by emitter, index ascending).
+-- | This step's @(age, analytic base position)@ per stable slot, in the
+-- 'FieldState' flattening (emitter by emitter, index ascending), written
+-- straight into unboxed columns (func-spec 0010 S4 — the pre-0010 version
+-- rebuilt a nested boxed vector of @Maybe@ every step).
 --
 -- Only 'Casting' emitters are reported alive: formation particles draw
 -- the circle's geometry and must stay legible, so the fields do not touch
 -- them (ADR-0010 D6). A circle without phases has a single casting
--- emitter, which makes the rule a no-op there.
-fieldInputs :: CompiledSpell -> CastContext -> Time -> V.Vector (V.Vector (Maybe (Double, V3)))
-fieldInputs spell ctx t = V.map emitterInputs (spellEmitters spell)
+-- emitter, which makes the rule a no-op there. Dead slots keep the
+-- negative-age sentinel the columns are initialized with, so the walk
+-- only visits the live index windows.
+fieldInputs :: CompiledSpell -> CastContext -> Time -> Field.FieldInputs
+fieldInputs spell ctx t = runST $ do
+  age <- MU.replicate n (-1)
+  px <- MU.replicate n 0
+  py <- MU.replicate n 0
+  pz <- MU.replicate n 0
+  let goEmitter e
+        | e >= V.length ems = pure ()
+        | otherwise = do
+            let em = ems V.! e
+                base = offsets U.! e
+            if emPhase em /= Casting
+              then pure ()
+              else
+                mapM_
+                  (\(lo, hi) -> goIndex em base lo hi)
+                  (aliveRanges (emSpawn em) (emCount em) t)
+            goEmitter (e + 1)
+      goIndex em base i hi
+        | i >= hi = pure ()
+        | otherwise = do
+            case particleAge (emSpawn em) (emCount em) i t of
+              Nothing -> pure ()
+              Just a -> do
+                let V3 x y z = particlePosition ctx t em i a
+                    j = base + i
+                MU.write age j a
+                MU.write px j x
+                MU.write py j y
+                MU.write pz j z
+            goIndex em base (i + 1) hi
+  goEmitter 0
+  Field.FieldInputs offsets
+    <$> U.unsafeFreeze age
+    <*> U.unsafeFreeze px
+    <*> U.unsafeFreeze py
+    <*> U.unsafeFreeze pz
   where
-    emitterInputs em
-      | emPhase em /= Casting = V.replicate (emCount em) Nothing
-      | otherwise = V.generate (emCount em) (slotInput em)
-
-    slotInput em i = case particleAge (emSpawn em) (emCount em) i t of
-      Nothing -> Nothing
-      Just age -> Just (age, particlePosition ctx t em i age)
+    ems = spellEmitters spell
+    offsets = emitterOffsets spell
+    n = if U.null offsets then 0 else U.last offsets
 
 -- | Sample the spell at its current age. Pure observation, no time
 -- advance (func-spec 0005 §4.1) — so a host that runs several fixed
@@ -172,9 +233,9 @@ observeSpell spell =
       buffer = case spellFields (asSpell spell) of
         [] -> sampled
         _ ->
-          displaceBuffer
-            sampled
-            (Field.displacementsInOrder (asField spell) (aliveSlots (asSpell spell) t))
+          let slots = aliveSlotIndices (asSpell spell) t
+              (dx, dy, dz) = Field.displacementColumns (asField spell) slots
+           in displaceBuffer sampled dx dy dz
       batch =
         RenderBatch
           { rbParticles = buffer
@@ -183,20 +244,26 @@ observeSpell spell =
           }
    in FrameOutput {batches = [batch]}
 
--- | Add one displacement per buffer row. Row count, sizes, life fractions
--- and colors are untouched, so the 'Magic.Particle.Buffer.bufferInvariant'
--- carries over; a short displacement list (which the alignment law rules
--- out) pads with zeros rather than truncating the buffer.
-displaceBuffer :: ParticleBuffer -> [V3] -> ParticleBuffer
-displaceBuffer buffer displacements =
+-- | Add one displacement column per position column. Row count, sizes,
+-- life fractions and colors are untouched, so the
+-- 'Magic.Particle.Buffer.bufferInvariant' carries over; a short
+-- displacement column (which the alignment law rules out) contributes
+-- zeros past its end rather than truncating the buffer.
+--
+-- Zero is still /added/ in that tail rather than skipped: @-0.0 + 0.0@ is
+-- @0.0@, so skipping would change a bit the pre-0010 padded @zipWith@
+-- did not.
+displaceBuffer
+  :: ParticleBuffer -> U.Vector Float -> U.Vector Float -> U.Vector Float -> ParticleBuffer
+displaceBuffer buffer dx dy dz =
   buffer
-    { pbPosX = U.zipWith (+) (pbPosX buffer) (component (\(V3 x _ _) -> x))
-    , pbPosY = U.zipWith (+) (pbPosY buffer) (component (\(V3 _ y _) -> y))
-    , pbPosZ = U.zipWith (+) (pbPosZ buffer) (component (\(V3 _ _ z) -> z))
+    { pbPosX = add (pbPosX buffer) dx
+    , pbPosY = add (pbPosY buffer) dy
+    , pbPosZ = add (pbPosZ buffer) dz
     }
   where
-    n = pbCount buffer
-    component f = U.fromListN n (map f displacements ++ replicate n 0)
+    add col d =
+      U.imap (\i v -> v + (if i < U.length d then U.unsafeIndex d i else 0)) col
 
 -- | Advance then observe. Decomposition law (func-spec 0005 §4.1, guarded
 -- by @test\/StepObserveSpec.hs@):
@@ -216,3 +283,26 @@ isFinished spell =
 -- hosts and to the hot-reload tests: a re-cast spell starts at age 0).
 spellAge :: ActiveSpell -> Time
 spellAge = Time . asElapsed
+
+-- Budget and extent (func-spec 0010 S7) ---------------------------------------
+
+-- | This cast's particle budget, per emitter and in total — known at
+-- compile time, so a host can size its buffers before the first frame is
+-- ever sampled.
+budgetPlanOf :: ActiveSpell -> ParticleBudget
+budgetPlanOf = spellBudgetPlan . asSpell
+
+-- | The most particles any single spell can be compiled to (a compile
+-- that would exceed it fails with 'BudgetExceeded').
+--
+-- First time this number reaches the public interface: hosts and the C
+-- ABI's @pm_max_particles@ have had to know it by other means. Its
+-- /value/ is untouched this round — raising the cap is func-spec 0012's
+-- job, and it will raise this constant, not add a second one.
+maxSpellParticles :: Int
+maxSpellParticles = budgetCap
+
+-- | The compiled emitters of a cast, in 'ParticleBudget' order — the
+-- arguments 'emitterBounds' takes.
+emittersOf :: ActiveSpell -> [EmitterSpec]
+emittersOf = V.toList . spellEmitters . asSpell

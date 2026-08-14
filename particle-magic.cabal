@@ -196,6 +196,14 @@ test-suite spec
                     , FieldStepObserveSpec
                     , FieldRebirthSpec
                     , Acceptance7Spec
+                    , PerfGoldenSpec
+                    , SampleFillSpec
+                    , CullSpec
+                    , FieldSoASpec
+                    , DepthSortSpec
+                    , ExprFoldSpec
+                    , BudgetPlanSpec
+                    , Acceptance10Spec
                     , App.Effects
                     , App.HotReload
                     , App.Loop
@@ -228,7 +236,16 @@ benchmark bench
     main-is:          Bench.hs
     hs-source-dirs:   bench, app
     other-modules:    App.Render.Quads
+    -- magic-core is reachable from here (and only from here): func-spec
+    -- 0010 S8 measures the 10k-100k range, which is past 'budgetCap', so
+    -- the synthetic fixtures are built as 'CompiledSpell' values directly
+    -- instead of going through 'compile'. The sampler itself never
+    -- consults the cap, so this measures the real code path -- and the
+    -- benchmark stanza is outside the dependency whitelist BoundarySpec
+    -- guards precisely so a measuring instrument can reach further than a
+    -- shipped component may.
     build-depends:    base
+                    , particle-magic:magic-core
                     , particle-magic:magic-boundary
                     , tasty-bench
                     , bytestring

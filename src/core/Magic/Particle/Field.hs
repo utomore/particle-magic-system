@@ -37,24 +37,42 @@
 -- (architecture §2 dependency direction). Ages and base positions are
 -- computed by the caller ('Magic.Interface') with the frozen analytic
 -- functions and handed in.
+-- Func-spec 0010 S4 turns the state's /representation/ into flat unboxed
+-- columns (spec 0007 §4.7 left it explicitly unfrozen for exactly this).
+-- The laws did not move: 'stepSlot' still spells out the per-slot
+-- transition, it is still the definition the columnar 'stepColumns'
+-- implements, and @test\/FieldSoASpec.hs@ holds the two against each
+-- other bit for bit. Absence — the old @Nothing@ — is a negative age
+-- sentinel in the age column; ages are @>= 0@ by construction, so the two
+-- can never be confused, and unlike a NaN sentinel it leaves 'Eq' and
+-- 'Show' meaning what they say.
 module Magic.Particle.Field
   ( -- * Field evaluation
     fieldAccel
 
-    -- * Per-slot integration state
+    -- * Per-slot integration state (the reference semantics)
   , SlotState (..)
   , quiescent
   , stepSlot
 
-    -- * Whole-spell state
+    -- * Whole-spell state (SoA, func-spec 0010 S4)
   , FieldState (..)
   , emptyFieldState
+  , slotAt
+  , FieldInputs (..)
+  , fieldInputsOf
+  , stepColumns
+  , displacementColumns
+
+    -- * Boxed entry points (compatibility; not the hot path)
   , step
   , displacementsInOrder
   ) where
 
-import Control.Monad (join)
+import Control.Monad.ST (runST)
 import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as U
+import qualified Data.Vector.Unboxed.Mutable as MU
 import Magic.Rune (ForceField (..))
 import Magic.Types
   ( DeltaTime (..)
@@ -137,54 +155,217 @@ stepSlot fields (DeltaTime dt) now previous = case now of
           disp' = ssDisp state + vscale dtF vel'
        in SlotState {ssVel = vel', ssDisp = disp'}
 
--- Whole-spell state -----------------------------------------------------------
+-- Whole-spell state (SoA) -----------------------------------------------------
 
--- | Field state of a whole cast: the outer vector follows emitter order
--- (as in @spellEmitters@), each inner vector is that emitter's @emCount@
--- slots. 'Nothing' = the slot holds no live particle.
+-- | The age stored for a slot that holds no live particle. Real ages are
+-- @t − birth@ with @birth <= t@, hence never negative, so any negative
+-- value is unambiguous; @-1@ is the one written.
+noAge :: Double
+noAge = -1
+
+-- | Field state of a whole cast, flattened: 'fsOffsets' is the prefix sum
+-- of the emitters' particle counts (one entry more than there are
+-- emitters, the last being the total slot count — the same flattening
+-- 'Magic.Particle.Analytic.emitterOffsets' produces), and every other
+-- column is one value per slot in that layout.
 --
--- The boxed representation is deliberately /not/ frozen (spec 0007 §4.7):
--- a later performance spec may turn it into SoA unboxed vectors as long as
--- the D1–D3 laws still hold. It is not a 'Magic.Particle.Buffer' and so
--- not governed by ADR-0006.
-newtype FieldState = FieldState (V.Vector (V.Vector (Maybe (Double, SlotState))))
+-- @fsAge < 0@ marks a slot with no state; its velocity and displacement
+-- are zero, so a stale read degrades to "no displacement" rather than to
+-- somebody else's.
+--
+-- Not a 'Magic.Particle.Buffer.ParticleBuffer' and so not governed by
+-- ADR-0006 — but the same SoA reasoning applies, which is why func-spec
+-- 0010 moved it here.
+data FieldState = FieldState
+  { fsOffsets :: !(U.Vector Int)
+  , fsAge :: !(U.Vector Double)
+  , fsVelX :: !(U.Vector Float)
+  , fsVelY :: !(U.Vector Float)
+  , fsVelZ :: !(U.Vector Float)
+  , fsDispX :: !(U.Vector Float)
+  , fsDispY :: !(U.Vector Float)
+  , fsDispZ :: !(U.Vector Float)
+  }
+  deriving (Eq, Show)
+
+-- | This step's @(age, analytic base position)@ per slot, in the same
+-- flattening as 'FieldState'. @fiAge < 0@ means "not alive": the caller
+-- uses it both for dead slots and for whole emitters the fields must not
+-- touch (ADR-0010 D6 keeps formation particles rigid).
+data FieldInputs = FieldInputs
+  { fiOffsets :: !(U.Vector Int)
+  , fiAge :: !(U.Vector Double)
+  , fiPosX :: !(U.Vector Float)
+  , fiPosY :: !(U.Vector Float)
+  , fiPosZ :: !(U.Vector Float)
+  }
   deriving (Eq, Show)
 
 -- | All slots at rest, from each emitter's particle count. This is the
 -- state a fresh cast starts in, and the state a hot reload returns to
 -- (ADR-0010 D8: a reload is a re-cast, field state is never migrated).
 emptyFieldState :: [Int] -> FieldState
-emptyFieldState counts = FieldState (V.fromList [V.replicate n Nothing | n <- counts])
+emptyFieldState counts =
+  FieldState
+    { fsOffsets = offsets
+    , fsAge = U.replicate n noAge
+    , fsVelX = zeros
+    , fsVelY = zeros
+    , fsVelZ = zeros
+    , fsDispX = zeros
+    , fsDispY = zeros
+    , fsDispZ = zeros
+    }
+  where
+    offsets = U.scanl' (+) 0 (U.fromList counts)
+    n = if U.null offsets then 0 else U.last offsets
+    zeros = U.replicate n 0
 
--- | Advance every slot by one fixed step. The input has the same shape as
--- the state — emitter by emitter, slot by slot — and carries this step's
--- @(age, analytic base position)@ per slot; the caller passes 'Nothing'
--- both for dead slots and for whole emitters the fields must not touch
--- (ADR-0010 D6 keeps formation particles rigid).
+-- | The flat slot id of @(emitter, particleIndex)@, or 'Nothing' when the
+-- pair names no slot of this state.
+flatSlot :: U.Vector Int -> Int -> Int -> Maybe Int
+flatSlot offsets e i
+  | e < 0 || i < 0 || e + 1 >= U.length offsets = Nothing
+  | i >= offsets U.! (e + 1) - base = Nothing
+  | otherwise = Just (base + i)
+  where
+    base = offsets U.! e
+
+-- | One slot's state in the boxed vocabulary 'stepSlot' is written in —
+-- the bridge between the columns and the reference semantics.
+slotAt :: FieldState -> Int -> Int -> Maybe (Double, SlotState)
+slotAt st e i = do
+  j <- flatSlot (fsOffsets st) e i
+  let age = fsAge st U.! j
+  if age < 0
+    then Nothing
+    else
+      Just
+        ( age
+        , SlotState
+            { ssVel = V3 (fsVelX st U.! j) (fsVelY st U.! j) (fsVelZ st U.! j)
+            , ssDisp = V3 (fsDispX st U.! j) (fsDispY st U.! j) (fsDispZ st U.! j)
+            }
+        )
+
+-- | Advance every slot by one fixed step — the hot path.
+--
+-- Each slot takes exactly the branch 'stepSlot' specifies: not alive ⇒ no
+-- state; no previous state or an age that went backwards ⇒ 'quiescent';
+-- otherwise one semi-implicit Euler step sampling the fields at the
+-- rendered position. The arithmetic is the same expression in the same
+-- order, so the columns hold bit for bit what the boxed transition held.
 --
 -- Pure in @(fields, dt, ages, base positions, previous state)@ — no wall
 -- clock, no randomness of its own — which is what keeps the replay
--- contract (ADR-0010 D7) intact.
+-- contract (ADR-0010 D7) intact. A previous state of a different shape
+-- (a re-cast that changed the emitter layout) is treated as absent, so
+-- every live slot restarts from rest rather than inheriting a stranger's
+-- momentum.
+stepColumns :: [ForceField] -> DeltaTime -> FieldInputs -> FieldState -> FieldState
+stepColumns fields (DeltaTime dt) inputs previous = runST $ do
+  age <- MU.replicate n noAge
+  vx <- MU.replicate n 0
+  vy <- MU.replicate n 0
+  vz <- MU.replicate n 0
+  dx <- MU.replicate n 0
+  dy <- MU.replicate n 0
+  dz <- MU.replicate n 0
+  let go !j
+        | j >= n = pure ()
+        | otherwise = do
+            let a = fiAge inputs `U.unsafeIndex` j
+            if a < 0
+              then pure ()
+              else do
+                MU.write age j a
+                let la = if compatible then fsAge previous `U.unsafeIndex` j else noAge
+                if la >= 0 && a >= la
+                  then do
+                    let basePos =
+                          V3
+                            (fiPosX inputs `U.unsafeIndex` j)
+                            (fiPosY inputs `U.unsafeIndex` j)
+                            (fiPosZ inputs `U.unsafeIndex` j)
+                        disp =
+                          V3
+                            (fsDispX previous `U.unsafeIndex` j)
+                            (fsDispY previous `U.unsafeIndex` j)
+                            (fsDispZ previous `U.unsafeIndex` j)
+                        vel =
+                          V3
+                            (fsVelX previous `U.unsafeIndex` j)
+                            (fsVelY previous `U.unsafeIndex` j)
+                            (fsVelZ previous `U.unsafeIndex` j)
+                        accel = fieldAccel fields (basePos + disp)
+                        vel'@(V3 vx' vy' vz') = vel + vscale dtF accel
+                        V3 dx' dy' dz' = disp + vscale dtF vel'
+                    MU.write vx j vx'
+                    MU.write vy j vy'
+                    MU.write vz j vz'
+                    MU.write dx j dx'
+                    MU.write dy j dy'
+                    MU.write dz j dz'
+                  else pure ()
+            go (j + 1)
+  go 0
+  FieldState (fiOffsets inputs)
+    <$> U.unsafeFreeze age
+    <*> U.unsafeFreeze vx
+    <*> U.unsafeFreeze vy
+    <*> U.unsafeFreeze vz
+    <*> U.unsafeFreeze dx
+    <*> U.unsafeFreeze dy
+    <*> U.unsafeFreeze dz
+  where
+    n = U.length (fiAge inputs)
+    dtF = realToFrac dt :: Float
+    compatible =
+      fsOffsets previous == fiOffsets inputs && U.length (fsAge previous) == n
+
+-- | The accumulated displacements of the given flat slot ids, in the
+-- given order — which is 'Magic.Particle.Analytic.aliveSlotIndices'
+-- order, i.e. buffer row order (ADR-0010 D2's single source of truth).
+-- A slot id outside the state contributes zero, so a mismatch degrades to
+-- "no displacement" instead of shifting the wrong particle.
+displacementColumns
+  :: FieldState -> U.Vector Int -> (U.Vector Float, U.Vector Float, U.Vector Float)
+displacementColumns st slots = (col (fsDispX st), col (fsDispY st), col (fsDispZ st))
+  where
+    n = U.length (fsDispX st)
+    col c = U.map (\j -> if j >= 0 && j < n then c `U.unsafeIndex` j else 0) slots
+
+-- Boxed entry points ----------------------------------------------------------
+
+-- | Build 'FieldInputs' from the boxed per-emitter shape. The convenience
+-- constructor for callers that already hold that shape (tests, tools);
+-- 'Magic.Interface' fills the columns directly.
+fieldInputsOf :: V.Vector (V.Vector (Maybe (Double, V3))) -> FieldInputs
+fieldInputsOf rows =
+  FieldInputs
+    { fiOffsets = U.scanl' (+) 0 (U.generate (V.length rows) (V.length . (rows V.!)))
+    , fiAge = U.fromList [maybe noAge fst slot | slot <- flat]
+    , fiPosX = U.fromList [component (\(V3 x _ _) -> x) slot | slot <- flat]
+    , fiPosY = U.fromList [component (\(V3 _ y _) -> y) slot | slot <- flat]
+    , fiPosZ = U.fromList [component (\(V3 _ _ z) -> z) slot | slot <- flat]
+    }
+  where
+    flat = concatMap V.toList (V.toList rows)
+    component f = maybe 0 (f . snd)
+
+-- | 'stepColumns' in the boxed vocabulary of spec 0007.
 step
   :: [ForceField]
   -> DeltaTime
   -> V.Vector (V.Vector (Maybe (Double, V3)))
   -> FieldState
   -> FieldState
-step fields dt inputs (FieldState previous) =
-  FieldState (V.imap emitter inputs)
-  where
-    emitter e row = V.imap (\i now -> stepSlot fields dt now (priorOf e i)) row
-    priorOf e i = join (fmap (join . (V.!? i)) (previous V.!? e))
+step fields dt inputs = stepColumns fields dt (fieldInputsOf inputs)
 
--- | The accumulated displacements of the given slots, in the given order —
--- which is 'Magic.Particle.Analytic.aliveSlots' order, i.e. buffer row
--- order (ADR-0010 D2's single source of truth). A slot with no state
--- contributes the zero vector, so a mismatch degrades to "no displacement"
--- instead of shifting the wrong particle.
+-- | 'displacementColumns' keyed by @(emitter, particleIndex)@ pairs.
 displacementsInOrder :: FieldState -> [(Int, Int)] -> [V3]
-displacementsInOrder (FieldState state) = map look
+displacementsInOrder st = map look
   where
-    look (e, i) = case join (fmap (join . (V.!? i)) (state V.!? e)) of
-      Just (_, slot) -> ssDisp slot
+    look (e, i) = case flatSlot (fsOffsets st) e i of
+      Just j -> V3 (fsDispX st U.! j) (fsDispY st U.! j) (fsDispZ st U.! j)
       Nothing -> V3 0 0 0

@@ -1,6 +1,6 @@
 # 路線圖與完整度盤點
 
-> 版本：1.1（2026-08-14，spec 0010–0014 設計定案後修訂 §4.6／§5；1.0 為 spec 0001–0009 全數交付後的第一次全面盤點）
+> 版本：1.2（2026-08-15，spec 0010 驗收後更新 §1／§2／§3.1／§5；1.1 為 spec 0010–0014 設計定案後的修訂）
 > 狀態：現況快照＋候選排序。每次 func-spec 驗收後更新本文。
 > 相關文件：[architecture.md](architecture.md)（系統長什麼樣）、[SKILL.md](../SKILL.md)（怎麼工作）、[integration.md](integration.md)（宿主怎麼接）
 
@@ -10,10 +10,11 @@ architecture 回答「系統長什麼樣、為什麼」，func-spec 回答「這
 
 ---
 
-## 1. 現況快照（2026-08-14）
+## 1. 現況快照（2026-08-15）
 
-- **已交付**：func-spec 0001–0009 全數狀態「已完成」；ADR 0001–0011。
-- **驗證**：`cabal build all` 綠（含 exe、bench、foreign-library）；`cabal test` **676 examples, 0 failures**。0007／0008／0009 三份 spec 由三個 session 平行實作、依零檔案交集的切分各自合併進 main，合併後零回歸。
+- **已交付**：func-spec 0001–0010 全數狀態「已完成」；ADR 0001–0011。0011／0013 設計定案，可與 0010 平行（本輪已驗證 0010 側的檔案盤點正確：`src/ffi`／`include`／`app/*` 一字未動）。
+- **驗證**：`cabal build all` 綠（含 exe、bench、foreign-library）；`cabal test` **793 examples, 0 failures**。0007／0008／0009 三份 spec 由三個 session 平行實作、依零檔案交集的切分各自合併進 main，合併後零回歸。
+- **0010 交付的效能位置**（詳見其 §9.2）：4096 粒每幀純 CPU **0.73 ms → 0.27 ms**；取樣常數因子 **161 → 65 ns/粒**；`depthOrder` @4096 快 **10×**；合成 100 000 粒取樣 **6.5 ms**（60 fps 預算的 39%）。粒子上限仍是 4096——本輪明文不改值（§4.6 修正 1），提升落在 0012。
 - **可交付的產物有三種，共用同一份純核心，而核心對三者一無所知**：
 
 | 產物 | 指令 | 對象 |
@@ -33,7 +34,7 @@ architecture 回答「系統長什麼樣、為什麼」，func-spec 回答「這
 | 這是在問…… | 完整度 | 一句話依據 |
 |---|---|---|
 | **A. 架構論證**——「Circle as Data」這個賭注成不成立 | **≈ 85%** | 五步解釋器 fold、JSON schema v1、決定論、換投影不改核心、換宿主語言不改核心——全部從宣稱變成了測試。剩下的 15% 是「多陣疊加」這個 Init.md 明列卻唯一未落地的語意 |
-| **B. 可被外部遊戲實際使用的庫** | **≈ 55%** | 兩種消費模式都已凍結合約並可用，但粒子上限 4096、單陣、無多執行緒保證、無語言包裝層、無版本 tag |
+| **B. 可被外部遊戲實際使用的庫** | **≈ 60%** | 兩種消費模式都已凍結合約並可用；0010 後速度已到 10k–100k 檔次，但**護欄仍是 4096**（值的提升在 0012），單陣、無多執行緒保證、無語言包裝層、無版本 tag |
 | **C. 產品級特效系統** | **≈ 30%** | 只有方形 quad、無貼圖／拖尾／軟粒子、3D 無深度排序、無作者工具、效能設計整章未實作 |
 
 ### 分維度明細
@@ -43,7 +44,7 @@ architecture 回答「系統長什麼樣、為什麼」，func-spec 回答「這
 | 架構與純度紀律 | **95%** | 三環依賴、`BoundarySpec` 機械守護、核心零 IO、依賴白名單 | — |
 | 魔法語意（表達力） | **70%** | Init.md 參數對照表 11 列落地 10 列；四階段生命週期、力場層、Expr 子系統 | 多陣合成（唯一未落地列）；各 sum type 的建構子數量仍是 POC 級（`FaceShape` 4 種、`ForceField` 3 種、`Element` 少數、`BillboardShape` 1 種） |
 | 對外介面 | **80%** | Haskell public sublibrary＋C ABI header 兩份凍結合約；決定論跨界為可測等價律 | 投影未上 C ABI；無多 spell 聚合 API；無 release tag／Hackage |
-| 效能 | **20%** | 0005 的 bench 基線（4096 粒 `buildQuads` ≈71µs、每幀純 CPU ≈0.73ms）；SoA＋unboxed 已就位 | 目標 1e4–1e5，現行護欄 4096。architecture §7 表列六項手段（緩衝重用、結構化預算、發射器剔除、Expr 加速、GHC 調校、批次渲染）只有最後一項做了 |
+| 效能 | **70%** | 0010：熱路徑端到端 unboxed（count-then-fill、`FieldState` SoA、in-place introsort）、結構化 `ParticleBudget`、發射器時間窗剔除、Expr 常數摺疊、per-emitter 基底提升；10k–100k 已實測（100k 取樣 6.5 ms） | 護欄值 4096 未動（0012 S1）；architecture §7 六項手段中「緩衝重用」在純介面下經評估不做（0010 §9.4-10）、architecture §8.2 的 Expr bytecode 與多執行緒取樣仍未做 |
 | 視覺表現力 | **35%** | 兩個投影後端、blend 生效、顏色曲線、painter 排序（2D） | 只有方形 quad；3D 無深度排序；無貼圖／拖尾／軟粒子；俯視的深度重疊可讀性問題已被 0008 **暴露但未解** |
 | 作者流程（工具） | **15%** | JSON 熱重載、載入錯誤上屏（含行列位置）、9 個範例陣 | 無編輯器、無給非工程作者的 schema 說明、無驗證 CLI、spell 清單啟動時定格 |
 | 工程紀律（測試／文件） | **95%** | Todo↔測試 1:1、逐位元相容律、契約守護測試、11 ADR／9 spec／676 examples | 無 CI；只有 win64 實測過 |
@@ -54,21 +55,22 @@ architecture 回答「系統長什麼樣、為什麼」，func-spec 回答「這
 
 每一條都在某份 spec 的 §9 裡有主。這是欠款總表，不是願望清單。
 
-### 3.1 效能（被 7 份 spec 指名的最大一筆）
+### 3.1 效能（0010 已結清大部分；下表為結清後的餘額）
 
-| 項目 | 記帳於 |
-|---|---|
-| `ParticleBuffer` 緩衝重用（`ST` 內部、對外仍純） | 0005 §9、architecture §7 |
-| `fromParticles` 的 list 中介消除 | 0005 §9 |
-| 結構化 `ParticleBudget` 取代裸 `spellBudget`／`budgetCap` | 0004 §9、0006 §9、architecture §4.4 |
-| 發射器層級剔除（Expr 靜態範圍分析） | 0007 §9、architecture §7 |
-| `FieldState` SoA 化＋帶場 bench | 0007 §9、§4.7 明文不凍結 |
-| `depthOrder` 的高效排序（現為 `sortOn` 產生 boxed list） | 0008 §9-6 |
-| 3D 路徑的深度排序 | 0005 §9、0008 §9-1 |
-| Expr 求值加速（SPECIALIZE → 常數摺疊 → bytecode） | architecture §8.2 |
-| 10k–100k 吞吐 | architecture §7 目標 |
+| 項目 | 記帳於 | 0010 之後 |
+|---|---|---|
+| `ParticleBuffer` 緩衝重用（`ST` 內部、對外仍純） | 0005 §9、architecture §7 | **改判：純介面下不做**。`observeSpell` 回傳的 buffer 是宿主可長期持有的純值，跨幀重寫會偷改上一幀（違反 ADR-0007）。正解是「每幀恰好六次 exact-size 配置、零中介」，0010 已落地；真正的 mutable 重用需要不同的 API 合約，且 §9.2 的量測顯示配置不是瓶頸（0010 §9.4-10） |
+| `fromParticles` 的 list 中介消除 | 0005 §9 | ✅ 0010 S2（`buildBuffer` count-then-fill；`fromParticles` 降為相容薄包裝） |
+| 結構化 `ParticleBudget` 取代裸 `spellBudget`／`budgetCap` | 0004 §9、0006 §9、architecture §4.4 | ✅ 0010 S7（`ParticleBudget`＋`spellBudgetPlan`；`spellBudget` 保留為總和） |
+| 發射器層級剔除（Expr 靜態範圍分析） | 0007 §9、architecture §7 | ✅ 0010 S3（時間窗剔除，`aliveRanges`）＋S7（`emitterBounds` 的區間算術 AABB）。**視錐剔除本體仍是宿主責任**，核心只交包絡（0010 §8-3） |
+| `FieldState` SoA 化＋帶場 bench | 0007 §9、§4.7 明文不凍結 | ✅ 0010 S4＋S8（表徵**仍不凍結**） |
+| `depthOrder` 的高效排序（現為 `sortOn` 產生 boxed list） | 0008 §9-6 | ✅ 0010 S5（in-place introsort，@4096 快 10×） |
+| 3D 路徑的深度排序 | 0005 §9、0008 §9-1 | **未做**——屬 `app/*` staging 層，記在 0013 S1 |
+| Expr 求值加速（SPECIALIZE → 常數摺疊 → bytecode） | architecture §8.2 | 第一階 ✅（0010 S6：`foldConstants`＋`INLINE`/`INLINABLE`）；**bytecode／共同子式消去未做**（0010 §8-4） |
+| 10k–100k 吞吐 | architecture §7 目標 | ✅ 已實測（0010 §9.2）：10k = 0.65 ms、50k = 3.1 ms、100k = 6.5 ms（60 fps 預算的 3.9%／19%／39%）。**護欄值仍是 4096** |
+| 多執行緒取樣（`-threaded` 平行 sample） | 0010 §8-6 | 未做——先把單執行緒常數因子吃完，已吃到 65 ns/粒 |
 
-**同時要處理的一個結構性問題**：`4096` 這個數字目前有三份拷貝——核心的 `Magic.Compile.budgetCap`、demo 的 `App.Render.Raylib3D.gpuCapacity`、C 合約的 `PM_MAX_PARTICLES`。前兩份是可改的，第三份寫在**凍結且只加不改**的 header 裡。提高上限這件事本身需要一個 ABI 演進的答案（見 §4.2）。
+**尚未處理的結構性問題**：`4096` 這個數字目前有三份拷貝——核心的 `Magic.Compile.budgetCap`、demo 的 `App.Render.Raylib3D.gpuCapacity`、C 合約的 `PM_MAX_PARTICLES`，且 `test/FFIContractSpec.hs` 把三者釘成相等（§4.6 修正 1）。0010 因此明文不改值，只把它**第一次經公開面匯出**為 `Magic.Interface.maxSpellParticles`（值仍 4096）——0011 把 `pm_max_particles` 接到這裡並把釘選改寫為查詢鏡射律，0012 S1 才動值。0010 §9.2 已給出選值建議：**32 768–65 536**。
 
 ### 3.2 語意
 
@@ -179,14 +181,14 @@ B 的具體交付面：`pm_project`／`pm_depth_order`／`pm_max_particles` 三�
 
 ---
 
-## 5. 建議的下一步（1.1 修訂：五份 spec 已設計定案，波次如下）
+## 5. 建議的下一步（1.2 修訂：0010 已驗收）
 
-spec 0010–0014 已全數「設計定案，待實作」（對應候選 A／B／C／D／E），依 §4.6 的修正排為兩波：
+spec 0010–0014 對應候選 A／B／C／D／E，依 §4.6 的修正排為兩波：
 
-- **第一波（三 session 可同時認領）**：**0010 = A（效能）** ‖ **0011 = B（宿主整合面）** ‖ **0013 = D（視覺，`app/*` 半場）**——三方檔案零交集，各 spec §0.2 附逐檔證明。
-- **第二波（0010＋0011 驗收後）**：**0012 = C（多陣合成與場景層＋上限正式提升）** ‖ **0014 = E（作者工具；動工門檻另含 0013 驗收）**。
+- **第一波**：**0010 = A（效能）✅ 已完成（2026-08-15）** ‖ **0011 = B（宿主整合面）** ‖ **0013 = D（視覺，`app/*` 半場）**。0010 的檔案盤點事後確認正確（`src/ffi`／`include`／`app/*` 一字未動），**0011 與 0013 仍可同時認領，且不必等對方**。
+- **第二波（0011 驗收後即可動工）**：**0012 = C（多陣合成與場景層＋上限正式提升）** ‖ **0014 = E（作者工具；動工門檻另含 0013 驗收）**。0012 的第一個前置（0010）已備——`ParticleBudget` 與 §9.2 的選值建議（32 768–65 536）都在手上，只差 0011 交付契約鬆綁。
 
-理由一句話：A 把速度做出來、B 把管道鋪出去、D 把畫面看清楚——三件事互不碰檔案；然後 C 用 A 的量測與 B 的鬆綁把 4096 真正抬走，E 把作者回饋圈補完。
+理由一句話：A 把速度做出來（已完成，取樣快 3.4×、100k 粒 6.5 ms）、B 把管道鋪出去、D 把畫面看清楚——三件事互不碰檔案；然後 C 用 A 的量測與 B 的鬆綁把 4096 真正抬走，E 把作者回饋圈補完。
 
 ---
 
