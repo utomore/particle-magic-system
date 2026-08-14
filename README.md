@@ -50,6 +50,39 @@ build-depends: particle-magic:magic-boundary
 Your code imports `Magic.Interface` and `Magic.Codec` only — plus
 `Magic.Projection` if you render in 2D. Nothing else is part of the contract.
 
+## Using it from a non-Haskell engine (C ABI)
+
+The second supported consumption mode (ADR-0011, func-spec 0009). Build the
+shared library and link against `include/particle_magic.h` — that header is
+the whole contract, and it is frozen: additions only.
+
+```
+cabal build particle-magic-ffi
+# -> dist-newstyle/.../particle-magic-ffi.dll   (Windows, RTS embedded)
+#    dist-newstyle/.../libparticle-magic-ffi.so (Linux/macOS)
+```
+
+```c
+#include "particle_magic.h"
+
+pm_init();                                  /* idempotent; starts the RTS */
+PmSpell* s = pm_cast(json, pos, facing, seed, err, sizeof err);
+while (!pm_is_finished(s)) {
+    pm_advance(s, 1.0f / 60.0f);
+    int batches = pm_observe(s, pos_x, pos_y, pos_z, size, life, color,
+                             PM_MAX_PARTICLES, batch_info, 8);
+    /* six SoA columns straight into your vertex buffer — the library
+       never draws anything itself */
+}
+pm_free(s);
+pm_shutdown();
+```
+
+A spell is JSON in and six float/uint32 columns out; the same
+`(json, position, facing, seed, dt sequence)` produces bit-identical output
+here and through the Haskell path. `examples/c/main.c` is a complete, working
+host in 150 lines.
+
 ## The host surface
 
 ```haskell
@@ -99,6 +132,8 @@ functions.
 - `docs/func-spec/` — per-iteration function specs (design-before-code, each
   todo paired 1-to-1 with a test module)
 - `assets/spells/*.json` — example spells
+- `include/particle_magic.h` — the frozen C ABI contract; `cbits/`, `src/ffi/`
+  and `examples/c/` are its implementation and reference host
 - `cabal build all && cabal test` — build and run the full test suite;
   `cabal run particle-magic` — the raylib demo (first build compiles raylib's
   C sources); `cabal bench` — pure-core baselines

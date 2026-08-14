@@ -1,0 +1,17 @@
+; Windows module definition file for the C ABI shared library
+; (func-spec 0009 §4.3). GHC exports a foreign library's Haskell entry
+; points only when it is told which ones -- without this list the DLL
+; links, loads, and resolves nothing, which is a linker error in someone
+; else's engine rather than a failure here. Kept in step with the
+; `foreign export` list by test/FFIContractSpec.hs.
+EXPORTS
+    pm_init
+    pm_shutdown
+    pm_abi_version
+    pm_cast
+    pm_cast_ex
+    pm_advance
+    pm_is_finished
+    pm_age
+    pm_observe
+    pm_free

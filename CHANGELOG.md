@@ -37,3 +37,9 @@ delivered function spec (details in `docs/func-spec/`).
   `Magic.Project`, re-exported through `Magic.Projection`; a real 2D draw
   path (screen-space quads, painter order) beside the 3D one, switchable
   live with Tab / V. Same `FrameOutput`, no core change. (delivered)
+- **0009 C ABI foreign library** — ADR-0011: `foreign-library` stanza produces
+  `.dll`/`.so`, `include/particle_magic.h` is the frozen contract, JSON in and
+  six SoA columns copied out, `pm_cast → pm_advance → pm_observe → pm_free`
+  handle lifecycle; determinism holds across the boundary as a tested
+  equivalence (FFI path ≡ Haskell path). Core and boundary unchanged.
+  (delivered)
