@@ -1,8 +1,8 @@
 # 宿主整合指南
 
-> 版本：1.0（2026-08-14，對應 spec 0009 交付的 C ABI 第 1 代、ABI version 1）
+> 版本：1.1（2026-08-14，spec 0011 交付後：投影三件套上 C ABI、C# 參考綁定與 Unity 範例成為真檔案。ABI version 仍為 1——全部是加法）
 > 對象：想把這套粒子魔法系統接進自己遊戲的人——Unity、Godot、C/C++ 引擎、Haskell 專案，或完全自製的前端。
-> 相關文件：[architecture.md](architecture.md)（系統設計）、[roadmap.md](roadmap.md)（還缺什麼）、[`include/particle_magic.h`](../include/particle_magic.h)（凍結的 C 合約）
+> 相關文件：[architecture.md](architecture.md)（系統設計）、[roadmap.md](roadmap.md)（還缺什麼）、[`include/particle_magic.h`](../include/particle_magic.h)（凍結的 C 合約）、[`bindings/csharp/ParticleMagic.cs`](../bindings/csharp/ParticleMagic.cs)（C# 參考綁定）、[`examples/unity/`](../examples/unity/)（Unity 最小範例）
 
 ---
 
@@ -44,7 +44,7 @@
 | `life` | `float` | 正規化生命週期 0..1（0 = 剛生成，1 = 即將消失）。做淡出、做 LOD、做 shader 變化都靠它 |
 | `color` | `uint32` | **`0xRRGGBBAA`**——R 在最高位元組、A 在最低位元組 |
 
-**顏色解包**（這件事目前只寫在這裡，header 沒說）：
+**顏色解包**（0011 起 header 自己也寫了這一段）：
 
 ```c
 uint8_t r = (c >> 24) & 0xFF;
@@ -70,7 +70,7 @@ uint8_t a =  c        & 0xFF;
 
 ### 2.3 座標系與單位
 
-- **座標系：OpenGL 式右手系——X 右、Y 上、+Z 朝觀者。** 這件事被 `vortex` 力場的外積固定住（旋轉方向是真的有手性的），所以**手性錯了不會崩潰，只會讓漩渦轉反**。
+- **座標系：OpenGL 式右手系——X 右、Y 上、+Z 朝觀者。**（0011 起 header 檔頭也寫了這一段。）這件事被 `vortex` 力場的外積固定住（旋轉方向是真的有手性的），所以**手性錯了不會崩潰，只會讓漩渦轉反**。
   - Unity / Unreal 是**左手系**（+Z 進畫面）→ 見 [§5.5](#55-座標系轉換)。
   - raylib / OpenGL / Godot 3D 是右手系 → 直接用。
 - **時間**：秒。`dt`、`pm_age()` 都是秒。
@@ -92,6 +92,19 @@ pm_observe(spell, ...);                     /* 每個畫面幀只取樣一次 */
 ```
 
 `pm_advance` 只推進時鐘（有力場時順便積分），取樣發生在 `pm_observe`——所以「一幀跑三個固定步」不會付三倍的取樣成本。
+
+### 2.5 六條陣列要開多大
+
+**用 `pm_max_particles()` 查，不要用 `PM_MAX_PARTICLES` 常數。**
+
+兩者今天都是 4096，但意義不同：header 是凍結合約，`PM_MAX_PARTICLES` 因此**永遠**停在第 1 代的 4096；`pm_max_particles()` 是執行期查詢，核心上限提升時它跟著變。用查詢配置的宿主換一顆新版 DLL 就直接受惠，用常數的宿主會在大法術上收到 `PM_ERR_CAPACITY`（整幀不畫，不會壞掉，但你也看不到東西）。
+
+```c
+int cap = pm_max_particles();
+float* px = malloc(cap * sizeof(float));   /* ... 六條 */
+```
+
+Haskell 宿主無此問題（`observeSpell` 回的 buffer 自己帶長度）。
 
 ---
 
@@ -118,7 +131,10 @@ build-depends: particle-magic:magic-boundary
 import Magic.Codec      (loadCircle, renderLoadError)
 import Magic.Interface  -- castSpell / advanceSpell / observeSpell / isFinished / spellAge
 import Magic.Projection (ViewPlane (..), orthographic, depthOrder)   -- 只有 2D 宿主需要
+import Magic.Columns    (fromColumns)   -- 只有「手上已經是六條裸欄」的工具需要（0011）
 ```
+
+`Magic.Columns.fromColumns` 是給已經持有六條欄位的消費者（例如自己的匯入工具）把它們**驗證後**變回 `ParticleBuffer` 的窄門——六欄不等長就回 `Left (LengthMismatch …)`，不會造出壞掉的 buffer。一般宿主用不到：`observeSpell` 給你的本來就是 buffer。
 
 ```haskell
 runSpell :: BS.ByteString -> IO ()
@@ -232,6 +248,7 @@ int main(void)
 | `pm_cast` 失敗 | `NULL`，人類可讀的 UTF-8 原因寫進 `err_buf`（保證 NUL 結尾、超長安全截斷；`err_buf` 可為 `NULL`） |
 | 想知道**為什麼**失敗 | 改用 `pm_cast_ex(..., &spell)`：回 `PM_OK` / `PM_ERR_JSON`（JSON 不合法或符文 tag 不認識）/ `PM_ERR_BUDGET`（合法，但要求的粒子數超過上限） |
 | `pm_observe` 空間不足 | `PM_ERR_CAPACITY`，**一個位元組都不寫**——不會有半更新的幀 |
+| `pm_project` / `pm_depth_order` 參數不合法 | `PM_ERR_ARGS`（`NULL` 指標、負長度、未知 plane），同樣**一個位元組都不寫** |
 
 錯誤訊息與 demo HUD 上顯示的是同一句（共用 `Magic.Codec.renderLoadError`），含 JSON 路徑，例如
 `spell JSON error: Error in $.circle.bridge: unknown rune tag "bogus"`。
@@ -244,11 +261,50 @@ int main(void)
 - **`pm_shutdown()` 之後不能再 `pm_init()`**：GHC 的 RTS 一旦真正 `hs_exit()`，同一個 process 內無法重啟。長駐型宿主（尤其 Unity Editor）**乾脆永遠不要呼叫它**。
 - 一個 process 只能有一份 GHC RTS——不要把兩個 GHC 產生的共享庫連進同一個宿主。
 
+### 4.5 2D 宿主：投影與深度排序（0011 新增）
+
+Haskell 宿主一直有 `Magic.Projection`；0011 之後 C 宿主也有同一份純數學，**不必自己重寫一份**——重寫的風險不是難，是「排出來跟 Haskell 路徑不一樣」。
+
+```c
+int cap = pm_max_particles();
+float *sx = malloc(cap*sizeof(float)), *sy = ..., *depth = ...;
+int   *order = malloc(cap*sizeof(int));
+
+int n = pm_observe(spell, px, py, pz, size, life, color, cap, info, 8);
+int total = 0;
+for (int b = 0; b < n; b++) total += info[b*PM_BATCH_INFO_STRIDE + 1];
+
+/* 丟一軸：側視 (x, y)、俯視 (x, z)。depth 越大越遠。 */
+pm_project(PM_PLANE_SIDE_XY, px, py, pz, total, sx, sy, depth);
+
+/* painter 置換：由遠而近，等深保持輸入序（＝決定性）。 */
+pm_depth_order(PM_PLANE_SIDE_XY, px, py, pz, total, order);
+for (int k = 0; k < total; k++) draw_quad(sx[order[k]], sy[order[k]], /* ... */);
+```
+
+三點值得記住：
+
+1. **不吃 handle**：投影是位置的函數，跟法術狀態無關。你可以投任何來源的位置欄——`pm_observe` 的輸出、其中一段批次，或你自己的粒子。
+2. **螢幕座標仍然是你的事**：庫只做「丟軸＋深度」，原點、pixels-per-unit、y 軸方向都由你決定（`Magic.Projection` 對 Haskell 宿主也是同一條線）。
+3. **加法批次不需要排序**（加法可交換），只有 alpha 批次需要。想只排一段就把該段的起點指標與長度傳進去即可。
+
+跨界等價律（`test/Acceptance11Spec.hs`）保證這條路徑與 Haskell 的 `orthographic`／`depthOrder` 逐位元相同，9 個範例陣 × 2 個平面 × 120 幀。
+
 ---
 
 ## 5. 路線 C：Unity（C#）
 
-Unity 走的就是 §4 的 C ABI，只是隔著 P/Invoke。以下是可以直接貼進專案的骨架。
+Unity 走的就是 §4 的 C ABI，只是隔著 P/Invoke。
+
+**0011 起這一節的程式碼是真檔案，不再是片段**：
+
+| 檔案 | 是什麼 |
+|---|---|
+| [`bindings/csharp/ParticleMagic.cs`](../bindings/csharp/ParticleMagic.cs) | 參考綁定：13 個 `DllImport`、全部常數、顏色拆包與 Z 翻轉助手。**不依賴 Unity**，Godot C#／純 .NET 照用 |
+| [`examples/unity/SpellRenderer.cs`](../examples/unity/SpellRenderer.cs) | 一個真的會畫東西的 `MonoBehaviour`：固定時步、緩衝重用、Z 翻轉、alpha 批次用 `pm_depth_order` 排序 |
+| [`examples/unity/README.md`](../examples/unity/README.md) | 放置步驟、材質設定、預期畫面、手動 smoke 檢查表 |
+
+`test/BindingContractSpec.hs` 斷言那份 `.cs` 的進入點與常數集合**雙向等於** header——header 加了東西而綁定沒跟上，`cabal test` 就紅。下面幾節解釋的是「為什麼那樣寫」。
 
 ### 5.1 放置 DLL
 
@@ -260,58 +316,21 @@ Assets/Plugins/x86_64/particle-magic-ffi.dll
 
 ### 5.2 P/Invoke 宣告
 
+整份宣告在 [`bindings/csharp/ParticleMagic.cs`](../bindings/csharp/ParticleMagic.cs)，貼進 `Assets/Scripts/` 即可。要點只有三個：
+
 ```csharp
-using System;
-using System.Runtime.InteropServices;
-
-public static class PmNative
-{
-    const string Dll = "particle-magic-ffi";
-
-    // 與 particle_magic.h 的常數對齊；FFIContractSpec 守護 header 與 Haskell 端，
-    // 這一側請自行對照（或用 pm_max_particles() 查詢，見 roadmap §4.2）
-    public const int MaxParticles    = 4096;   // PM_MAX_PARTICLES
-    public const int BatchInfoStride = 4;      // PM_BATCH_INFO_STRIDE
-    public const int AbiVersion      = 1;      // PM_ABI_VERSION
-    public const int Ok = 0, ErrJson = -1, ErrBudget = -2, ErrCapacity = -3;
-    public const int BlendAlpha = 0, BlendAdditive = 1;
-
-    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    public static extern void pm_init();
-
-    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    public static extern void pm_shutdown();
-
-    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int pm_abi_version();
-
-    // circle_json 傳 UTF-8 位元組並自行補 '\0'——最不受 Unity scripting backend 影響的作法
-    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    public static extern IntPtr pm_cast(byte[] circleJsonUtf8,
-                                        float[] casterPos, float[] casterFacing,
-                                        ulong seed, byte[] errBuf, int errLen);
-
-    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    public static extern void pm_advance(IntPtr spell, float dt);
-
-    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int pm_is_finished(IntPtr spell);
-
-    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    public static extern double pm_age(IntPtr spell);
-
-    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int pm_observe(IntPtr spell,
-                                        float[] posX, float[] posY, float[] posZ,
-                                        float[] size, float[] life, uint[] color,
-                                        int capacity, int[] batchInfo, int maxBatches);
-
-    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-    public static extern void pm_free(IntPtr spell);
-}
+[DllImport("particle-magic-ffi", CallingConvention = CallingConvention.Cdecl)]
+public static extern int pm_observe(IntPtr spell,
+                                    float[] posX, float[] posY, float[] posZ,
+                                    float[] size, float[] life, uint[] color,
+                                    int capacity, int[] batchInfo, int maxBatches);
 ```
 
-`float[]` / `uint[]` / `int[]` 都是 blittable，marshaller 會**釘住（pin）原陣列直接傳指標**，不會逐元素複製——所以每幀 `pm_observe` 只有一次跨界呼叫，成本可以忽略。重點是**陣列要重複使用**（欄位而非區域變數），否則每幀都在製造 GC 垃圾。
+1. **`CallingConvention.Cdecl`**，每一個都要寫。
+2. **JSON 傳 UTF-8 位元組並自行補 `\0`**（`byte[]`），不要傳 `string`——編碼會隨 scripting backend 變。
+3. **`float[]` / `uint[]` / `int[]` 都是 blittable**：marshaller 會釘住（pin）原陣列直接傳指標，不逐元素複製，所以每幀 `pm_observe` 只有一次跨界呼叫。代價是**陣列必須重複使用**（欄位而非區域變數），否則每幀都在製造 GC 垃圾。
+
+緩衝長度用 `Pm.pm_max_particles()`（見 [§2.5](#25-六條陣列要開多大)），不要用 `Pm.MaxParticles` 常數。
 
 ### 5.3 RTS 生命週期（最容易踩的一個坑）
 
@@ -319,8 +338,8 @@ public static class PmNative
 [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
 static void BootParticleMagic()
 {
-    PmNative.pm_init();
-    if (PmNative.pm_abi_version() != PmNative.AbiVersion)
+    Pm.pm_init();
+    if (Pm.pm_abi_version() != Pm.AbiVersion)
         Debug.LogError("particle-magic ABI mismatch");
 }
 ```
@@ -334,89 +353,41 @@ static void BootParticleMagic()
 ```csharp
 void OnDestroy()
 {
-    if (spell != IntPtr.Zero) { PmNative.pm_free(spell); spell = IntPtr.Zero; }
+    if (spell != IntPtr.Zero) { Pm.pm_free(spell); spell = IntPtr.Zero; }
     // 不呼叫 pm_shutdown()
 }
 ```
 
 ### 5.4 每幀
 
+完整版見 [`examples/unity/SpellRenderer.cs`](../examples/unity/SpellRenderer.cs)（含 Mesh 組裝與批次排序）。骨架就是這四步：
+
 ```csharp
-public class SpellRenderer : MonoBehaviour
+void Update()
 {
-    const int Cap = PmNative.MaxParticles, MaxBatches = 8;
-    const float FixedDt = 1f / 60f;
+    if (spell == IntPtr.Zero) return;
 
-    // 重複使用的緩衝——每幀重新配置就是在餵 GC
-    readonly float[] px = new float[Cap], py = new float[Cap], pz = new float[Cap];
-    readonly float[] sz = new float[Cap], lf = new float[Cap];
-    readonly uint[]  col = new uint[Cap];
-    readonly int[]   info = new int[MaxBatches * PmNative.BatchInfoStride];
+    // 1. 固定時步 accumulator：模擬永遠走 FixedDt，畫面幀率隨意
+    accumulator += Time.deltaTime;
+    while (accumulator >= FixedDt) { Pm.pm_advance(spell, FixedDt); accumulator -= FixedDt; }
 
-    IntPtr spell = IntPtr.Zero;
-    float  accumulator;
+    // 2. 一幀取樣一次，寫進重複使用的六條欄（capacity 來自 pm_max_particles()）
+    int n = Pm.pm_observe(spell, px, py, pz, sz, lf, col, capacity, info, MaxBatches);
+    if (n < 0) { Debug.LogWarning("pm_observe: capacity"); return; }   // 什麼都沒寫，不要畫舊資料
 
-    public void Cast(string circleJson, Vector3 pos, Vector3 facing, ulong seed)
-    {
-        if (spell != IntPtr.Zero) PmNative.pm_free(spell);
+    // 3. 一批一個 draw：offset / count / blend 都在 info 裡
+    for (int b = 0; b < n; b++) BuildMesh(info[b * Pm.BatchInfoStride + 0],
+                                          info[b * Pm.BatchInfoStride + 1],
+                                          info[b * Pm.BatchInfoStride + 2]);
 
-        var json = System.Text.Encoding.UTF8.GetBytes(circleJson + "\0");
-        var err  = new byte[256];
-        var p    = ToPm(pos);
-        var f    = ToPm(facing);
-
-        spell = PmNative.pm_cast(json, p, f, seed, err, err.Length);
-        if (spell == IntPtr.Zero)
-        {
-            int len = Array.IndexOf(err, (byte)0);
-            Debug.LogError(System.Text.Encoding.UTF8.GetString(err, 0, len < 0 ? err.Length : len));
-        }
-    }
-
-    void Update()
-    {
-        if (spell == IntPtr.Zero) return;
-
-        // 固定時步 accumulator：模擬永遠走 FixedDt，畫面幀率隨意
-        accumulator += Time.deltaTime;
-        while (accumulator >= FixedDt)
-        {
-            PmNative.pm_advance(spell, FixedDt);
-            accumulator -= FixedDt;
-        }
-
-        int n = PmNative.pm_observe(spell, px, py, pz, sz, lf, col,
-                                    Cap, info, MaxBatches);
-        if (n < 0) { Debug.LogWarning("pm_observe: capacity"); return; }
-
-        for (int i = 0; i < n; i++)
-        {
-            int offset = info[i * PmNative.BatchInfoStride + 0];
-            int count  = info[i * PmNative.BatchInfoStride + 1];
-            int blend  = info[i * PmNative.BatchInfoStride + 2];
-            BuildMesh(offset, count, blend);       // 你的 Mesh / DrawProcedural
-        }
-
-        if (PmNative.pm_is_finished(spell) != 0)
-        {
-            PmNative.pm_free(spell);
-            spell = IntPtr.Zero;
-        }
-    }
-
-    static Color32 Unpack(uint c) =>
-        new Color32((byte)(c >> 24), (byte)(c >> 16), (byte)(c >> 8), (byte)c);
-
-    // 世界座標：右手系（+Z 朝觀者） -> Unity 左手系（+Z 進畫面）
-    static float[] ToPm(Vector3 v)   => new[] { v.x, v.y, -v.z };
-    static Vector3 FromPm(int i, float[] x, float[] y, float[] z)
-                                     => new Vector3(x[i], y[i], -z[i]);
+    // 4. 結束就還手把
+    if (Pm.pm_is_finished(spell) != 0) { Pm.pm_free(spell); spell = IntPtr.Zero; }
 }
 ```
 
 ### 5.5 座標系轉換
 
-庫是**右手系**（X 右、Y 上、**+Z 朝觀者**），Unity 是**左手系**（+Z 進畫面）。轉換就是**翻 Z**——進去的輸入翻一次，出來的位置翻一次（上面的 `ToPm` / `FromPm`）。
+庫是**右手系**（X 右、Y 上、**+Z 朝觀者**），Unity 是**左手系**（+Z 進畫面）。轉換就是**翻 Z**——進去的輸入翻一次，出來的位置翻一次（綁定裡的 `PmConvert.ToPm` / `PmConvert.FlipZ`，或直接在組頂點時寫 `-pz[i]`）。
 
 翻不翻不會崩潰，只有一個症狀會露餡：**`vortex` 力場的旋轉方向會反過來**（外積是有手性的）。純解析式的法術（沒有 `fields`）看起來會完全一樣，所以這個 bug 很容易在加上力場之後才被發現——寧可一開始就翻對。
 
@@ -427,7 +398,7 @@ public class SpellRenderer : MonoBehaviour
 | `PM_BLEND_ALPHA` (0) | 一般 alpha 混合 | `Blend SrcAlpha OneMinusSrcAlpha`，`ZWrite Off` |
 | `PM_BLEND_ADDITIVE` (1) | 加法混合（火、雷這類發光體） | `Blend SrcAlpha One`，`ZWrite Off` |
 
-加法混合的批次**不需要深度排序**（加法可交換），alpha 批次需要——目前 3D 路徑的深度排序[記帳在效能 spec](roadmap.md#31-效能被-7-份-spec-指名的最大一筆)，所以在那之前，alpha 批次的排序請由宿主自行處理（或優先使用加法混合的屬性）。
+加法混合的批次**不需要深度排序**（加法可交換），alpha 批次需要。0011 起 `pm_depth_order` 直接給你正交平面的 painter 置換（見 [§4.5](#45-2d-宿主投影與深度排序0011-新增)），`SpellRenderer.cs` 用的就是它；3D 透視相機的視距排序仍屬宿主（或改用加法混合的屬性）。
 
 ### 5.7 建 Mesh 的兩條路
 
@@ -442,7 +413,7 @@ public class SpellRenderer : MonoBehaviour
 
 1. `pm_init()` 一次，之後不要 `pm_shutdown()`（除非你真的要結束 process）。
 2. 啟動時比對 `pm_abi_version()` 與你編譯時的 `PM_ABI_VERSION`。
-3. 六條陣列由**你**配置、由**你**持有，長度至少 `PM_MAX_PARTICLES`；庫只往裡面寫。
+3. 六條陣列由**你**配置、由**你**持有，長度用 `pm_max_particles()` 查（不要用 `PM_MAX_PARTICLES` 常數，見 §2.5）；庫只往裡面寫。
 4. 一個 handle 一個執行緒。
 5. 固定 `dt`；一幀多步 `advance`、只 `observe` 一次。
 6. `pm_observe` 回負數＝什麼都沒寫；不要用上一幀的殘留資料當這一幀畫。
@@ -458,7 +429,8 @@ public class SpellRenderer : MonoBehaviour
 | 你的責任 | 為什麼不在庫裡 |
 |---|---|
 | 頂點緩衝、材質、shader、混合狀態 | 每個引擎都不一樣；輸出格式因此零渲染依賴（[architecture §5.2](architecture.md#52-輸出格式renderbatch-串流)） |
-| 相機與投影 | 3D 透視是引擎的事；2D 正交的**純數學**部分庫有提供（Haskell 宿主用 `Magic.Projection`；C ABI 的匯出[記帳在候選 spec B](roadmap.md#42-為什麼建議-a效能作為-0010-主線)） |
+| 相機與投影 | 3D 透視是引擎的事；2D 正交的**純數學**部分庫有提供（Haskell 宿主用 `Magic.Projection`，C 宿主用 `pm_project`／`pm_depth_order`，見 §4.5） |
+| 螢幕原點、pixels-per-unit、y 軸方向 | 投影只丟軸與算深度，像素是宿主的座標系 |
 | 3D 的深度排序 | 見 §5.6 |
 | 多個法術同時存在時的管理與總量配額 | 宿主持有多個 handle 即可；全域配額策略屬遊戲層（[architecture §8.4](architecture.md#8-未來可能遇到的問題)），[記帳在候選 spec C](roadmap.md#45-cde-的位置) |
 | 魔法陣 JSON 從哪來（檔案？資料庫？玩家編輯器？） | 庫只認得字串 |
@@ -473,14 +445,14 @@ public class SpellRenderer : MonoBehaviour
 
 | 限制 | 說明 |
 |---|---|
-| **粒子上限 4096** | `PM_MAX_PARTICLES`；架構目標是 1e4–1e5，效能 spec 尚未動工。超過上限的魔法陣在 `pm_cast` 就會被擋下（`PM_ERR_BUDGET`），不會在執行期爆掉 |
+| **粒子上限 4096** | 查詢用 `pm_max_particles()`；架構目標是 1e4–1e5，提升值落在 spec 0012。超過上限的魔法陣在 `pm_cast` 就會被擋下（`PM_ERR_BUDGET`），不會在執行期爆掉 |
 | **一次一張陣** | 沒有多陣合成／疊加 API。想同時放多個法術＝持有多個 handle，總量控制是你的事 |
 | **單執行緒 handle** | 庫內無鎖 |
 | **RTS 不可重啟** | `pm_shutdown()` 之後不能再 `pm_init()`；一個 process 一份 GHC RTS |
 | **DLL 約 46 MB** | `standalone` 內嵌整個 GHC RTS 的代價；換來的是宿主端零 Haskell 依賴 |
 | **只有 win64 被完整實測** | `.so` / `.dylib` 由 cabal stanza 天然涵蓋，但沒有列入驗收 |
 | **只有方形 billboard** | `PM_SHAPE_SQUARE` 是目前唯一的形狀碼 |
-| **C ABI 沒有投影函數** | Haskell 宿主有 `Magic.Projection`；C 宿主目前要自己丟軸＋排序（很簡單：丟一軸、依剩下那軸由遠而近穩定排序） |
+| **C# 綁定未在 Unity Editor 實測** | 合約由 `test/BindingContractSpec.hs` 機械守護、ABI 行為由真實 DLL 的 C smoke 覆蓋，缺的是 Unity marshaller ＋ Mesh 那一段（[0011 §9.3](func-spec/0011-host-integration-surface.md)，檢查表在 `examples/unity/README.md` §7） |
 
 ---
 
@@ -491,5 +463,7 @@ public class SpellRenderer : MonoBehaviour
 | `include/particle_magic.h` | **只加不改**。既有的每個函數簽名、常數值、`batch_info` 佈局都不會變。新增功能＝新增宣告 |
 | `pm_abi_version()` | 上述承諾破裂時（如果真有那一天）才會遞增。啟動時比對它 |
 | 魔法陣 JSON `"version"` 欄位 | schema v1。未來遞增時，`Magic.Codec` 保留舊版解碼器並提供 migrate，舊魔法檔不會失效 |
-| Haskell 側 `Magic.Interface` / `Magic.Codec` / `Magic.Projection` | 各自的 func-spec 驗收紀錄明列「凍結介面清單」；凍結後的變更視同架構變更，要先改 ADR |
-| 決定論 | 同一組輸入永遠產生逐位元相同的輸出，且**兩條路徑（Haskell／C ABI）的結果相同**——這不是文件承諾，是 `test/Acceptance9Spec.hs` 的斷言 |
+| `PM_MAX_PARTICLES` vs `pm_max_particles()` | 常數**永遠**是第 1 代的 4096（header 凍結）；查詢跟著核心走。核心提升上限時 header 一字不動，用查詢配置的宿主不必重編 |
+| Haskell 側 `Magic.Interface` / `Magic.Codec` / `Magic.Projection` / `Magic.Columns` | 各自的 func-spec 驗收紀錄明列「凍結介面清單」；凍結後的變更視同架構變更，要先改 ADR |
+| `bindings/csharp/ParticleMagic.cs` | 不是凍結合約，是**參考實作**；但它與 header 的一致性由 `test/BindingContractSpec.hs` 守護，不會偷偷落後 |
+| 決定論 | 同一組輸入永遠產生逐位元相同的輸出，且**兩條路徑（Haskell／C ABI）的結果相同**——這不是文件承諾，是 `test/Acceptance9Spec.hs`（取樣）與 `test/Acceptance11Spec.hs`（投影）的斷言 |

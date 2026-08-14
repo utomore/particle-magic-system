@@ -27,6 +27,16 @@
  *   pm_free(s);
  *   pm_shutdown();
  *
+ * Coordinate system: the abstract space is right-handed, OpenGL style --
+ * X to the right, Y up, +Z towards the viewer. Lengths are whatever world
+ * unit the magic circle's JSON is written in; time is seconds.
+ *
+ * A left-handed host (Unity, Unreal: +Z into the screen) must negate Z on
+ * the way in and on the way out. Getting this wrong crashes nothing and
+ * looks correct for purely analytic spells -- the one symptom is that a
+ * `vortex` force field spins the wrong way, because a cross product is
+ * genuinely handed.
+ *
  * Threading: one handle is owned by one thread. The library itself takes
  * no locks (ADR-0011 D4); different handles on different threads are fine.
  *
@@ -50,6 +60,13 @@ extern "C" {
    capacity each of the six columns needs. Mirrors the core's budgetCap. */
 #define PM_MAX_PARTICLES 4096
 
+/* ... and, being frozen, it stays 4096 forever: it is the first
+   generation's value, kept so code compiled against any version of this
+   header keeps allocating a buffer the library will never overrun. A
+   later core may raise the real cap; pm_max_particles() is the query that
+   follows it, so new hosts should size their columns from that instead
+   (func-spec 0011 section 2). */
+
 /* Error codes. Functions returning a count return a non-negative number on
    success and one of these on failure; functions returning a handle return
    NULL and write a message into the caller's err_buf. */
@@ -57,6 +74,13 @@ extern "C" {
 #define PM_ERR_JSON (-1)
 #define PM_ERR_BUDGET (-2)
 #define PM_ERR_CAPACITY (-3)
+#define PM_ERR_ARGS (-4)
+
+/* Which axis the orthographic camera looks along, for pm_project and
+   pm_depth_order (ADR-0008: "2D = drop one axis and pick a depth-sorting
+   strategy"). Anything else is PM_ERR_ARGS. */
+#define PM_PLANE_SIDE_XY 0   /* viewer at +Z: plane = (x, y), depth = -z */
+#define PM_PLANE_TOP_XZ 1    /* viewer at +Y: plane = (x, z), depth = -y */
 
 /* batch_info[4*i + 2] -- how the batch's particles are blended. */
 #define PM_BLEND_ALPHA 0
@@ -79,6 +103,12 @@ void pm_shutdown(void);
 
 /* PM_ABI_VERSION as compiled into the library. */
 int pm_abi_version(void);
+
+/* The particle cap this build actually enforces -- the capacity each of
+   pm_observe's six columns needs. Today it answers PM_MAX_PARTICLES; it
+   is the value to allocate from, because unlike the macro it tracks the
+   core (see PM_MAX_PARTICLES above). */
+int pm_max_particles(void);
 
 /* Compile a magic circle from UTF-8 JSON and cast it at (caster_pos,
    caster_facing) with the given seed. Returns NULL on failure, writing a
@@ -116,11 +146,48 @@ double pm_age(const PmSpell* spell);
    Returns the number of batches written (>= 0), or PM_ERR_CAPACITY if the
    particles do not fit in `capacity`, the batches do not fit in
    `max_batches`, or a needed pointer is NULL. On the error path nothing is
-   written at all -- the host never sees a half-updated frame. */
+   written at all -- the host never sees a half-updated frame.
+
+   The `color` column is packed 0xRRGGBBAA -- R in the highest byte, A in
+   the lowest:
+
+       uint8_t r = (c >> 24) & 0xFF;
+       uint8_t g = (c >> 16) & 0xFF;
+       uint8_t b = (c >>  8) & 0xFF;
+       uint8_t a =  c        & 0xFF;
+
+   It is already interpolated along the spell's colour curve by `life`, so
+   there is no palette to look up; alpha usually reaches zero at the end
+   of a particle's life. `size` is the billboard's half-extent (edge
+   length = 2 * size) and `life` runs 0 (just born) to 1 (about to die). */
 int pm_observe(PmSpell* spell,
                float* pos_x, float* pos_y, float* pos_z,
                float* size, float* life, uint32_t* color,
                int capacity, int* batch_info, int max_batches);
+
+/* Orthographic projection of `count` abstract-space positions onto
+   PM_PLANE_*: plane coordinates into out_x / out_y, painter's depth into
+   out_depth (larger = further away). No spell handle: projection is a
+   function of the positions alone, so any columns will do -- pm_observe's
+   output, one batch of it, or your own.
+
+   Returns PM_OK, or PM_ERR_ARGS (NULL where a pointer is needed, negative
+   count, unknown plane) with nothing written at all. */
+int pm_project(int plane,
+               const float* pos_x, const float* pos_y, const float* pos_z,
+               int count,
+               float* out_x, float* out_y, float* out_depth);
+
+/* Painter's order for `count` positions: out_indices receives
+   [0 .. count-1] permuted far to near, equal depths keeping their input
+   order. Draw in this order and nearer particles land on top without a
+   depth buffer -- which is what a 2D host needs for PM_BLEND_ALPHA
+   batches (additive batches commute and need no sorting).
+
+   Returns PM_OK, or PM_ERR_ARGS with nothing written. */
+int pm_depth_order(int plane,
+                   const float* pos_x, const float* pos_y, const float* pos_z,
+                   int count, int* out_indices);
 
 /* Release a handle. Freeing NULL is a no-op; freeing twice is undefined
    behaviour, as in any C API. */

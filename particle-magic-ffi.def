@@ -15,3 +15,6 @@ EXPORTS
     pm_age
     pm_observe
     pm_free
+    pm_max_particles
+    pm_project
+    pm_depth_order

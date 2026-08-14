@@ -43,3 +43,13 @@ delivered function spec (details in `docs/func-spec/`).
   handle lifecycle; determinism holds across the boundary as a tested
   equivalence (FFI path ≡ Haskell path). Core and boundary unchanged.
   (delivered)
+- **0011 host integration surface** — three add-only C exports:
+  `pm_max_particles` (the cap becomes a runtime query, so the frozen
+  `PM_MAX_PARTICLES` never has to change again), `pm_project` and
+  `pm_depth_order` (ADR-0008's orthographic projection and painter's order
+  reach non-Haskell hosts). New boundary module `Magic.Columns` — the
+  validating column → buffer door the FFI shell needed. The header now
+  states the colour byte order and the coordinate handedness. A C#
+  reference binding (`bindings/csharp/`) and a Unity example
+  (`examples/unity/`), both held to the header by a contract test.
+  (delivered)

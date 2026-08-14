@@ -18,8 +18,12 @@ extra-doc-files:    README.md
                     CHANGELOG.md
 -- The C ABI contract and its example host (func-spec 0009): shipped so a
 -- non-Haskell consumer gets the header and a working reference host.
+-- The C# reference binding joins them in func-spec 0011: same purpose,
+-- next language along (test/BindingContractSpec.hs keeps it in step with
+-- the header).
 extra-source-files: include/particle_magic.h
                     examples/c/main.c
+                    bindings/csharp/ParticleMagic.cs
 
 source-repository head
     type:     git
@@ -58,6 +62,7 @@ library magic-boundary
                       Magic.Projection
                       Magic.Step
                       Magic.Expr.Parse
+                      Magic.Columns
     -- 'vector' joins the boundary layer in func-spec 0007: Magic.Interface
     -- feeds the force-field layer per-slot inputs and adds its
     -- displacements onto the sampled SoA buffer. Already inside the
@@ -196,6 +201,10 @@ test-suite spec
                     , FieldStepObserveSpec
                     , FieldRebirthSpec
                     , Acceptance7Spec
+                    , ColumnsSpec
+                    , FFIProjectSpec
+                    , BindingContractSpec
+                    , Acceptance11Spec
                     , App.Effects
                     , App.HotReload
                     , App.Loop
