@@ -1,6 +1,6 @@
 # Func-Spec 0007：力場層（Force-Field Layer）
 
-> 狀態：設計定案，待實作
+> 狀態：已完成（2026-08-14 交付，驗收紀錄見 §10）
 > 性質：一般 —— `ForceField`／`FieldState`／`Field.step` 交付後成為凍結詞彙，供未來效能 spec（`FieldState` SoA 化）與多陣合成 spec 引用，但本 spec 不是它們的動工門檻。
 > 前置依賴：**spec 0006（需已完成）**。本 spec 修改 `Circle.hs`／`Compile.hs`／`Codec.hs`——恰為 0006 §0.2 修改清單的全集，SKILL.md 規則 4 禁止平行修改同一模組檔，故 **0006 完成驗收前不得動工**；且本 spec 直接引用 0006 交付後凍結的 `Phase`/`emPhase` 詞彙（ADR-0010 D6）。設計以 0006 §10 承諾凍結的介面為準，現在定案；動工等門檻解除。
 > 依據：[ADR-0001](../adr/0001-hybrid-particle-model.md)（混合模型的力場半邊）、[ADR-0010](../adr/0010-force-field-composition.md)（本輪新立：組合點語意 D1–D9，本文件處處引用）、[architecture.md](../architecture.md) §3.2（每幀流的 FieldStep 分支）、§4.6（`step` 簽名草圖）、§7（僅場對粒子）、§8.3（熱重載政策）、§11（固定時步公理）
@@ -261,15 +261,15 @@ flowchart LR
 
 | ✅ | Todo | 測試模組 | 斷言內容 |
 |---|---|---|---|
-| ☐ | S1 Analytic 重構 | `test/AnalyticRefactorSpec.hs` | property：`particlePosition`/`aliveSlots` 與 `sample` 的逐粒子位置/row 順序一致（一致性律）；（meta）既有 Sample/Acceptance suite 全綠 |
-| ☐ | S2 場加速度 | `test/FieldAccelSpec.hs` | property：Gravity 處處常數；Attractor 方向恆指向/背離 center、量值隨距離遞減、softening 有界；Vortex 加速度 ⟂ 軸與徑向、falloff=0 時與離軸距離無關；多場＝逐場之和 |
-| ☐ | S3 積分狀態機 | `test/FieldStepSpec.hs` | 零場 ⇒ disp 恆 0；常數重力下軌跡逼近解析拋物線（dt→0 收斂 property）；`Nothing` 輸入 ⇒ `Nothing`；age 倒退 ⇒ 抹去歷史從靜止重積分（歸零律） |
-| ☐ | S4 欄位直通 | `test/CompileFieldSpec.hs` | `circleFields=[]` ⇒ `CompiledSpell` 除 `spellFields` 外逐欄位同 0006 公式值；非空直通不失真；`emptyCircle` 的 `circleFields=[]` |
-| ☐ | S5 Codec 面 | `test/FieldCodecSpec.hs` | 缺鍵/null → `[]`；三 kind roundtrip property；`softening≤0`/`falloff<0`/零 `axis` → 錯誤含 JSON 位置；`saveCircle` 輸出 `[]` |
-| ☐ | S6 接線與相容律 | `test/FieldPlumbingSpec.hs` | **D9 相容律**：既有全部 assets 逐 dt 序列 advance/observe 與 0007 前逐位元相等；`castSpell` 後 `asField` 全靜止；`emPhase /= Casting` 槽位恆零（0006 fixture）；帶場時位移實際非零 |
-| ☐ | S7 定律重驗 | `test/FieldStepObserveSpec.hs` | 帶場範例：分解定律 property；同輸入兩次執行逐位元同（重播律 D7）；重施法後歸零（D8） |
-| ☐ | S8 重生/對齊 | `test/FieldRebirthSpec.hs` | property：短 lifetime＋強場，粒子（重）出生步 `renderedPos == analyticPos`（不 teleport）；疊加後 buffer 長度不變、逐 row 位移與 `aliveSlots`＋`FieldState` 獨立重算一致 |
-| ☐ | S9 範例與驗收 | `test/Acceptance7Spec.hs`＋手動 smoke | `gravity-well.json` vs 同陣 `fields=[]` 對照組 headless 可分辨（如 y 分量隨 t 單調下沉）；`isFinished`/生命週期不受場影響；手動開窗目視（回填 §10） |
+| ☑ | S1 Analytic 重構 | `test/AnalyticRefactorSpec.hs` | property：`particlePosition`/`aliveSlots` 與 `sample` 的逐粒子位置/row 順序一致（一致性律）；（meta）既有 Sample/Acceptance suite 全綠 |
+| ☑ | S2 場加速度 | `test/FieldAccelSpec.hs` | property：Gravity 處處常數；Attractor 方向恆指向/背離 center、量值隨距離遞減、softening 有界；Vortex 加速度 ⟂ 軸與徑向、falloff=0 時與離軸距離無關；多場＝逐場之和 |
+| ☑ | S3 積分狀態機 | `test/FieldStepSpec.hs` | 零場 ⇒ disp 恆 0；常數重力下軌跡逼近解析拋物線（dt→0 收斂 property）；`Nothing` 輸入 ⇒ `Nothing`；age 倒退 ⇒ 抹去歷史從靜止重積分（歸零律） |
+| ☑ | S4 欄位直通 | `test/CompileFieldSpec.hs` | `circleFields=[]` ⇒ `CompiledSpell` 除 `spellFields` 外逐欄位同 0006 公式值；非空直通不失真；`emptyCircle` 的 `circleFields=[]` |
+| ☑ | S5 Codec 面 | `test/FieldCodecSpec.hs` | 缺鍵/null → `[]`；三 kind roundtrip property；`softening≤0`/`falloff<0`/零 `axis` → 錯誤含 JSON 位置；`saveCircle` 輸出 `[]` |
+| ☑ | S6 接線與相容律 | `test/FieldPlumbingSpec.hs` | **D9 相容律**：既有全部 assets 逐 dt 序列 advance/observe 與 0007 前逐位元相等；`castSpell` 後 `asField` 全靜止；`emPhase /= Casting` 槽位恆零（0006 fixture）；帶場時位移實際非零 |
+| ☑ | S7 定律重驗 | `test/FieldStepObserveSpec.hs` | 帶場範例：分解定律 property；同輸入兩次執行逐位元同（重播律 D7）；重施法後歸零（D8） |
+| ☑ | S8 重生/對齊 | `test/FieldRebirthSpec.hs` | property：短 lifetime＋強場，粒子（重）出生步 `renderedPos == analyticPos`（不 teleport）；疊加後 buffer 長度不變、逐 row 位移與 `aliveSlots`＋`FieldState` 獨立重算一致 |
+| ☑ | S9 範例與驗收 | `test/Acceptance7Spec.hs`＋手動 smoke | `gravity-well.json` vs 同陣 `fields=[]` 對照組 headless 可分辨（如 y 分量隨 t 單調下沉）；`isFinished`/生命週期不受場影響；手動開窗目視（回填 §10） |
 
 ## 9. 非目標（明確不做）
 
@@ -285,11 +285,13 @@ flowchart LR
 
 | 項目 | 結果 |
 |---|---|
-| S1–S9 完成日期與測試綠燈紀錄 | （待回填） |
-| S1 逐位元不變證明（既有 suite＋一致性 property） | （待回填） |
-| D9 相容律確認（全部既有 assets） | （待回填） |
-| 手動 smoke：gravity-well 有場 vs 對照組 | （待回填） |
-| 被機械適配的既有測試檔清單 | （待回填） |
-| cabal / SKILL.md 聯集合併確認 | （待回填） |
-| architecture.md §3.2/§4.6/§7 的 Field 轉正（虛線→實線、簽名草圖更新）——實作輪隨交付一併修訂 | （待回填） |
-| 凍結清單：`ForceField`（三 tag）/`FieldState`/`step` 語意（D1–D3）/`particlePosition`/`aliveSlots` 契約/D9 相容律 | （待回填） |
+| S1–S9 完成日期與測試綠燈紀錄 | 2026-08-14 全數完成。`cabal build all` 綠（含 h-raylib exe 與 bench）、`cabal test` **583 examples, 0 failures**（動工前基線 381 → 新增 202）。九個 Todo 各自對應的測試模組全綠：`AnalyticRefactorSpec`(S1)／`FieldAccelSpec`(S2)／`FieldStepSpec`(S3)／`CompileFieldSpec`(S4)／`FieldCodecSpec`(S5)／`FieldPlumbingSpec`(S6)／`FieldStepObserveSpec`(S7)／`FieldRebirthSpec`(S8)／`Acceptance7Spec`(S9) |
+| S1 逐位元不變證明（既有 suite＋一致性 property） | 兩路證明。(a) **既有 suite 證人**：重構後 `SampleSpec`/`SampleExprSpec`/`PhaseSampleSpec`/`BackCompatSpec`＋全部 Acceptance 一字未改即綠。(b) **一致性 property**（`AnalyticRefactorSpec`）：對 9 個 assets ＋一個 RadialOutward＋phases 的合成陣、兩組 `CastContext`，在隨機時間與 60 Hz 固定幀時間上斷言 `aliveSlots` 逐項對齊 buffer row，且 `particlePosition` 重算的位置與 `sample` 輸出**逐位元相等**（`==`，非容差）。(c) 另有 (b) 之外的獨立證人：§10 下一列的 frame digest 在重構前後不變 |
+| D9 相容律確認（全部既有 assets） | **逐位元**確認。動工前（0006 交付狀態）先擷取 9 個 shipped assets 的 frame digest——固定 `CastContext`、80 步 × dt=0.1 的 `advanceSpell`/`observeSpell` 走查，對每幀的 `pbCount` 與六欄全部 Float/Word32 位模式做 FNV 式雜湊。9 個常數寫死在 `FieldPlumbingSpec.preFieldDigests`，交付後重跑完全相同（一個 ULP 的位移即會打破）。同一列另證：`Acceptance7Spec` 直接斷言 `fields=[]` 的對照組 120 幀 `pbPosX/Y/Z` 與純 `sample` 輸出相等 |
+| 手動 smoke：gravity-well 有場 vs 對照組 | **headless 部分已綠**（`Acceptance7Spec`）：與同陣 `fields=[]` 對照組同粒子數逐幀可比，平均 y 在 0.5/1/1.5/2 秒檢查點單調下沉（末點 < −0.5），`isFinished`/`spellLifetime` 不受場影響。**開窗目視待使用者確認**（本輪在無顯示的代理環境執行，未啟動視窗）：`cabal run particle-magic`，用方向鍵切到 `gravity-well.json`——粒子自環形陣面射出後應被下拉並繞 z 軸帶旋；與相鄰的 `grand-sigil.json`（無場）對照即可分辨 |
+| 被機械適配的既有測試檔清單 | 5 檔，**斷言語意一字未變**，僅在完整 record 建構處補 `circleFields = []`：`test/CircleCodecSpec.hs`（`genCircle` 產生器＋一個 fixture）、`test/CompileExprSpec.hs`、`test/FormationSpec.hs`、`test/RuneCodecSpec.hs`、`test/SampleSpec.hs`。使用 `emptyCircle {…}` record update 的寫法（`CompileLifecycleSpec`/`PhaseCodecSpec`/`PhaseSampleSpec` 等）自動存活，零改動 |
+| cabal / SKILL.md 聯集合併確認 | cabal：`magic-core` `exposed-modules` ＋`Magic.Particle.Field`；test-suite `other-modules` ＋9 個新模組；`magic-boundary` `build-depends` ＋`vector ^>=0.13`（`Magic.Interface` 需組裝場輸入向量並疊加 SoA 位移——**已在 `BoundarySpec` 既有白名單內**，邊界測試無需放寬，附註寫在 cabal 該欄位上方）。SKILL.md：索引第 0007 列狀態改「已完成」。與 0006 的檔案交集依規則 4 以「先後而非平行」化解，0006 已於 `bdf0ff2` 合併入 main |
+| architecture.md §3.2/§4.6/§7 的 Field 轉正（虛線→實線、簽名草圖更新）——實作輪隨交付一併修訂 | 已修訂：§2 模組圖 `Field` 去掉「（未來）」、`Interface --> Field` 與 `Field --> Rune` 轉實線；§3.2 每幀資料流改畫為實際交付形狀（`advanceSpell ×n` 內積分／`observeSpell ×1` 內疊加／零場分支）；§4.4 `CompiledSpell` 補 `spellFields`；§4.6 簽名草圖換成交付簽名（`step` 不再吃 `ParticleBuffer`，改吃各槽位 `(age, basePos)`；補 `particlePosition`/`aliveSlots`/`fieldAccel`/`displacementsInOrder`/`SlotState`）；§5.1 JSON 範例補 `phases`/`fields` 與選配規則；§7 補力場層成本模型；§8 第 3 點的熱重載政策由「預告」改記為已落實 |
+| 凍結清單：`ForceField`（三 tag）/`FieldState`/`step` 語意（D1–D3）/`particlePosition`/`aliveSlots` 契約/D9 相容律 | 交付即凍結：(1) `Magic.Rune.ForceField` 三建構子語意與 JSON tag `gravity`/`attractor`/`vortex`（含參數順序與 §4.1 公式）；(2) `Magic.Particle.Field` 的 `fieldAccel`/`SlotState`/`quiescent`/`stepSlot`/`FieldState`/`emptyFieldState`/`step`/`displacementsInOrder` 語意，即 D1（半隱式尤拉、於 `basePos + disp` 取樣場）／D2（鍵＝穩定槽位）／D3（死亡歸零、age 倒退＝新世代、**(重)出生步 `disp = 0` 精確成立**）；(3) `Magic.Particle.Analytic.particlePosition`/`aliveSlots` 的「與 `sample` 逐位元一致」契約；(4) `Circle.circleFields`／`CompiledSpell.spellFields` 欄位與直通語意；(5) D9 零場相容律。**不凍結**：`FieldState` 的內部容器（現為 boxed `Vector`，效能 spec 可 SoA 化，只要 D1–D3 不變） |
+
+**實作期的一處語意收斂（供後續 spec 引用）**：§4.3 的 `stepSlot` 虛擬碼寫「新世代 → 從 quiescent 重新積分」，字面上可讀成「出生當步就跑一次尤拉」，但那會讓出生瞬間 `disp = accel·dt² ≠ 0`，與 ADR-0010 D3 明文保證的「重生瞬間 `disp = 0`」矛盾。交付採 D3 的字面保證：**偵測到新世代的那一步回傳 `quiescent`（靜止且零位移），積分自下一步開始**——因此 `renderedPos == analyticPos` 在出生步是精確等式（`FieldRebirthSpec` 以 `==` 斷言，非容差），代價僅是首步 O(dt) 的落後，對 dt→0 的收斂階數無影響（`FieldStepSpec` 的一階收斂率測試涵蓋）。

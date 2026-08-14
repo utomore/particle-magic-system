@@ -38,6 +38,7 @@ import Data.Aeson
   , eitherDecodeStrict
   , encode
   , object
+  , parseJSON
   , toJSON
   , withObject
   , withText
@@ -70,13 +71,14 @@ import Magic.Rune
   , Envelope (..)
   , EssenceRune (..)
   , FaceShape (..)
+  , ForceField (..)
   , InnerRune (..)
   , NodeRune (..)
   , OuterRune (..)
   , RadiationMode (..)
   , Trajectory (..)
   )
-import Magic.Types (Seconds (..), V2 (..))
+import Magic.Types (Seconds (..), V2 (..), V3 (..))
 
 data LoadError
   = -- | Malformed JSON or wrong shape; message includes aeson's
@@ -158,6 +160,7 @@ parseCircle = withObject "circle" $ \o -> do
     Nothing -> pure emptyCore
     Just v -> parseCore v <?> Key "core"
   phases <- parseSlot "phases" parsePhaseConfig o
+  fields <- parseFields o
   pure
     Circle
       { outerRings = outer
@@ -165,6 +168,7 @@ parseCircle = withObject "circle" $ \o -> do
       , innerRings = inner
       , core = circleCore
       , circlePhases = phases
+      , circleFields = fields
       }
 
 emptyCore :: Core
@@ -323,6 +327,65 @@ parseCore = withObject "core" $ \o -> do
     Just v -> parseNodes v <?> Key "nodes"
   pure (Core center nodes)
 
+-- | Force fields (spec 0007 §4.6): an opt-in circle-level array, not a
+-- rune slot. A missing key and @null@ both mean "no fields", which is the
+-- ADR-0010 D9 compatibility case every pre-0007 spell file takes.
+parseFields :: Object -> Parser [ForceField]
+parseFields o = do
+  mv <- slotValue o "fields"
+  case mv of
+    Nothing -> pure []
+    Just v -> flip (<?>) (Key "fields") $ case v of
+      Array items ->
+        sequence [parseForceField item <?> Index i | (i, item) <- zip [0 ..] (toList items)]
+      _ -> fail "expected an array of force fields (or null)"
+
+-- | Field validation lives here, at the boundary: 'softening' keeps the
+-- attractor's singularity finite, 'falloff' may not amplify with
+-- distance, and a zero 'axis' has no swirl plane to define. The core
+-- normalizes the axis when it evaluates, so any non-zero vector is fine.
+parseForceField :: Value -> Parser ForceField
+parseForceField = withObject "force field" $ \o -> do
+  kind <- o .: "kind" :: Parser Text
+  case kind of
+    "gravity" -> Gravity <$> vec3Field o "accel"
+    "attractor" -> do
+      center <- vec3Field o "center"
+      strength <- o .: "strength"
+      softening <- o .: "softening" >>= positive "softening"
+      pure (PointAttractor center (realToFrac (strength :: Double)) (realToFrac softening))
+    "vortex" -> do
+      center <- vec3Field o "center"
+      axis <- vec3Field o "axis"
+      _ <- nonZeroAxis axis <?> Key "axis"
+      strength <- o .: "strength"
+      falloff <- o .: "falloff" >>= nonNegative "falloff"
+      pure (Vortex center axis (realToFrac (strength :: Double)) (realToFrac falloff))
+    other ->
+      fail $
+        "unknown force field kind "
+          ++ show (T.unpack other)
+          ++ "; valid kinds: gravity, attractor, vortex"
+
+-- | A @[x, y, z]@ array of numbers.
+vec3Field :: Object -> AK.Key -> Parser V3
+vec3Field o key = do
+  v <- o .: key
+  flip (<?>) (Key key) $ case v of
+    Array items -> case toList items of
+      [x, y, z] -> V3 <$> number x <*> number y <*> number z
+      other ->
+        fail $
+          "expected an array of 3 numbers, got " ++ show (length other) ++ " elements"
+    _ -> fail "expected an array of 3 numbers"
+  where
+    number val = realToFrac <$> (parseJSON val :: Parser Double)
+
+nonZeroAxis :: V3 -> Parser ()
+nonZeroAxis (V3 x y z)
+  | x /= 0 || y /= 0 || z /= 0 = pure ()
+  | otherwise = fail "axis must be a non-zero vector"
+
 -- | Lifecycle staging (spec 0006 §4.5): opt-in circle-level key, not a
 -- rune slot — no "rune" tag, just the two durations.
 parsePhaseConfig :: Value -> Parser PhaseConfig
@@ -404,6 +467,7 @@ saveCircle circle =
             , "inner" .= encodeRing encodeInnerRune (innerRings circle)
             , "core" .= encodeCore (core circle)
             , "phases" .= maybe Null encodePhaseConfig (circlePhases circle)
+            , "fields" .= map encodeForceField (circleFields circle)
             ]
       ]
 
@@ -500,6 +564,33 @@ encodeElement e = case e of
 encodePhaseConfig :: PhaseConfig -> Value
 encodePhaseConfig (PhaseConfig (Seconds d) (Seconds c)) =
   object ["draw" .= d, "converge" .= c]
+
+encodeForceField :: ForceField -> Value
+encodeForceField field = case field of
+  Gravity accel -> object ["kind" .= ("gravity" :: Text), "accel" .= encodeV3 accel]
+  PointAttractor center strength softening ->
+    object
+      [ "kind" .= ("attractor" :: Text)
+      , "center" .= encodeV3 center
+      , "strength" .= toDouble strength
+      , "softening" .= toDouble softening
+      ]
+  Vortex center axis strength falloff ->
+    object
+      [ "kind" .= ("vortex" :: Text)
+      , "center" .= encodeV3 center
+      , "axis" .= encodeV3 axis
+      , "strength" .= toDouble strength
+      , "falloff" .= toDouble falloff
+      ]
+
+encodeV3 :: V3 -> Value
+encodeV3 (V3 x y z) = toJSON (map toDouble [x, y, z])
+
+-- | Float widens to Double exactly, and the JSON literal aeson writes for
+-- it reads back to the same Double — so the field roundtrip is lossless.
+toDouble :: Float -> Double
+toDouble = realToFrac
 
 encodeNodeSlot :: Maybe NodeRune -> Value
 encodeNodeSlot slot = case slot of

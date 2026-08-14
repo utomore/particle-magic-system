@@ -40,16 +40,22 @@ module Magic.Interface
   , spellAge
   ) where
 
+import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as U
 import Magic.Circle (Circle, emptyCircle)
 import Magic.Compile
   ( BlendMode (..)
   , CompileError (..)
   , CompiledSpell (..)
+  , EmitterSpec (..)
+  , Phase (Casting)
   , compile
   , spellBlend
   )
-import Magic.Particle.Analytic (sample)
+import Magic.Particle.Analytic (aliveSlots, particleAge, particlePosition, sample)
 import Magic.Particle.Buffer (ParticleBuffer (..))
+import qualified Magic.Particle.Field as Field
+import Magic.Particle.Field (FieldState)
 import Magic.Types
   ( CastContext (..)
   , DeltaTime (..)
@@ -88,32 +94,87 @@ data RenderBatch = RenderBatch
   }
   deriving (Eq, Show)
 
--- | A cast spell. Opaque to the shell: the only skeleton state is the
--- time advanced since casting — 'stepSpell' is a pure state transition
--- returning a new value, never a mutated reference.
+-- | A cast spell. Opaque to the shell: the skeleton state is the time
+-- advanced since casting plus (spec 0007) the force-field layer's
+-- integration state — 'stepSpell' is a pure state transition returning a
+-- new value, never a mutated reference.
 data ActiveSpell = ActiveSpell
   { asSpell :: !CompiledSpell
   , asCtx :: !CastContext
   , asElapsed :: !Double
+  , asField :: !FieldState
+  -- ^ The system's only cross-frame state (spec 0007). Never leaves this
+  -- module: a fresh cast starts it at rest, and since a hot reload is a
+  -- re-cast (architecture §8.3, ADR-0010 D8) it is never migrated.
   }
 
 castSpell :: CastRequest -> Either CompileError ActiveSpell
 castSpell req = do
   compiled <- compile (circleOf req)
-  pure ActiveSpell {asSpell = compiled, asCtx = ctxOf req, asElapsed = 0}
+  pure
+    ActiveSpell
+      { asSpell = compiled
+      , asCtx = ctxOf req
+      , asElapsed = 0
+      , asField = Field.emptyFieldState (map emCount (V.toList (spellEmitters compiled)))
+      }
 
--- | Advance the spell's clock. Pure state transition, no sampling
--- (func-spec 0005 §4.1).
+-- | Advance the spell's clock, and with it the force-field integration
+-- (one fixed step per call — func-spec 0005's @advanceSpell ×n@ loop is
+-- exactly the fixed-timestep carrier ADR-0010 D1 needs). Pure state
+-- transition, no sampling (func-spec 0005 §4.1).
+--
+-- A fieldless spell takes the ADR-0010 D9 fast path: the state is carried
+-- through untouched, and not one field computation runs.
 advanceSpell :: FrameInput -> ActiveSpell -> ActiveSpell
-advanceSpell (FrameInput (DeltaTime dt)) spell =
-  spell {asElapsed = asElapsed spell + dt}
+advanceSpell (FrameInput dt@(DeltaTime dtSeconds)) spell =
+  case spellFields (asSpell spell) of
+    [] -> advanced
+    fields ->
+      advanced
+        { asField =
+            Field.step fields dt (fieldInputs (asSpell spell) (asCtx spell) (Time elapsed')) (asField spell)
+        }
+  where
+    elapsed' = asElapsed spell + dtSeconds
+    advanced = spell {asElapsed = elapsed'}
+
+-- | This step's @(age, analytic base position)@ per stable slot, shaped
+-- like the 'FieldState' (emitter by emitter, index ascending).
+--
+-- Only 'Casting' emitters are reported alive: formation particles draw
+-- the circle's geometry and must stay legible, so the fields do not touch
+-- them (ADR-0010 D6). A circle without phases has a single casting
+-- emitter, which makes the rule a no-op there.
+fieldInputs :: CompiledSpell -> CastContext -> Time -> V.Vector (V.Vector (Maybe (Double, V3)))
+fieldInputs spell ctx t = V.map emitterInputs (spellEmitters spell)
+  where
+    emitterInputs em
+      | emPhase em /= Casting = V.replicate (emCount em) Nothing
+      | otherwise = V.generate (emCount em) (slotInput em)
+
+    slotInput em i = case particleAge (emSpawn em) (emCount em) i t of
+      Nothing -> Nothing
+      Just age -> Just (age, particlePosition ctx t em i age)
 
 -- | Sample the spell at its current age. Pure observation, no time
 -- advance (func-spec 0005 §4.1) — so a host that runs several fixed
 -- simulation steps per rendered frame pays for exactly one sampling.
+--
+-- The force-field layer is an additive overlay on that sample (ADR-0010
+-- D1): the accumulated displacements are lined up with the buffer's rows
+-- through 'aliveSlots', the single enumeration @sample@ itself defines.
+-- With no fields the buffer is returned exactly as sampled (D9).
 observeSpell :: ActiveSpell -> FrameOutput
 observeSpell spell =
-  let buffer = sample (asSpell spell) (asCtx spell) (Time (asElapsed spell))
+  let t = Time (asElapsed spell)
+      sampled = sample (asSpell spell) (asCtx spell) t
+      buffer = case spellFields (asSpell spell) of
+        [] -> sampled
+        _ ->
+          displaceBuffer
+            sampled
+            (Field.displacementsInOrder (asField spell) (aliveSlots (asSpell spell) t))
       batch =
         RenderBatch
           { rbParticles = buffer
@@ -121,6 +182,21 @@ observeSpell spell =
           , rbShape = BillboardSquare
           }
    in FrameOutput {batches = [batch]}
+
+-- | Add one displacement per buffer row. Row count, sizes, life fractions
+-- and colors are untouched, so the 'Magic.Particle.Buffer.bufferInvariant'
+-- carries over; a short displacement list (which the alignment law rules
+-- out) pads with zeros rather than truncating the buffer.
+displaceBuffer :: ParticleBuffer -> [V3] -> ParticleBuffer
+displaceBuffer buffer displacements =
+  buffer
+    { pbPosX = U.zipWith (+) (pbPosX buffer) (component (\(V3 x _ _) -> x))
+    , pbPosY = U.zipWith (+) (pbPosY buffer) (component (\(V3 _ y _) -> y))
+    , pbPosZ = U.zipWith (+) (pbPosZ buffer) (component (\(V3 _ _ z) -> z))
+    }
+  where
+    n = pbCount buffer
+    component f = U.fromListN n (map f displacements ++ replicate n 0)
 
 -- | Advance then observe. Decomposition law (func-spec 0005 §4.1, guarded
 -- by @test\/StepObserveSpec.hs@):

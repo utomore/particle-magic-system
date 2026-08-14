@@ -72,6 +72,7 @@ busyCircle =
           , coreNodes = Nodes (Just (DirBias 0.4)) Nothing Nothing Nothing
           }
     , circlePhases = Nothing
+    , circleFields = []
     }
 
 spec :: Spec

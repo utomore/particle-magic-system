@@ -37,6 +37,7 @@ library magic-core
                       Magic.Circle
                       Magic.Compile
                       Magic.Particle.Analytic
+                      Magic.Particle.Field
                       Magic.Project
                       Magic.Expr
     build-depends:    base     ^>=4.22
@@ -52,8 +53,13 @@ library magic-boundary
                       Magic.Interface
                       Magic.Step
                       Magic.Expr.Parse
+    -- 'vector' joins the boundary layer in func-spec 0007: Magic.Interface
+    -- feeds the force-field layer per-slot inputs and adds its
+    -- displacements onto the sampled SoA buffer. Already inside the
+    -- whitelist test/BoundarySpec.hs guards.
     build-depends:    base                 ^>=4.22
                     , particle-magic:magic-core
+                    , vector               ^>=0.13
                     , aeson                ^>=2.3
                     , bytestring           ^>=0.12
                     , text                 ^>=2.1
@@ -132,6 +138,15 @@ test-suite spec
                     , PhaseSampleSpec
                     , BackCompatSpec
                     , Acceptance6Spec
+                    , AnalyticRefactorSpec
+                    , FieldAccelSpec
+                    , FieldStepSpec
+                    , CompileFieldSpec
+                    , FieldCodecSpec
+                    , FieldPlumbingSpec
+                    , FieldStepObserveSpec
+                    , FieldRebirthSpec
+                    , Acceptance7Spec
                     , App.Effects
                     , App.HotReload
                     , App.Loop
