@@ -24,6 +24,22 @@ spec = describe "cabal package boundary (func-spec 0001 §3)" $ do
     deps `shouldSatisfy` all (\d -> depName d /= "magic-core")
     deps `shouldSatisfy` any (\d -> depName d == "magic-boundary")
 
+  -- func-spec 0014 S1: the authoring CLI is the boundary layer's third
+  -- consumer, and the discipline that makes it worth having is exactly
+  -- the executable's. It may not reach into the core, and it may not
+  -- pull in a renderer -- a tool that could open a window would no
+  -- longer be evidence that the library is complete without one.
+  it "magic-validate does not depend on magic-core, and does not link a renderer" $ do
+    deps <- stanzaDeps "executable magic-validate"
+    deps `shouldSatisfy` all (\d -> depName d /= "magic-core")
+    deps `shouldSatisfy` any (\d -> depName d == "magic-boundary")
+    deps `shouldSatisfy` all (\d -> depName d `notElem` ["h-raylib", "effectful"])
+
+  it "magic-validate stays inside the tool whitelist {base, magic-boundary, aeson, bytestring, vector, directory}" $ do
+    deps <- stanzaDeps "executable magic-validate"
+    let allowed = ["base", "aeson", "bytestring", "vector", "directory"]
+    deps `shouldSatisfy` all (\d -> depName d `elem` allowed || depName d == "magic-boundary")
+
   it "magic-boundary only adds serialization + parsing deps {aeson, bytestring, text, megaparsec, parser-combinators} over core" $ do
     deps <- stanzaDeps "library magic-boundary"
     let allowed = ["base", "vector", "deepseq", "aeson", "bytestring", "text", "megaparsec", "parser-combinators"]
