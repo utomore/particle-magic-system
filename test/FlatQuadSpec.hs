@@ -28,6 +28,7 @@ sideView =
     , fvScreenSize = (1280, 720)
     , fvOrigin = (640, 576)
     , fvPixelsPerUnit = 60
+    , fvDepthTint = 0
     }
 
 topView :: FlatView

@@ -16,9 +16,13 @@
 module App.Loop
   ( LoopConfig (..)
   , LoopStats (..)
+  , ViewState (..)
   , defaultCamera
+  , defaultViewState
   , applyViewInput
   , flatViewFor
+  , orbitDegreesPerPixel
+  , depthTintStrength
   , runLoop
   ) where
 
@@ -47,6 +51,7 @@ import Magic.Step (StepPlan (..), plan)
 
 import Magic.Projection (ViewPlane (..))
 
+import App.Camera (dolly, orbit)
 import App.Effects
   ( Camera (..)
   , Clock
@@ -65,10 +70,12 @@ import App.Effects
   , pollInput
   , readBytes
   , shouldClose
+  , windowSize
   , withFrame
   , withWindow
   )
 import App.Hud (fpsEma)
+import App.Render.Flat (panBy, resizeTo, zoomAt)
 
 data LoopConfig = LoopConfig
   { lcSimDt :: !Double
@@ -133,32 +140,111 @@ flatViewFor (w, h) plane =
         SideXY -> (fw * 0.5, fh * 0.8)
         TopXZ -> (fw * 0.5, fh * 0.5)
     , fvPixelsPerUnit = flatPixelsPerUnit
+    , fvDepthTint = 0
     }
   where
     fw = fromIntegral w
     fh = fromIntegral h
 
--- | The view state machine (Tab, then V). Pressing both on one frame is
--- defined rather than forbidden: the backend switches first, the plane
--- second. The plane is remembered across backends, so it can be chosen
--- while still in 3D.
-applyViewInput :: DemoInput -> (ViewMode, ViewPlane) -> (ViewMode, ViewPlane)
-applyViewInput input = togglePlane . toggleBackend
+-- | How far one pixel of mouse drag turns the 3D camera.
+orbitDegreesPerPixel :: Float
+orbitDegreesPerPixel = 0.3
+
+-- | How dark the far end of the batch goes when the 2D depth tint is
+-- switched on. Strong enough to read as depth, short of black — a
+-- particle that vanishes entirely is worse than one that reads flat.
+depthTintStrength :: Float
+depthTintStrength = 0.55
+
+-- | Everything about how the frame is observed, and nothing about what
+-- is being observed (func-spec 0013 §4). Keeping the four pieces in one
+-- record is what lets the whole scheme be one pure function of the
+-- frame's input, asserted headless.
+data ViewState = ViewState
+  { vsMode :: !ViewMode
+  , vsPlane :: !ViewPlane
+  -- ^ Remembered across backends, so the plane can be chosen in 3D.
+  , vsCamera :: !Camera
+  , vsFlat :: !FlatView
+  }
+  deriving (Eq, Show)
+
+-- | The state a demo starts in: 'defaultCamera', side view, no pan, no
+-- zoom, no tint.
+defaultViewState :: (Int, Int) -> Camera -> ViewState
+defaultViewState size cam =
+  ViewState
+    { vsMode = View3D
+    , vsPlane = SideXY
+    , vsCamera = cam
+    , vsFlat = flatViewFor size SideXY
+    }
+
+-- | The view state machine: the discrete switches (Tab, V, T) first,
+-- then the continuous steering (drag, wheel) of whichever view is live.
+--
+-- Pressing several keys on one frame is defined rather than forbidden:
+-- the backend switches first, then the plane, then the tint. The plane
+-- is remembered across backends, so it can be chosen while still in 3D
+-- — and choosing it re-derives the 2D view, since a pan and a zoom made
+-- for one pair of axes mean nothing for the other.
+--
+-- Steering is dispatched by the live backend, so the mouse drives what
+-- is on screen and only that: the 2D pan cannot secretly move the 3D
+-- camera, and vice versa. Idle input is the identity on the nose (each
+-- of 'orbit', 'dolly', 'panBy', 'zoomAt' is), which is what makes a demo
+-- nobody touches render exactly what func-spec 0008 delivered.
+applyViewInput :: DemoInput -> ViewState -> ViewState
+applyViewInput input = steer . toggleTint . togglePlane . toggleBackend
   where
-    toggleBackend (mode, plane)
-      | not (diToggleBackend input) = (mode, plane)
-      | otherwise = case mode of
-          View3D -> (View2D plane, plane)
-          View2D _ -> (View3D, plane)
-    togglePlane (mode, plane)
-      | not (diTogglePlane input) = (mode, plane)
+    toggleBackend vs
+      | not (diToggleBackend input) = vs
+      | otherwise = case vsMode vs of
+          View3D -> vs {vsMode = View2D (vsPlane vs)}
+          View2D _ -> vs {vsMode = View3D}
+
+    togglePlane vs
+      | not (diTogglePlane input) = vs
       | otherwise =
-          let plane' = flipPlane plane
-           in ( case mode of
-                  View3D -> View3D
-                  View2D _ -> View2D plane'
-              , plane'
-              )
+          let plane' = flipPlane (vsPlane vs)
+           in vs
+                { vsPlane = plane'
+                , vsMode = case vsMode vs of
+                    View3D -> View3D
+                    View2D _ -> View2D plane'
+                , vsFlat = rebasedFlat plane' (vsFlat vs)
+                }
+
+    toggleTint vs
+      | not (diToggleTint input) = vs
+      | otherwise =
+          vs
+            { vsFlat =
+                (vsFlat vs)
+                  { fvDepthTint =
+                      if fvDepthTint (vsFlat vs) > 0 then 0 else depthTintStrength
+                  }
+            }
+
+    steer vs = case vsMode vs of
+      View3D -> vs {vsCamera = dolly (diWheel input) (orbit dragDegrees (vsCamera vs))}
+      View2D _ -> vs {vsFlat = zoomAt (diCursor input) (diWheel input) (panBy panPixels (vsFlat vs))}
+
+    dragDegrees = case diOrbitDrag input of
+      Nothing -> (0, 0)
+      -- Dragging right turns the camera left around the target (the
+      -- world follows the hand), and dragging down raises it.
+      Just (dx, dy) -> (negate dx * orbitDegreesPerPixel, dy * orbitDegreesPerPixel)
+
+    panPixels = case diPanDrag input of
+      Nothing -> (0, 0)
+      Just d -> d
+
+    -- A fresh 2D view for a new plane, keeping the one setting that is
+    -- about the tint rather than about the axes.
+    rebasedFlat plane fv =
+      (flatViewFor (fvScreenSize fv) plane) {fvDepthTint = fvDepthTint fv}
+
     flipPlane SideXY = TopXZ
     flipPlane TopXZ = SideXY
 
@@ -182,6 +268,12 @@ data LoopState = LoopState
   -- is orthogonal to the simulation and survives reloads and re-casts.
   , stPlane :: !ViewPlane
   -- ^ The remembered orthographic plane, also while in 3D.
+  , stCamera :: !Camera
+  -- ^ Where the 3D camera has been orbited to (func-spec 0013). Same
+  -- observation-side status as 'stView': moving it cannot disturb a
+  -- running spell.
+  , stFlat :: !FlatView
+  -- ^ The live 2D view — pan, zoom, screen size, depth tint.
   }
 
 runLoop
@@ -210,9 +302,13 @@ runLoop cfg =
           -- the demo shows the reason instead of a black window.
           stReload = either (ReloadFailed t0) (const ReloadIdle) loaded
         , stFpsEma = 0
-        , stView = View3D
-        , stPlane = SideXY
+        , stView = vsMode view0
+        , stPlane = vsPlane view0
+        , stCamera = vsCamera view0
+        , stFlat = vsFlat view0
         }
+  where
+    view0 = defaultViewState (lcWindowSize cfg) (lcCamera cfg)
 
 frameLoop
   :: (Clock :> es, FileWatch :> es, Raylib :> es)
@@ -235,10 +331,21 @@ frameLoop cfg st = do
       let elapsed = tNow - stLastTime st
 
       input <- pollInput
+      -- Polled every frame rather than taken from the config: the window
+      -- is resizable, so the 2D screen mapping is state, not a constant.
+      size <- windowSize
       let index' = shiftIndex cfg input (stIndex st)
           -- Purely observational: the view never feeds back into the
           -- simulation, so switching it cannot disturb a running spell.
-          (view', plane') = applyViewInput input (stView st, stPlane st)
+          view' =
+            applyViewInput
+              input
+              ViewState
+                { vsMode = stView st
+                , vsPlane = stPlane st
+                , vsCamera = stCamera st
+                , vsFlat = resizeTo size (stFlat st)
+                }
 
       st1 <-
         if index' /= stIndex st
@@ -278,7 +385,9 @@ frameLoop cfg st = do
               , hvSpellPath = stPath st2
               , hvSpellAge = maybe 0 (\s -> let Time a = spellAge s in a) spell'
               , hvReload = stReload st2
-              , hvView = view'
+              , hvView = vsMode view'
+              , hvCamera = vsCamera view'
+              , hvFlat = vsFlat view'
               }
 
       withFrame $ do
@@ -286,9 +395,9 @@ frameLoop cfg st = do
         -- takes it through a perspective camera, the 2D one through an
         -- orthographic projection. Neither the sampling above nor the
         -- output itself knows which.
-        case view' of
-          View3D -> drawScene (lcCamera cfg) (batches output')
-          View2D p -> drawFlat (flatViewFor (lcWindowSize cfg) p) (batches output')
+        case vsMode view' of
+          View3D -> drawScene (vsCamera view') (batches output')
+          View2D _ -> drawFlat (vsFlat view') (batches output')
         drawHud hud
 
       frameLoop
@@ -300,8 +409,10 @@ frameLoop cfg st = do
           , stFrames = stFrames st2 + 1
           , stSimSteps = stSimSteps st2 + stepsRun
           , stFpsEma = fps'
-          , stView = view'
-          , stPlane = plane'
+          , stView = vsMode view'
+          , stPlane = vsPlane view'
+          , stCamera = vsCamera view'
+          , stFlat = vsFlat view'
           }
 
 -- | @n@ pure time advances, no sampling.
