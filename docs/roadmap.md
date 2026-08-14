@@ -13,7 +13,7 @@ architecture 回答「系統長什麼樣、為什麼」，func-spec 回答「這
 ## 1. 現況快照（2026-08-15）
 
 - **已交付**：func-spec 0001–0011 與 **0013** 全數狀態「已完成」；ADR 0001–0011。第一波（0010 效能 ‖ 0011 宿主整合面 ‖ 0013 視覺）三份由三個 session 平行實作、同時驗收，一次整合進 main。
-- **驗證**：`cabal build all` 綠（含 exe、bench、foreign-library）；`cabal test` 綠。0007／0008／0009 曾以同一模式三方平行；本輪 0010／0011／0013 再次驗證零檔案交集切分成立——三份 spec 的 §0.2 盤點事後全部正確（0010 未動 `src/ffi`／`include`／`app/*`，0013 只動 `app/*`）。
+- **驗證**：`cabal build all` 綠（含 exe、bench、foreign-library）；`cabal test` **903 examples, 0 failures**（三份合併後於整合分支實測；0009 交付時為 676）。0007／0008／0009 曾以同一模式三方平行；本輪 0010／0011／0013 再次驗證零檔案交集切分成立——三份 spec 的 §0.2 盤點事後全部正確（0010 未動 `src/ffi`／`include`／`app/*`，0013 只動 `app/*`）。
 - **0010 交付的效能位置**（詳見其 §9.2）：4096 粒每幀純 CPU **0.73 ms → 0.27 ms**；取樣常數因子 **161 → 65 ns/粒**；`depthOrder` @4096 快 **10×**；合成 100 000 粒取樣 **6.5 ms**（60 fps 預算的 39%）。粒子上限仍是 4096——本輪明文不改值（§4.6 修正 1），提升落在 0012。
 
 | 產物 | 指令 | 對象 |
@@ -46,7 +46,7 @@ architecture 回答「系統長什麼樣、為什麼」，func-spec 回答「這
 | 效能 | **70%** | 0010：熱路徑端到端 unboxed（count-then-fill、`FieldState` SoA、in-place introsort）、結構化 `ParticleBudget`、發射器時間窗剔除、Expr 常數摺疊、per-emitter 基底提升；10k–100k 已實測（100k 取樣 6.5 ms） | 護欄值 4096 未動（0012 S1）；architecture §7 六項手段中「緩衝重用」在純介面下經評估不做（0010 §9.4-10）、architecture §8.2 的 Expr bytecode 與多執行緒取樣仍未做 |
 | 視覺表現力 | **50%** | 兩個投影後端、blend 生效、顏色曲線、painter 排序（2D）；0013：3D alpha batch 深度排序、軌道／dolly 相機、2D 平移／游標定錨縮放／resize 適配、俯視深度色調 | 只有方形 quad；無貼圖／拖尾／軟粒子；俯視可讀性只解到第一階（進階的壓平比例／輪廓強調仍欠，0013 §8-4） |
 | 作者流程（工具） | **15%** | JSON 熱重載、載入錯誤上屏（含行列位置）、9 個範例陣 | 無編輯器、無給非工程作者的 schema 說明、無驗證 CLI、spell 清單啟動時定格 |
-| 工程紀律（測試／文件） | **95%** | Todo↔測試 1:1、逐位元相容律、契約守護測試（cabal／header／`.def`／C# 綁定四份文本）、11 ADR／10 spec／706 examples | 無 CI；只有 win64 實測過 |
+| 工程紀律（測試／文件） | **95%** | Todo↔測試 1:1、逐位元相容律、golden 鎖定、契約守護測試（cabal／header／`.def`／C# 綁定四份文本）、11 ADR／12 spec 已完成／**903 examples** | 無 CI；只有 win64 實測過 |
 
 ---
 
