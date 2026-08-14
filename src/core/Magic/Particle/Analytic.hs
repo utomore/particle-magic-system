@@ -32,6 +32,11 @@ module Magic.Particle.Analytic
     -- * Single source of truth for the force-field layer (spec 0007 §4.4)
   , particlePosition
   , aliveSlots
+  , aliveSlotIndices
+
+    -- * Emitter time-window culling (func-spec 0010 S3)
+  , aliveRanges
+  , emitterOffsets
 
     -- * Shape sampling (spec 0002 S3; extension point of architecture §10)
   , sampleShape
@@ -42,8 +47,10 @@ module Magic.Particle.Analytic
   , trajectoryOffset
   ) where
 
+import Control.Monad.ST (ST)
 import Data.Bits (shiftL, shiftR, (.&.), (.|.))
 import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as U
 import Data.Word (Word32)
 import Magic.Compile
   ( Anchor (..)
@@ -71,7 +78,7 @@ import Magic.Types
   , normalize
   , vscale
   )
-import Magic.Particle.Buffer (ParticleBuffer, emptyBuffer, fromParticles)
+import Magic.Particle.Buffer (ParticleBuffer, WriteRow, buildBuffer, emptyBuffer)
 
 -- Envelope scheduling ---------------------------------------------------------
 
@@ -166,13 +173,145 @@ sampleShape shape i c = case shape of
 bandCells :: [(Int, Int)]
 bandCells = [(gx, gy) | gx <- [0 .. 2 :: Int], gy <- [0 .. 2 :: Int], (gx, gy) /= (1, 1)]
 
+-- Time-window culling (func-spec 0010 §2, S3) ---------------------------------
+
+-- | The index ranges of one emitter that hold a live particle at @t@ —
+-- ascending, disjoint, half-open @[lo, hi)@.
+--
+-- 'firstBirth' is non-decreasing in the index and the respawn cycle count
+-- @floor ((t − birth₀) \/ lifetime)@ is therefore non-increasing, so
+-- aliveness is a /prefix/ predicate inside each block of equal cycle
+-- count — and the index span of one emitter covers less than one lifetime,
+-- so there are at most two such blocks. Each boundary is found by binary
+-- search over the very same 'firstBirth' \/ 'particleAge' arithmetic the
+-- sampler uses, never by a second closed-form solution of the schedule:
+-- that is what makes the culled walk bit-for-bit identical to the full
+-- scan (guarded as a property by @test\/CullSpec.hs@) instead of merely
+-- close to it.
+--
+-- A dead window returns @[]@, so an emitter outside its spawn window
+-- costs @O(log count)@ instead of @O(count)@.
+aliveRanges :: Envelope -> Int -> Time -> [(Int, Int)]
+aliveRanges env count t@(Time seconds)
+  | count <= 0 = []
+  | lifetime <= 0 = []
+  | otherwise = blocks 0 born
+  where
+    Seconds lifetime = envLifetime env
+    n = count
+
+    -- Condition 1 of 'particleAge': the particle has been born at all.
+    born = countPrefix n (\i -> firstBirth env n i <= seconds)
+
+    -- Same expression as 'particleAge' — not a re-derivation of it.
+    cyclesAt i = floor ((seconds - firstBirth env n i) / lifetime) :: Int
+
+    isAlive i = case particleAge env n i t of
+      Just _ -> True
+      Nothing -> False
+
+    -- Split [lo, hi) into blocks of equal cycle count; inside one block
+    -- aliveness is a prefix.
+    blocks lo hi
+      | lo >= hi = []
+      | otherwise =
+          let c = cyclesAt lo
+              k = lo + countPrefix (hi - lo) (\j -> cyclesAt (lo + j) >= c)
+              p = lo + countPrefix (k - lo) (\j -> isAlive (lo + j))
+              rest = blocks k hi
+           in if p > lo then (lo, p) : rest else rest
+
+-- | Number of leading indices of @[0, m)@ satisfying a prefix predicate
+-- (true up to some point, false after it). @O(log m)@.
+countPrefix :: Int -> (Int -> Bool) -> Int
+countPrefix m p = go 0 m
+  where
+    go lo hi
+      | lo >= hi = lo
+      | p mid = go (mid + 1) hi
+      | otherwise = go lo mid
+      where
+        mid = lo + (hi - lo) `div` 2
+
+-- | Prefix sums of the emitters' particle counts: @emitterOffsets spell@
+-- has one more element than there are emitters, the last being the total
+-- slot count. This is the flattening the force-field layer's SoA state
+-- shares with the sampler (ADR-0010 D2's stable slot identity, laid out
+-- linearly).
+emitterOffsets :: CompiledSpell -> U.Vector Int
+emitterOffsets spell =
+  U.scanl' (+) 0 (U.generate (V.length ems) (\e -> emCount (ems V.! e)))
+  where
+    ems = spellEmitters spell
+
 -- The sampler -----------------------------------------------------------------
 
+-- | Sample every emitter at @t@ into one SoA buffer.
+--
+-- Func-spec 0010 S2: count first (the culling windows give the exact row
+-- count without touching a particle), then fill six exact-size columns in
+-- place. The emitter order and, inside an emitter, the ascending index
+-- order are exactly what the pre-0010 @concatMap@ produced, and every
+-- floating-point operation per particle is the same one in the same
+-- order — the buffer is bit-for-bit what it always was.
 sample :: CompiledSpell -> CastContext -> Time -> ParticleBuffer
 sample spell ctx t@(Time seconds)
   | seconds < 0 = emptyBuffer
-  | otherwise =
-      fromParticles (concatMap (emitterParticles ctx t) (V.toList (spellEmitters spell)))
+  | otherwise = buildBuffer total fill
+  where
+    ems = spellEmitters spell
+    windows = V.map (\em -> aliveRanges (emSpawn em) (emCount em) t) ems
+    total = sum [hi - lo | ws <- V.toList windows, (lo, hi) <- ws]
+
+    fill :: WriteRow s -> ST s ()
+    fill write = goEmitter 0 0
+      where
+        goEmitter !row !e
+          | e >= V.length ems = pure ()
+          | otherwise = do
+              row' <- fillEmitter write ctx t (ems V.! e) (windows V.! e) row
+              goEmitter row' (e + 1)
+
+-- | Write one emitter's live particles, starting at buffer row @row0@;
+-- returns the next free row.
+fillEmitter
+  :: WriteRow s -> CastContext -> Time -> EmitterSpec -> [(Int, Int)] -> Int -> ST s Int
+fillEmitter write ctx t em ranges row0 = goRange row0 ranges
+  where
+    env = emSpawn em
+    count = emCount em
+    Appearance ramp size _blend mAmplify = emAppearance em
+    Seconds lifetime = envLifetime env
+    -- Hoisted out of the per-particle loop (func-spec 0010 S2): the
+    -- caster and face frames depend on the emitter, not on the particle,
+    -- and cost four 'normalize's and two 'basisFromNormal's each.
+    frame = emitterFrame ctx em
+
+    goRange !row [] = pure row
+    goRange !row ((lo, hi) : rest) = do
+      row' <- goIndex row lo hi
+      goRange row' rest
+
+    goIndex !row !i !hi
+      | i >= hi = pure row
+      | otherwise = case particleAge env count i t of
+          -- Unreachable: 'aliveRanges' enumerates exactly the live
+          -- indices. Skipping (rather than writing) keeps the walk total
+          -- if that ever stopped being true.
+          Nothing -> goIndex row (i + 1) hi
+          Just ageD -> do
+            let lifeFrac = realToFrac (ageD / lifetime) :: Float
+                -- §4.5 (3) Amplify: negative curve values clamp to size 0.
+                finalSize = case mAmplify of
+                  Nothing -> size
+                  Just amp -> size * max 0 (evalFinite amp (frameEnvFor ctx t em i ageD))
+            write
+              row
+              (positionIn frame ctx t em i ageD)
+              finalSize
+              lifeFrac
+              (rampColor ramp lifeFrac)
+            goIndex (row + 1) (i + 1) hi
 
 -- | The stable slots alive at @t@, in exactly the row order 'sample'
 -- lays down (emitter by emitter as stored in 'spellEmitters', particle
@@ -182,35 +321,36 @@ sample spell ctx t@(Time seconds)
 -- @(emitterIndex, particleIndex)@ pair (ADR-0010 D2) and has to line its
 -- per-slot displacements up with buffer rows. That enumeration therefore
 -- lives here, next to the sampler that defines it — a second copy is the
--- drift bug ADR-0010 D2 forbids.
+-- drift bug ADR-0010 D2 forbids. Since func-spec 0010 both this and
+-- 'sample' read the same 'aliveRanges' windows, so "the same enumeration"
+-- is now literally one computation instead of two agreeing ones.
 aliveSlots :: CompiledSpell -> Time -> [(Int, Int)]
 aliveSlots spell t@(Time seconds)
   | seconds < 0 = []
   | otherwise =
       [ (e, i)
       | (e, em) <- zip [0 ..] (V.toList (spellEmitters spell))
-      , i <- [0 .. emCount em - 1]
-      , Just _ <- [particleAge (emSpawn em) (emCount em) i t]
+      , (lo, hi) <- aliveRanges (emSpawn em) (emCount em) t
+      , i <- [lo .. hi - 1]
       ]
 
-emitterParticles :: CastContext -> Time -> EmitterSpec -> [(V3, Float, Float, Word32)]
-emitterParticles ctx t em =
-  [ particle i age
-  | i <- [0 .. emCount em - 1]
-  , Just age <- [particleAge env (emCount em) i t]
-  ]
+-- | 'aliveSlots' flattened through 'emitterOffsets': the same enumeration,
+-- same order, as one unboxed column of slot ids. The hot path's form —
+-- the force-field overlay indexes its SoA state with it directly.
+aliveSlotIndices :: CompiledSpell -> Time -> U.Vector Int
+aliveSlotIndices spell t@(Time seconds)
+  | seconds < 0 = U.empty
+  | otherwise = U.concat (map ofEmitter [0 .. V.length ems - 1])
   where
-    env = emSpawn em
-    Appearance ramp size _blend mAmplify = emAppearance em
-    Seconds lifetime = envLifetime env
-
-    particle i ageD =
-      let lifeFrac = realToFrac (ageD / lifetime) :: Float
-          -- §4.5 (3) Amplify: negative curve values clamp to size 0.
-          finalSize = case mAmplify of
-            Nothing -> size
-            Just amp -> size * max 0 (evalFinite amp (frameEnvFor ctx t em i ageD))
-       in (particlePosition ctx t em i ageD, finalSize, lifeFrac, rampColor ramp lifeFrac)
+    ems = spellEmitters spell
+    offsets = emitterOffsets spell
+    ofEmitter e =
+      let em = ems V.! e
+          base = offsets U.! e
+       in U.concat
+            [ U.enumFromN (base + lo) (hi - lo)
+            | (lo, hi) <- aliveRanges (emSpawn em) (emCount em) t
+            ]
 
 -- | Position of particle @i@ of an emitter at age @ageD@ — the analytic
 -- layer's position formula, extracted verbatim from 'sample' (spec 0007
@@ -221,11 +361,36 @@ emitterParticles ctx t em =
 -- integration (ADR-0010 D1: @renderedPos = analyticPos + displacement@),
 -- so there is exactly one copy of the formula.
 particlePosition :: CastContext -> Time -> EmitterSpec -> Int -> Double -> V3
-particlePosition ctx t em i ageD = position
-  where
-    Motion spawnPattern trajectory radiation drift mRange mConverge = emMotion em
-    age = realToFrac ageD :: Float
+particlePosition ctx t em = positionIn (emitterFrame ctx em) ctx t em
 
+-- | The parts of the position formula that depend on the emitter and the
+-- cast context but not on the particle: the caster frame, the anchor in
+-- world space, the face normal and its plane basis, and the node drift
+-- rotated into world space (func-spec 0010 S2).
+--
+-- Six 'normalize'\/'basisFromNormal' calls used to run per particle per
+-- frame; they run once per emitter per frame now. The expressions are
+-- moved verbatim, so every particle still sees the same bits.
+data EmitterFrame = EmitterFrame
+  { efAnchorW :: !V3
+  , efNormal :: !V3
+  , efU :: !V3
+  -- ^ Face right.
+  , efW :: !V3
+  -- ^ Face up.
+  , efDriftW :: !V3
+  }
+
+emitterFrame :: CastContext -> EmitterSpec -> EmitterFrame
+emitterFrame ctx em =
+  EmitterFrame
+    { efAnchorW = anchorW
+    , efNormal = faceNormal
+    , efU = u
+    , efW = w
+    , efDriftW = faceToWorld (motDrift (emMotion em))
+    }
+  where
     -- Caster frame: +Z = facing, X/Y = the facing's face-plane basis.
     facing = normalize (casterFacing ctx)
     (fu, fw) = basisFromNormal facing
@@ -237,6 +402,19 @@ particlePosition ctx t em i ageD = position
     (u, w) = basisFromNormal faceNormal
 
     faceToWorld (V3 x y z) = vscale x u + vscale y w + vscale z faceNormal
+
+-- | 'particlePosition' with the per-emitter frame supplied.
+positionIn :: EmitterFrame -> CastContext -> Time -> EmitterSpec -> Int -> Double -> V3
+positionIn frame ctx t em i ageD = position
+  where
+    Motion spawnPattern trajectory radiation _drift mRange mConverge = emMotion em
+    age = realToFrac ageD :: Float
+
+    anchorW = efAnchorW frame
+    faceNormal = efNormal frame
+    u = efU frame
+    w = efW frame
+    nodeDriftW = efDriftW frame
 
     -- Layered time frame (spec 0004 §4.4).
     birthEnv = birthEnvFor ctx t i ageD
@@ -252,12 +430,17 @@ particlePosition ctx t em i ageD = position
       SpawnOnShape shape -> vscale2 rangeScale (sampleShape shape i 0)
     spawnW = anchorW + vscale sx u + vscale sy w
 
-    axis = case radiation of
-      AlongNormal -> faceNormal
+    -- 'AlongNormal' takes the face normal, whose plane basis is the
+    -- frame's own @(u, w)@ — @basisFromNormal@ of the same vector, so the
+    -- reuse is an equality, not an approximation, and it saves the two
+    -- cross products per particle.
+    (axis, au, aw) = case radiation of
+      AlongNormal -> (faceNormal, u, w)
       RadialOutward ->
         let outward = vscale sx u + vscale sy w
-         in if norm outward < 1e-6 then faceNormal else normalize outward
-    (au, aw) = basisFromNormal axis
+            ax = if norm outward < 1e-6 then faceNormal else normalize outward
+            (bu, bw) = basisFromNormal ax
+         in (ax, bu, bw)
 
     -- §4.5 (4) Formula replaces only the trajectory term; built-ins
     -- keep the 0002 phase-stagger path bit-for-bit.
@@ -278,7 +461,6 @@ particlePosition ctx t em i ageD = position
             c1 = hashChan (seed ctx) i 1 - 0.5
          in vscale (c0 * spread) u + vscale (c1 * spread) w
       SpawnOnShape _ -> V3 0 0 0
-    nodeDriftW = faceToWorld drift
 
     rawPosition = spawnW + trajTerm + vscale age (spreadDrift + nodeDriftW)
 
@@ -322,10 +504,18 @@ vscale2 :: Float -> V2 -> V2
 vscale2 s (V2 x y) = V2 (s * x) (s * y)
 
 -- | Linear interpolation of a packed 0xRRGGBBAA ramp over life ∈ [0, 1].
+--
+-- The four shifts are written out rather than folded over a list: this
+-- runs once per particle per frame, and the list the fold walked was
+-- allocated there too. Same four terms, same @(.|.)@, same result.
 rampColor :: ColorRamp -> Float -> Word32
 rampColor (ColorRamp start end) life
   | start == end = start
-  | otherwise = foldr (.|.) 0 [lerpByte sh `shiftL` sh | sh <- [24, 16, 8, 0]]
+  | otherwise =
+      (lerpByte 24 `shiftL` 24)
+        .|. (lerpByte 16 `shiftL` 16)
+        .|. (lerpByte 8 `shiftL` 8)
+        .|. lerpByte 0
   where
     l = max 0 (min 1 life)
     byteAt v sh = fromIntegral ((v `shiftR` sh) .&. 0xFF) :: Float

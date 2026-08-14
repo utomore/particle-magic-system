@@ -49,6 +49,10 @@ module Magic.Compile
   , CompileError (..)
   , budgetCap
 
+    -- * Particle budget and spatial extent (func-spec 0010 S7)
+  , ParticleBudget (..)
+  , emitterBounds
+
     -- * Element lookup (closed influence surface, architecture §10)
   , elementAppearance
   , spellBlend
@@ -57,9 +61,19 @@ module Magic.Compile
 import Data.Bits ((.&.))
 import Data.Maybe (fromMaybe)
 import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as U
 import Data.Word (Word32)
 import Magic.Circle (Circle (..), Core (..), Nodes (..), PhaseConfig (..), TwoOf (..))
-import Magic.Expr (BinOp (..), Expr (..), Fun3 (..), Var (..))
+import Magic.Expr
+  ( BinOp (..)
+  , Expr (..)
+  , ExprV3 (..)
+  , Fun1 (..)
+  , Fun2 (..)
+  , Fun3 (..)
+  , Var (..)
+  , foldConstants
+  )
 import Magic.Rune
   ( BridgeRune (..)
   , Element (..)
@@ -73,7 +87,17 @@ import Magic.Rune
   , RadiationMode (..)
   , Trajectory (..)
   )
-import Magic.Types (Seconds (..), Time (..), V3 (..))
+import Magic.Types
+  ( CastContext (..)
+  , Seconds (..)
+  , Time (..)
+  , V2 (..)
+  , V3 (..)
+  , basisFromNormal
+  , norm
+  , normalize
+  , vscale
+  )
 
 -- | How a batch should be blended by the renderer.
 data BlendMode = BlendAlpha | BlendAdditive
@@ -96,6 +120,13 @@ data CompiledSpell = CompiledSpell
   -- formation-geometry emitters.
   , spellPhases :: !PhasePlan
   -- ^ Absolute time landmarks of the four lifecycle stages (spec 0006).
+  , spellBudgetPlan :: !ParticleBudget
+  -- ^ The same budget, per emitter (func-spec 0010). Invariant:
+  -- @spellBudget == budgetTotal spellBudgetPlan@ and
+  -- @budgetPerEmitter@ is index-aligned with 'spellEmitters'. A host
+  -- sizing GPU buffers or a scene layer handing out a global quota needs
+  -- the breakdown, not just the sum; 'spellBudget' stays for every caller
+  -- that only ever wanted the sum.
   , spellFields :: ![ForceField]
   -- ^ The circle's force fields (spec 0007), carried through verbatim
   -- from 'Magic.Circle.circleFields'. Deliberately /not/ folded: fields
@@ -214,6 +245,22 @@ data ColorRamp = ColorRamp
   }
   deriving (Eq, Show)
 
+-- | A compiled spell's particle budget, broken down per emitter
+-- (func-spec 0010 S7). Permanent type; frozen once 0010 delivers.
+--
+-- Invariants (guarded by @test\/BudgetPlanSpec.hs@):
+--
+-- * @budgetTotal == U.sum budgetPerEmitter@;
+-- * @U.length budgetPerEmitter == V.length spellEmitters@, index-aligned;
+-- * @budgetTotal == spellBudget@ of the spell it came from.
+data ParticleBudget = ParticleBudget
+  { budgetPerEmitter :: !(U.Vector Int)
+  -- ^ Particle count per emitter, aligned with 'spellEmitters'.
+  , budgetTotal :: !Int
+  -- ^ Their sum: the whole cast's worst-case particle count.
+  }
+  deriving (Eq, Show)
+
 -- | Compilation failure. Extensible sum; first real constructor this
 -- round (the 0001 placeholder was never constructed and is replaced).
 data CompileError
@@ -313,7 +360,7 @@ compile circle = do
         Nothing -> []
         Just pc -> formationEmittersFor circle pc castStart element
       element = essenceElementOf (core circle)
-      allEmitters = castingEmitter : formationEmitters
+      allEmitters = map foldEmitterExprs (castingEmitter : formationEmitters)
       totalCount = sum (map emCount allEmitters)
       -- 'delay' is already absolute (step 3.5 baked castStart into it), so
       -- the closing landmarks are delay + duration [+ lifetime] with no
@@ -335,8 +382,36 @@ compile circle = do
           , spellBudget = totalCount
           , spellEmitters = V.fromList allEmitters
           , spellPhases = plan
+          , spellBudgetPlan =
+              ParticleBudget
+                { budgetPerEmitter = U.fromList (map emCount allEmitters)
+                , budgetTotal = totalCount
+                }
           , spellFields = circleFields circle
           }
+
+-- | Fold every variable-free subtree of every formula an emitter carries
+-- (func-spec 0010 S6). Compile time is where a player's constant
+-- arithmetic should be paid for — once — rather than per particle per
+-- frame; 'Magic.Expr.foldConstants' preserves evaluation bit for bit, so
+-- this is invisible to every sampled buffer.
+foldEmitterExprs :: EmitterSpec -> EmitterSpec
+foldEmitterExprs em =
+  em
+    { emMotion =
+        motion
+          { motRange = fmap foldConstants (motRange motion)
+          , motConverge = fmap foldConstants (motConverge motion)
+          , motTraject = case motTraject motion of
+              Formula (ExprV3 x y z) ->
+                Formula (ExprV3 (foldConstants x) (foldConstants y) (foldConstants z))
+              other -> other
+          }
+    , emAppearance = look {appAmplify = fmap foldConstants (appAmplify look)}
+    }
+  where
+    motion = emMotion em
+    look = emAppearance em
 
 -- | The caster-frame origin anchor shared by casting and every
 -- ring/center formation emitter (only the four node emitters offset it).
@@ -579,6 +654,197 @@ kcExprFor (Seconds castStartD) (Seconds convergeD) =
     (Bin Div (Bin Sub (Lit (realToFrac castStartD)) (Var VarT)) (Lit (realToFrac convergeD)))
     (Lit 0)
     (Lit 1)
+
+-- Spatial extent (func-spec 0010 S7) ----------------------------------------
+
+-- | A conservative axis-aligned bounding box, in world space, containing
+-- every position this emitter can sample over @[0, horizon]@ — returned
+-- as @(min corner, max corner)@.
+--
+-- Conservative means /over/-estimating is allowed and under-estimating is
+-- not: the containment law (@test\/BudgetPlanSpec.hs@) says every
+-- position 'Magic.Particle.Analytic.particlePosition' produces lies
+-- inside the box, and says nothing about how tightly.
+--
+-- The core stops here on purpose. Frustum culling needs a camera, and the
+-- core has no camera concept (ADR-0008: it does not even know which
+-- dimension it is rendered in) — so the /decision/ belongs to the host,
+-- and what the core owes it is this box. Func-spec 0010 §8 non-goal 3.
+--
+-- Derivation: the box is the cube of radius @R@ around the emitter's
+-- anchor, where @R@ sums the worst case of each term of the position
+-- formula — spawn offset (shape extent × the range curve's largest
+-- magnitude), trajectory travel and lateral radius, and drift over the
+-- longest age a particle can reach — and then multiplies by
+-- @1 + max|1 − k_c|@ for the convergence modulation, which can only
+-- rescale the transverse part of that same offset. Curve magnitudes come
+-- from interval arithmetic over the 'Expr' AST, so a player formula is
+-- bounded without being evaluated per particle.
+emitterBounds :: CastContext -> Seconds -> EmitterSpec -> (V3, V3)
+emitterBounds ctx (Seconds horizon) em = (anchorW - corner, anchorW + corner)
+  where
+    corner = V3 radius radius radius
+
+    facing = normalize (casterFacing ctx)
+    (fu, fw) = basisFromNormal facing
+    toWorld (V3 x y z) = vscale x fu + vscale y fw + vscale z facing
+    anchorW = casterPos ctx + toWorld (anchorOffset (emAnchor em))
+
+    Motion spawnPattern trajectory _radiation drift mRange mConverge = emMotion em
+    Seconds lifetime = envLifetime (emSpawn em)
+
+    -- The oldest a particle of this emitter can be within the horizon.
+    maxAge = realToFrac (min lifetime (max 0 horizon)) :: Float
+
+    indexRange = Interval 0 (fromIntegral (max 0 (emCount em - 1)))
+    -- Birth-time frame (spec 0004 §4.4): t = the generation's spawn time,
+    -- life pinned at 0.
+    birthEnv = IntervalEnv (Interval (negate maxAge) (realToFrac (max 0 horizon))) (Interval 0 0) indexRange
+    -- Modulation frame: t = seconds since cast, life = the life fraction.
+    frameEnv = IntervalEnv (Interval 0 (realToFrac (max 0 horizon))) (Interval 0 1) indexRange
+    -- Behavior frame: t = the particle's own age.
+    ageEnv = IntervalEnv (Interval 0 maxAge) (Interval 0 1) indexRange
+
+    rangeScale = maybe 1 (\e -> maxMagnitude (evalInterval e birthEnv)) mRange
+
+    spawnRadius = case spawnPattern of
+      SpawnAtAnchor _ -> 0
+      SpawnOnShape shape -> rangeScale * shapeRadius shape
+
+    trajectoryRadius = case trajectory of
+      Forward speed -> abs (realToFrac speed) * maxAge
+      Spiral speed radius' _ -> abs (realToFrac speed) * maxAge + abs (realToFrac radius')
+      Orbit radius' _ -> abs (realToFrac radius')
+      Formula (ExprV3 x y z) ->
+        maxMagnitude (evalInterval x ageEnv)
+          + maxMagnitude (evalInterval y ageEnv)
+          + maxMagnitude (evalInterval z ageEnv)
+
+    -- The per-particle drift spread draws its two coefficients from
+    -- 'Magic.Types.hashChan' shifted to [-0.5, 0.5].
+    spreadRadius = case spawnPattern of
+      SpawnAtAnchor spread -> abs spread
+      SpawnOnShape _ -> 0
+    driftRadius = maxAge * (spreadRadius + norm drift)
+
+    rawRadius = spawnRadius + trajectoryRadius + driftRadius
+
+    -- pos = raw − (1 − k_c)·transverse, and |transverse| <= |raw − anchor|.
+    convergeSlack = case mConverge of
+      Nothing -> 0
+      Just e -> maxMagnitude (ivSub (Interval 1 1) (evalInterval e frameEnv))
+
+    radius = rawRadius * (1 + convergeSlack)
+
+-- | An upper bound on @|p|@ for any point @p@ the shape samples.
+-- Bounds are the componentwise ones summed rather than the exact circum-
+-- radius: conservative on purpose, and it keeps the arithmetic obvious.
+shapeRadius :: FaceShape -> Float
+shapeRadius shape = case shape of
+  Ring rInner rOuter -> max (abs (realToFrac rInner)) (abs (realToFrac rOuter))
+  Diamond size -> 2 * abs (realToFrac size)
+  Rect (V2 w h) -> (abs w + abs h) / 2
+  HollowSquare size -> abs (realToFrac size)
+
+-- Interval arithmetic over Expr ----------------------------------------------
+
+-- | A closed range of 'Float' values. Endpoints may be infinite, which is
+-- how "unbounded" is spelled.
+data Interval = Interval !Float !Float
+
+data IntervalEnv = IntervalEnv
+  { ivT :: !Interval
+  , ivLife :: !Interval
+  , ivPIndex :: !Interval
+  }
+
+wholeLine :: Interval
+wholeLine = Interval (-1 / 0) (1 / 0)
+
+-- | Any NaN endpoint means the arithmetic left the ordered reals; the
+-- honest answer then is "no bound".
+settle :: Interval -> Interval
+settle iv@(Interval a b)
+  | isNaN a || isNaN b || a > b = wholeLine
+  | otherwise = iv
+
+-- | The largest @|x|@ the interval admits. Infinite for an unbounded one,
+-- which propagates out as an infinite bounding box — a correct "I cannot
+-- bound this" rather than a wrong number.
+maxMagnitude :: Interval -> Float
+maxMagnitude (Interval a b)
+  | isNaN a || isNaN b = 1 / 0
+  | otherwise = max (abs a) (abs b)
+
+ivAdd, ivSub, ivMul, ivDiv, ivMin, ivMax :: Interval -> Interval -> Interval
+ivAdd (Interval a b) (Interval c d) = settle (Interval (a + c) (b + d))
+ivSub (Interval a b) (Interval c d) = settle (Interval (a - d) (b - c))
+ivMul (Interval a b) (Interval c d) =
+  settle (Interval (minimum products) (maximum products))
+  where
+    products = [a * c, a * d, b * c, b * d]
+ivDiv (Interval a b) (Interval c d)
+  | c <= 0 && d >= 0 = wholeLine
+  | otherwise = settle (Interval (minimum quotients) (maximum quotients))
+  where
+    quotients = [a / c, a / d, b / c, b / d]
+ivMin (Interval a b) (Interval c d) = settle (Interval (min a c) (min b d))
+ivMax (Interval a b) (Interval c d) = settle (Interval (max a c) (max b d))
+
+ivNegate :: Interval -> Interval
+ivNegate (Interval a b) = settle (Interval (negate b) (negate a))
+
+-- | Bound an 'Expr' over a range of environments, by structural recursion
+-- over the same closed first-order AST 'Magic.Expr.evalExpr' walks.
+--
+-- Every case is an over-approximation: where a function is not monotone
+-- and not cheap to bound tightly ('Pow', 'FSqrt' of a possibly-negative
+-- range, 'FSign'), it widens rather than guesses.
+evalInterval :: Expr -> IntervalEnv -> Interval
+evalInterval expr env = go expr
+  where
+    go e = case e of
+      Lit x -> settle (Interval x x)
+      Var VarT -> ivT env
+      Var VarLife -> ivLife env
+      Var VarPIndex -> ivPIndex env
+      -- hashChan is documented to land in [0, 1).
+      Chan _ -> Interval 0 1
+      Neg a -> ivNegate (go a)
+      Bin op a b -> binOp op (go a) (go b)
+      Fun1 f a -> fun1 f (go a)
+      Fun2 f a b -> fun2 f (go a) (go b)
+      Fun3 FClamp a lo hi -> ivMin (ivMax (go a) (go lo)) (go hi)
+
+    binOp op = case op of
+      Add -> ivAdd
+      Sub -> ivSub
+      Mul -> ivMul
+      Div -> ivDiv
+      -- Neither monotone nor sign-stable in general; only a fully
+      -- determined exponentiation is worth bounding exactly, and
+      -- 'Magic.Expr.foldConstants' has already collapsed those.
+      Pow -> \_ _ -> wholeLine
+
+    fun1 f iv@(Interval a b) = case f of
+      FSin -> Interval (-1) 1
+      FCos -> Interval (-1) 1
+      FAbs
+        | a >= 0 -> iv
+        | b <= 0 -> settle (Interval (negate b) (negate a))
+        | otherwise -> settle (Interval 0 (max (negate a) b))
+      -- A negative operand yields NaN, which propagates upwards; only a
+      -- wholly non-negative range can be bounded.
+      FSqrt
+        | a >= 0 -> settle (Interval (sqrt a) (sqrt b))
+        | otherwise -> wholeLine
+      -- floor x ∈ (x − 1, x], monotone.
+      FFloor -> settle (Interval (a - 1) b)
+      FSign -> Interval (-1) 1
+
+    fun2 f = case f of
+      FMin -> ivMin
+      FMax -> ivMax
 
 -- | Formation particles' look: the element's own start color, fading to
 -- the same RGB with alpha cleared (a natural per-particle fade, no
