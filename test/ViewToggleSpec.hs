@@ -29,8 +29,10 @@ import App.Hud (formatHud)
 import App.Loop
   ( LoopConfig (..)
   , LoopStats (..)
+  , ViewState (..)
   , applyViewInput
   , defaultCamera
+  , defaultViewState
   , flatViewFor
   , runLoop
   )
@@ -73,6 +75,23 @@ tab, vee :: DemoInput -> DemoInput
 tab i = i {diToggleBackend = True}
 vee i = i {diTogglePlane = True}
 
+-- | A view state in a given backend and plane, everything else at its
+-- default (func-spec 0013 widened 'applyViewInput' from the
+-- @(mode, plane)@ pair to the whole observation state).
+start :: ViewMode -> ViewPlane -> ViewState
+start mode plane =
+  (defaultViewState (1280, 720) defaultCamera)
+    { vsMode = mode
+    , vsPlane = plane
+    , vsFlat = flatViewFor (1280, 720) plane
+    }
+
+-- | The pair the 0008 assertions were written against.
+modeAfter :: DemoInput -> ViewState -> (ViewMode, ViewPlane)
+modeAfter input vs = (vsMode vs', vsPlane vs')
+  where
+    vs' = applyViewInput input vs
+
 -- | What each frame drew, in frame order, whichever backend drew it. The
 -- HUD says which path a frame took, so the two logs can be zipped back
 -- into one sequence.
@@ -89,24 +108,32 @@ fireBytes = BS.readFile "assets/spells/ring-fire.json"
 
 spec :: Spec
 spec = do
-  describe "applyViewInput (func-spec 0008 §4.4)" $ do
+  describe "applyViewInput (func-spec 0008 §4.4, widened by 0013 §4)" $ do
     it "Tab enters the 2D backend on the remembered plane, and leaves again" $ do
-      applyViewInput (tab noInput) (View3D, SideXY) `shouldBe` (View2D SideXY, SideXY)
-      applyViewInput (tab noInput) (View2D SideXY, SideXY) `shouldBe` (View3D, SideXY)
+      modeAfter (tab noInput) (start View3D SideXY) `shouldBe` (View2D SideXY, SideXY)
+      modeAfter (tab noInput) (start (View2D SideXY) SideXY) `shouldBe` (View3D, SideXY)
 
     it "V flips the plane in 2D" $ do
-      applyViewInput (vee noInput) (View2D SideXY, SideXY) `shouldBe` (View2D TopXZ, TopXZ)
-      applyViewInput (vee noInput) (View2D TopXZ, TopXZ) `shouldBe` (View2D SideXY, SideXY)
+      modeAfter (vee noInput) (start (View2D SideXY) SideXY) `shouldBe` (View2D TopXZ, TopXZ)
+      modeAfter (vee noInput) (start (View2D TopXZ) TopXZ) `shouldBe` (View2D SideXY, SideXY)
 
     it "V in 3D changes nothing on screen but is remembered for the next 2D visit" $ do
-      applyViewInput (vee noInput) (View3D, SideXY) `shouldBe` (View3D, TopXZ)
+      modeAfter (vee noInput) (start View3D SideXY) `shouldBe` (View3D, TopXZ)
 
-    it "idle input is the identity" $ do
-      applyViewInput noInput (View2D TopXZ, TopXZ) `shouldBe` (View2D TopXZ, TopXZ)
-      applyViewInput noInput (View3D, SideXY) `shouldBe` (View3D, SideXY)
+    it "idle input is the identity, on the whole view state" $ do
+      applyViewInput noInput (start (View2D TopXZ) TopXZ) `shouldBe` start (View2D TopXZ) TopXZ
+      applyViewInput noInput (start View3D SideXY) `shouldBe` start View3D SideXY
 
     it "both keys on one frame is defined: backend first, then plane" $
-      applyViewInput (tab (vee noInput)) (View3D, SideXY) `shouldBe` (View2D TopXZ, TopXZ)
+      modeAfter (tab (vee noInput)) (start View3D SideXY) `shouldBe` (View2D TopXZ, TopXZ)
+
+    it "flipping the plane re-derives the 2D view for the new axes" $ do
+      let flipped = applyViewInput (vee noInput) (start (View2D SideXY) SideXY)
+      vsFlat flipped `shouldBe` flatViewFor (1280, 720) TopXZ
+
+    it "the camera is untouched by the view keys" $ do
+      let pressed = applyViewInput (tab (vee noInput)) (start View3D SideXY)
+      vsCamera pressed `shouldBe` defaultCamera
 
   describe "flatViewFor" $ do
     it "keeps the window size and puts the side view's caster near the bottom" $ do
@@ -212,4 +239,6 @@ baseHud =
     , hvSpellAge = 0
     , hvReload = ReloadIdle
     , hvView = View3D
+    , hvCamera = defaultCamera
+    , hvFlat = flatViewFor (1280, 720) SideXY
     }

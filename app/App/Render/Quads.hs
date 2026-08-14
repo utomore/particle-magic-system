@@ -11,6 +11,7 @@
 module App.Render.Quads
   ( QuadBatch (..)
   , buildQuads
+  , buildQuadsOrdered
   , billboardBasis
   , quadIndices
   ) where
@@ -76,15 +77,51 @@ billboardBasis pos target up = (right, upv)
 -- 'quadIndices'.
 buildQuads :: V3 -> V3 -> V3 -> ParticleBuffer -> QuadBatch
 buildQuads camPos camTarget camUp pb =
+  buildQuadsWith id (pbCount pb) camPos camTarget camUp pb
+
+-- | 'buildQuads', emitting the quads in the order given by an index
+-- permutation instead of in buffer order (func-spec 0013 §3).
+--
+-- This is what makes alpha blending composite correctly: the caller
+-- (@App.Render.Order@) hands in the far-to-near view order, and the
+-- vertex stream comes out already sorted, so the IO half still does one
+-- mesh update and one draw call. @order@ must be a permutation of
+-- @[0 .. pbCount-1]@; slots beyond its length are not emitted.
+--
+-- Law (@test\/OrderSpec.hs@): with the identity permutation the result is
+-- bit-identical to 'buildQuads' — the two share one worker, so the
+-- ordered path cannot silently drift away from the unordered one.
+buildQuadsOrdered :: U.Vector Int -> V3 -> V3 -> V3 -> ParticleBuffer -> QuadBatch
+buildQuadsOrdered order camPos camTarget camUp pb =
+  buildQuadsWith (order U.!) n camPos camTarget camUp pb
+  where
+    n = min (U.length order) (pbCount pb)
+
+-- | The shared quad-expansion worker, parameterised by which source
+-- particle fills each output slot. Inlined at both (saturated) call
+-- sites, so 'buildQuads' compiles to what it always did: the identity
+-- index function leaves no trace.
+{-# INLINE buildQuadsWith #-}
+buildQuadsWith
+  :: (Int -> Int)
+  -- ^ Output slot -> source particle index.
+  -> Int
+  -- ^ How many slots to emit.
+  -> V3
+  -> V3
+  -> V3
+  -> ParticleBuffer
+  -> QuadBatch
+buildQuadsWith srcOf n camPos camTarget camUp pb =
   QuadBatch {qbPositions = positions, qbColors = colors, qbCount = n}
   where
-    n = pbCount pb
     (V3 rx ry rz, V3 ux uy uz) = billboardBasis camPos camTarget camUp
 
     positions = S.create $ do
       mv <- SM.new (n * 12)
-      forM_ [0 .. n - 1] $ \i -> do
-        let !cx = pbPosX pb U.! i
+      forM_ [0 .. n - 1] $ \j -> do
+        let !i = srcOf j
+            !cx = pbPosX pb U.! i
             !cy = pbPosY pb U.! i
             !cz = pbPosZ pb U.! i
             !h = (pbSize pb U.! i) * 0.5
@@ -94,7 +131,7 @@ buildQuads camPos camTarget camUp pb =
             !hux = ux * h
             !huy = uy * h
             !huz = uz * h
-            !base = i * 12
+            !base = j * 12
             vertex k sr su = do
               SM.write mv (base + k * 3) (cx + sr * hrx + su * hux)
               SM.write mv (base + k * 3 + 1) (cy + sr * hry + su * huy)
@@ -107,9 +144,9 @@ buildQuads camPos camTarget camUp pb =
 
     colors = S.create $ do
       mv <- SM.new (n * 16)
-      forM_ [0 .. n - 1] $ \i -> do
-        let !packed = pbColor pb U.! i
-            !base = i * 16
+      forM_ [0 .. n - 1] $ \j -> do
+        let !packed = pbColor pb U.! srcOf j
+            !base = j * 16
         forM_ [0 .. 3 :: Int] $ \k -> do
           SM.write mv (base + k * 4) (byteAt 24 packed)
           SM.write mv (base + k * 4 + 1) (byteAt 16 packed)

@@ -6,12 +6,14 @@
 module FieldStepSpec (spec) where
 
 import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as U
 import Magic.Particle.Field
   ( FieldState (..)
   , SlotState (..)
   , displacementsInOrder
   , emptyFieldState
   , quiescent
+  , slotAt
   , step
   , stepSlot
   )
@@ -121,11 +123,16 @@ spec = describe "force-field integration state machine (spec 0007 S3)" $ do
       velOf fromBase `shouldBe` velOf afterTwo
 
   describe "FieldState: shape and slot independence" $ do
-    it "emptyFieldState gives one row per emitter, one slot per particle, all empty" $ do
-      let FieldState st = emptyFieldState [2, 3, 0]
-      V.length st `shouldBe` 3
-      map V.length (V.toList st) `shouldBe` [2, 3, 0]
-      concatMap V.toList (V.toList st) `shouldBe` replicate 5 Nothing
+    -- Since func-spec 0010 the state is SoA: the per-emitter rows are a
+    -- prefix-sum layout over flat columns rather than nested vectors.
+    -- The property asserted is the same one — one slot per particle,
+    -- every one of them empty.
+    it "emptyFieldState gives one slot per particle, all empty" $ do
+      let st = emptyFieldState [2, 3, 0]
+      U.toList (fsOffsets st) `shouldBe` [0, 2, 5, 5]
+      U.length (fsAge st) `shouldBe` 5
+      [slotAt st e i | (e, k) <- zip [0 ..] [2, 3, 0 :: Int], i <- [0 .. k - 1]]
+        `shouldBe` replicate 5 Nothing
 
     it "step advances only the slots the caller reports alive" $ do
       let st0 = emptyFieldState [2, 1]

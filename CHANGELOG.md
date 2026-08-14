@@ -43,3 +43,36 @@ delivered function spec (details in `docs/func-spec/`).
   handle lifecycle; determinism holds across the boundary as a tested
   equivalence (FFI path ≡ Haskell path). Core and boundary unchanged.
   (delivered)
+- **0010 performance & particle budget** — the hot path goes end-to-end
+  unboxed: sampling builds the six columns with a count-then-fill pass
+  instead of a boxed intermediate list, `FieldState` becomes flat SoA,
+  `depthOrder` sorts in place, `Expr` constant-folds at compile time, and
+  emitters outside their time window are skipped entirely. The budget stops
+  being a bare `Int`: `ParticleBudget` (per-emitter plan plus total) and
+  `maxSpellParticles` are exported through `Magic.Interface`, so a host can
+  query the cap instead of hard-coding it. Measured: 0.73 ms → 0.27 ms per
+  frame at 4096 particles, 161 → 65 ns per particle, `depthOrder` 10× faster,
+  100 000 particles sampled in 6.5 ms. All ten example spells stay
+  bit-identical, locked as a golden test before any refactor; the cap value
+  itself is untouched (that move belongs to 0012). (delivered)
+- **0011 host integration surface** — three add-only C exports:
+  `pm_max_particles` (the cap becomes a runtime query, so the frozen
+  `PM_MAX_PARTICLES` never has to change again), `pm_project` and
+  `pm_depth_order` (ADR-0008's orthographic projection and painter's order
+  reach non-Haskell hosts). New boundary module `Magic.Columns` — the
+  validating column → buffer door the FFI shell needed. The header now
+  states the colour byte order and the coordinate handedness. A C#
+  reference binding (`bindings/csharp/`) and a Unity example
+  (`examples/unity/`), both held to the header by a contract test and
+  smoke-tested against Unity 6000.5.7f1 in batch mode — the marshaller,
+  the projection entry points and the example's mesh path, re-runnable
+  with `examples/unity/PmSmoke.cs`. (delivered)
+- **0013 visual expressiveness (the `app/*` half)** — the demo becomes an
+  instrument you can look through: alpha batches are staged back to front by
+  camera distance (`App.Render.Order`, additive batches left alone since the
+  sum is order-independent), the 3D view gets an orbit camera (drag) and a
+  wheel dolly, the 2D view gets pan, cursor-anchored zoom and window-resize
+  adaptation, and the top view gets an optional depth tint against the flat
+  blob it used to be. Every control is the identity on idle input, so an
+  untouched run renders exactly what func-spec 0008 delivered — asserted
+  end-to-end. Core, boundary, FFI and `app/Main.hs` untouched. (delivered)

@@ -47,6 +47,7 @@ flatView plane =
     , fvScreenSize = (1280, 720)
     , fvOrigin = (640, 576)
     , fvPixelsPerUnit = 60
+    , fvDepthTint = 0
     }
 
 batchOf :: BlendMode -> Int -> RenderBatch
@@ -113,6 +114,13 @@ spec = describe "the DrawFlat operation (func-spec 0008 §4.3)" $ do
     it "are idle in noInput, so every existing script keeps its meaning" $ do
       diToggleBackend noInput `shouldBe` False
       diTogglePlane noInput `shouldBe` False
+      -- Func-spec 0013's additions, held to the same standard: an idle
+      -- frame must carry no gesture at all, not a zero-sized one.
+      diToggleTint noInput `shouldBe` False
+      diOrbitDrag noInput `shouldBe` Nothing
+      diPanDrag noInput `shouldBe` Nothing
+      diWheel noInput `shouldBe` 0
+      diCursor noInput `shouldBe` (0, 0)
 
     it "a run that never toggles draws through the 3D path only" $ do
       let frames = 60

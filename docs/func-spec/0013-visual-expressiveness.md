@@ -1,6 +1,6 @@
 # Func-Spec 0013：視覺表現力（app/* 半場：深度排序、相機、俯視可讀性）
 
-> 狀態：**設計定案，待實作**
+> 狀態：**已完成**（2026-08-14，驗收紀錄見 §9）
 > 性質：一般 —— 交付後 `App.Render.Order` 匯出面與新效果 op 依殼層加法慣例（0005）穩定。
 > 前置依賴：**無**（0005/0008 已完成；純 `app/*` 工作）。**與 spec 0010、0011 三方平行**：本 spec 鎖 `app/*`，0010 鎖 core／`Interface.hs`／bench（明文不碰 `app/*`），0011 鎖 `src/ffi`＋`include`＋新目錄——檔案零交集（§0.2 附證明）。
 > 依據：ADR-0009（動態 quad mesh——排序在 staging 層做，繪製路徑不變）；roadmap §3.4／§4.5（「先做純 `app/*` 的那半」）；0005 §9（3D 深度排序、相機操控記帳）、0008 §9-3/§9-8（2D 相機、俯視深度重疊暴露未解）；architecture §8.6。
@@ -113,13 +113,13 @@ flowchart LR
 
 | # | Todo | 測試 |
 |---|---|---|
-| S1 | `App.Render.Order.viewOrder`＋`buildQuadsOrdered`＋Raylib3D alpha batch 接線 | `test/OrderSpec.hs`（置換有效性、遠到近單調、穩定律、恆等置換 ≡ `buildQuads` 逐位元、additive 不排見證） |
-| S2 | `App.Camera.orbit`/`dolly` | `test/CameraSpec.hs`（目標/半徑守恆律、仰角 clamp、半徑 clamp、零增量恆等） |
-| S3 | `FlatView` 擴欄＋`panBy`/`zoomAt`＋`WindowSize` op | `test/FlatCameraSpec.hs`（游標不動點律、pan 線性、resize 後 `screenOf` 一致、預設值 ≡ 0008 常數） |
-| S4 | 俯視深度色調（`buildFlatQuads` 調變） | `test/DepthTintSpec.hs`（tint=0 逐位元相容、暗化對深度單調、A 通道不變） |
-| S5 | `DemoInput`/`HudView`/`TestInterp`/Loop 狀態機接線＋既有測試機械補欄 | `test/HudSpec.hs`＋`test/ViewToggleSpec.hs` 更新（hvCamera 顯示、輸入腳本狀態機、無輸入回歸哨兵） |
-| S6 | Raylib3D IO 接線（滑鼠拖曳/滾輪/視窗尺寸/游標） | **手動 smoke**（§9 回填：環繞、縮放、2D 平移縮放、俯視 tint 開關目視） |
-| S7 | 端到端驗收 | `test/Acceptance13Spec.hs`（零輸入零漣漪律：headless 摘要 ≡ 0008 交付逐位元；輸入腳本下模擬輸出不受相機影響——視圖/模擬解耦律 0008 版延續） |
+| ✅ S1 | `App.Render.Order.viewOrder`＋`buildQuadsOrdered`＋Raylib3D alpha batch 接線 | `test/OrderSpec.hs`（置換有效性、遠到近單調、穩定律、恆等置換 ≡ `buildQuads` 逐位元、additive 不排見證） |
+| ✅ S2 | `App.Camera.orbit`/`dolly` | `test/CameraSpec.hs`（目標/半徑守恆律、仰角 clamp、半徑 clamp、零增量恆等） |
+| ✅ S3 | `FlatView` 擴欄＋`panBy`/`zoomAt`＋`WindowSize` op | `test/FlatCameraSpec.hs`（游標不動點律、pan 線性、resize 後 `screenOf` 一致、預設值 ≡ 0008 常數） |
+| ✅ S4 | 俯視深度色調（`buildFlatQuads` 調變） | `test/DepthTintSpec.hs`（tint=0 逐位元相容、暗化對深度單調、A 通道不變） |
+| ✅ S5 | `DemoInput`/`HudView`/`TestInterp`/Loop 狀態機接線＋既有測試機械補欄 | `test/HudSpec.hs`＋`test/ViewToggleSpec.hs` 更新（hvCamera 顯示、輸入腳本狀態機、無輸入回歸哨兵） |
+| ✅ S6 | Raylib3D IO 接線（滑鼠拖曳/滾輪/視窗尺寸/游標） | **手動 smoke**（§9 回填：環繞、縮放、2D 平移縮放、俯視 tint 開關目視） |
+| ✅ S7 | 端到端驗收 | `test/Acceptance13Spec.hs`（零輸入零漣漪律：headless 摘要 ≡ 0008 交付逐位元；輸入腳本下模擬輸出不受相機影響——視圖/模擬解耦律 0008 版延續） |
 
 ## 8. 非目標
 
@@ -132,4 +132,45 @@ flowchart LR
 
 ## 9. 驗收紀錄
 
-（實作時回填：日期、`cabal test` 結果、S6 手動 smoke 紀錄；穩定面清單：`viewOrder`/`buildQuadsOrdered`/`orbit`/`dolly`/`panBy`/`zoomAt`、`DemoInput`/`FlatView` 新欄。）
+**日期**：2026-08-14。**結果**：全數通過。
+
+### 9.1 自動測試
+
+- `cabal test`：**756 examples, 0 failures**（0008 交付時 676；本輪淨增 80，來自新增五份 spec 與 `HudSpec`／`FlatEffectsSpec` 的補充斷言）。
+- `cabal build all` 綠：magic-core、magic-boundary、exe、foreign-library；`cabal build bench` 另行綠（bench 只 import `buildQuads`，簽名與行為未動）。
+- 新增測試檔五份：`OrderSpec`（S1）、`CameraSpec`（S2）、`FlatCameraSpec`（S3）、`DepthTintSpec`（S4）、`Acceptance13Spec`（S7）。修改測試三份：`HudSpec`／`ViewToggleSpec`（S5 接線＋補欄）、`FlatQuadSpec`／`FlatEffectsSpec`（`FlatView` 補欄、`noInput` 中性性斷言）。
+
+### 9.2 S6 手動 smoke（真實視窗，合成滑鼠／鍵盤事件驅動＋逐步截圖）
+
+以 `SetCursorPos`／`mouse_event`／`SendKeys` 驅動實際 demo 視窗，每步截圖後由 HUD 數值核對。**零輸入零漣漪律在真實視窗中成立**：開機不碰任何輸入直接 Tab，2D 視圖恰為 `zoom: 60 px/unit  origin: 640, 576  tint: off`；再按 V 恰為 `origin: 640, 360`——即 0008 的常數，未被任何輸入污染。
+
+| 動作 | HUD 讀數 | 對照 |
+|---|---|---|
+| 開機（未觸碰） | `cam: r 8.7 az 45 el 13` | `defaultCamera`（offset (6,2,6)：r=√76、az=45°、el=13.3°） |
+| 左鍵拖曳 (+260, −90) px | `az −33 el −14`，r 仍 8.7 | 恰為 260×0.3=78° 與 90×0.3=27°；**半徑守恆律目視成立** |
+| 滾輪 +4 格 | `r 5.0` | 8.7 / 1.15⁴ = 4.97 |
+| 滾輪 −4 格（回復） | `r 8.7` | 可逆，無累積漂移 |
+| Tab → 2D 側視 → 拖曳＋滾輪 +3 | `zoom: 91 px/unit`、origin 位移 | 60×1.15³ = 91.3 |
+| V → 俯視 | `2D top (X/Z)  origin: 640, 360` | `flatViewFor TopXZ`（平面切換重導視圖） |
+| T → 深度色調 | `tint: on`，粒子由單一白色變為明暗有別 | 俯視重疊團塊出現深度層次（S4 的目的） |
+| Tab → 回 3D | `cam: r 8.7 az 45 el 13` | **2D 的平移／縮放完全沒碰到相機**——steer 依模式分派的目視證明 |
+
+一次連續腳本另跑 1471 幀後 `CloseMainWindow` 乾淨結束（`frames=1471 simSteps=1474 casts=3`，casts>1 為法術壽命結束自動重施，非本輪行為）。註記：第一次 smoke 曾出現滾輪方向漏送與 2D 初值非預設，經隔離重測（放慢合成事件間隔至 250 ms）證實為 Windows 合成滑鼠事件的送達時序問題，非程式行為——放慢後三次量測全部吻合上表。
+
+### 9.3 凍結／穩定面清單
+
+- `App.Render.Order`：`viewOrder`、`identityOrder`、`orderedQuads`
+- `App.Render.Quads`：`buildQuadsOrdered`（`buildQuads` 簽名與逐位元行為不變）
+- `App.Camera`：`Orbit(..)`、`toOrbit`、`fromOrbit`、`orbit`、`dolly`、`minRadius`/`maxRadius`/`maxElevation`
+- `App.Render.Flat`：`panBy`、`zoomAt`、`resizeTo`、`minPixelsPerUnit`/`maxPixelsPerUnit`
+- `App.Effects`：`FlatView.fvDepthTint`；`DemoInput` 五個新欄；`HudView.hvCamera`/`hvFlat`；`Raylib` 的 `WindowSize` op 與 `windowSize`
+- `App.Loop`：`ViewState(..)`、`defaultViewState`、`applyViewInput`（擴充後）、`orbitDegreesPerPixel`、`depthTintStrength`
+
+### 9.4 與設計的差異（皆為加法，實作時發現）
+
+1. **`DemoInput` 多一欄 `diToggleTint`（T 鍵）**。§2 列的四欄不含色調開關，但 §7 S6 要求「tint 開關目視」、§1-4 要求「係數可關」——沒有按鍵就無法在 demo 裡開啟。加一個鍵是唯一能同時滿足兩者的作法。
+2. **`HudView` 加兩欄而非一欄**：`hvCamera`（3D）與 `hvFlat`（2D）。單一「摘要欄」在 2D 模式下會讓平移／縮放／色調三個狀態完全無法從 HUD 或 headless 測試讀出；HUD 只印當下生效的那一組。
+3. **`applyViewInput` 的「擴充」實作為具名記錄 `ViewState`** 而非加寬的 tuple——四元組的可讀性太差。`LoopState` 仍依 §3 保留 `stCamera`／`stFlat` 四個平坦欄位，逐幀打包／解包。
+4. **多一個 `resizeTo`**：§3 只列 `panBy`／`zoomAt`，但 §1-3 要求 resize 時 `fvScreenSize` 跟隨，該轉換需要自己的律（螢幕中心的世界點不動），故獨立成函數並列入測試。
+5. **`LoopConfig` 未加新欄**（§0.2 曾預期 `app/Main.hs` 要改初值）：相機初值沿用既有的 `lcCamera`，2D 初值由 `flatViewFor` 給出，色調預設 0 由 `flatViewFor` 帶出。少一個設定欄＝少一圈對七份既有測試 config 的漣漪，也讓「零輸入零漣漪」更容易成立。`app/Main.hs` 因此**零修改**（§0.2 的修改清單少一檔）。
+6. **`WindowSize` 在 headless 由 `WithWindow` 的尺寸回答**（`TestInterp` 記錄開窗尺寸），而非另開設定參數——既有測試因此完全不需要改 config，且 headless 下 `resizeTo` 恆為 identity。

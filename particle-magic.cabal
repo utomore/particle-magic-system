@@ -18,8 +18,12 @@ extra-doc-files:    README.md
                     CHANGELOG.md
 -- The C ABI contract and its example host (func-spec 0009): shipped so a
 -- non-Haskell consumer gets the header and a working reference host.
+-- The C# reference binding joins them in func-spec 0011: same purpose,
+-- next language along (test/BindingContractSpec.hs keeps it in step with
+-- the header).
 extra-source-files: include/particle_magic.h
                     examples/c/main.c
+                    bindings/csharp/ParticleMagic.cs
 
 source-repository head
     type:     git
@@ -58,6 +62,7 @@ library magic-boundary
                       Magic.Projection
                       Magic.Step
                       Magic.Expr.Parse
+                      Magic.Columns
     -- 'vector' joins the boundary layer in func-spec 0007: Magic.Interface
     -- feeds the force-field layer per-slot inputs and adds its
     -- displacements onto the sampled SoA buffer. Already inside the
@@ -80,9 +85,11 @@ executable particle-magic
                     , App.HotReload
                     , App.Loop
                     , App.TestInterp
+                    , App.Camera
                     , App.Render.Raylib3D
                     , App.Render.Quads
                     , App.Render.Flat
+                    , App.Render.Order
                     , App.Hud
     build-depends:    base
                     , particle-magic:magic-boundary
@@ -196,12 +203,31 @@ test-suite spec
                     , FieldStepObserveSpec
                     , FieldRebirthSpec
                     , Acceptance7Spec
+                    , PerfGoldenSpec
+                    , SampleFillSpec
+                    , CullSpec
+                    , FieldSoASpec
+                    , DepthSortSpec
+                    , ExprFoldSpec
+                    , BudgetPlanSpec
+                    , Acceptance10Spec
+                    , ColumnsSpec
+                    , FFIProjectSpec
+                    , BindingContractSpec
+                    , Acceptance11Spec
+                    , CameraSpec
+                    , OrderSpec
+                    , FlatCameraSpec
+                    , DepthTintSpec
+                    , Acceptance13Spec
                     , App.Effects
                     , App.HotReload
                     , App.Loop
                     , App.TestInterp
+                    , App.Camera
                     , App.Render.Quads
                     , App.Render.Flat
+                    , App.Render.Order
                     , App.Hud
     build-depends:    base
                     , particle-magic:magic-core
@@ -228,7 +254,16 @@ benchmark bench
     main-is:          Bench.hs
     hs-source-dirs:   bench, app
     other-modules:    App.Render.Quads
+    -- magic-core is reachable from here (and only from here): func-spec
+    -- 0010 S8 measures the 10k-100k range, which is past 'budgetCap', so
+    -- the synthetic fixtures are built as 'CompiledSpell' values directly
+    -- instead of going through 'compile'. The sampler itself never
+    -- consults the cap, so this measures the real code path -- and the
+    -- benchmark stanza is outside the dependency whitelist BoundarySpec
+    -- guards precisely so a measuring instrument can reach further than a
+    -- shipped component may.
     build-depends:    base
+                    , particle-magic:magic-core
                     , particle-magic:magic-boundary
                     , tasty-bench
                     , bytestring

@@ -33,9 +33,12 @@ module Magic.Expr
   , evalFinite
   , evalFiniteV3
   , exprSize
+
+    -- * Compile-time simplification (func-spec 0010 S6)
+  , foldConstants
   ) where
 
-import Magic.Types (Seed, V3 (..), hashChan)
+import Magic.Types (Seed (..), V3 (..), hashChan)
 
 -- | A math formula. Fixed arity is encoded in the constructors ('Fun3'
 -- carries exactly three children), so an ill-formed application is
@@ -100,6 +103,7 @@ data ExprEnv = ExprEnv
 -- func-spec 0003; deterministic — the same @(Expr, ExprEnv)@ always
 -- yields the same bits.
 evalExpr :: Expr -> ExprEnv -> Float
+{-# INLINABLE evalExpr #-}
 evalExpr expr env = go expr
   where
     go :: Expr -> Float
@@ -155,12 +159,65 @@ evalFinite :: Expr -> ExprEnv -> Float
 evalFinite e env =
   let v = evalExpr e env
    in if isNaN v || isInfinite v then 0 else v
+{-# INLINE evalFinite #-}
 
 -- | Componentwise 'evalFinite': each component flushes NaN/±Infinity to
 -- 0 independently of the others.
 evalFiniteV3 :: ExprV3 -> ExprEnv -> V3
 evalFiniteV3 (ExprV3 x y z) env =
   V3 (evalFinite x env) (evalFinite y env) (evalFinite z env)
+{-# INLINE evalFiniteV3 #-}
+
+-- | Pre-evaluate every variable-free subtree (func-spec 0010 S6,
+-- architecture §8.2 stage one). Applied by 'Magic.Compile.compile', so a
+-- player formula pays for its constant arithmetic once at compile time
+-- instead of once per particle per frame.
+--
+-- Law: @evalExpr (foldConstants e) env ≡ evalExpr e env@, bit for bit,
+-- for every @env@. It holds because folding uses the /same/ 'evalExpr' on
+-- a subtree whose value cannot depend on the environment, and substitutes
+-- the resulting 'Float' verbatim — including NaN and ±Infinity, which are
+-- values here like any other and are flushed, as always, only by
+-- 'evalFinite' at the very end.
+--
+-- The AST and the parser are untouched: this is a rewrite of the tree,
+-- not of the language.
+foldConstants :: Expr -> Expr
+foldConstants e = case e of
+  Lit _ -> e
+  Var _ -> e
+  Chan _ -> e
+  Neg a -> collapse (Neg (foldConstants a))
+  Bin op a b -> collapse (Bin op (foldConstants a) (foldConstants b))
+  Fun1 f a -> collapse (Fun1 f (foldConstants a))
+  Fun2 f a b -> collapse (Fun2 f (foldConstants a) (foldConstants b))
+  Fun3 f a b c -> collapse (Fun3 f (foldConstants a) (foldConstants b) (foldConstants c))
+  where
+    -- The children are already folded, so "no variable anywhere below"
+    -- is exactly "every immediate child is a literal".
+    collapse node
+      | all isLit (children node) = Lit (evalExpr node constEnv)
+      | otherwise = node
+    isLit (Lit _) = True
+    isLit _ = False
+
+children :: Expr -> [Expr]
+children e = case e of
+  Lit _ -> []
+  Var _ -> []
+  Chan _ -> []
+  Neg a -> [a]
+  Bin _ a b -> [a, b]
+  Fun1 _ a -> [a]
+  Fun2 _ a b -> [a, b]
+  Fun3 _ a b c -> [a, b, c]
+
+-- | The environment a closed subtree is evaluated in. Every field is
+-- unreachable by construction — a subtree with no 'Var' and no 'Chan'
+-- never reads it — so the values are arbitrary, and chosen to be the
+-- ones that make an accidental read obvious.
+constEnv :: ExprEnv
+constEnv = ExprEnv {envT = 0, envLife = 0, envPIndex = 0, envSeed = Seed 0}
 
 -- | AST node count (every constructor counts as one node). Used by the
 -- parse-layer size gate and by tests.

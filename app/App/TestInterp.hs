@@ -115,7 +115,13 @@ runRaylibHeadlessWith
   -> Eff es (a, HeadlessLog)
 runRaylibHeadlessWith inputs frameLimit =
   reinterpret (fmap repack . runState initial) $ \env -> \case
-    WithWindow _ _ _ inner -> localSeqUnlift env (\unlift -> unlift inner)
+    WithWindow w h _ inner -> do
+      -- The headless "window" is whatever size the loop asked for, so
+      -- 'WindowSize' answers without any interpreter configuration and a
+      -- run that never resizes sees exactly the configured size.
+      state (\hc -> ((), hc {hcWindow = (w, h)}))
+      localSeqUnlift env (\unlift -> unlift inner)
+    WindowSize -> state (\hc -> (hcWindow hc, hc))
     WithFrame inner -> do
       state (\h -> ((), h {hcFrames = hcFrames h + 1}))
       localSeqUnlift env (\unlift -> unlift inner)
@@ -157,6 +163,7 @@ runRaylibHeadlessWith inputs frameLimit =
         , hcHuds = []
         , hcFlats = []
         , hcInputs = inputs
+        , hcWindow = (1280, 720)
         }
     repack (a, h) =
       ( a
@@ -178,4 +185,7 @@ data HeadlessCount = HeadlessCount
   , hcHuds :: ![HudView]
   , hcFlats :: ![(ViewPlane, BlendMode, Int)]
   , hcInputs :: ![DemoInput]
+  , hcWindow :: !(Int, Int)
+  -- ^ Size the loop opened its window at; what 'WindowSize' answers,
+  -- until a test grows a way to script a resize.
   }

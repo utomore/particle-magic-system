@@ -28,6 +28,7 @@ sideView =
     , fvScreenSize = (1280, 720)
     , fvOrigin = (640, 576)
     , fvPixelsPerUnit = 60
+    , fvDepthTint = 0
     }
 
 topView :: FlatView
@@ -170,9 +171,18 @@ spec = describe "flat (2D) quad staging (func-spec 0008 §4.3)" $ do
         (qb, qb2) = (buildFlatQuads fv pb, buildFlatQuads fv2 pb)
         (ox, oy) = fvOrigin fv
      in conjoin
-          [ let (x, y, _) = vertexAt qb j k
+          [ -- An offset from the origin is a difference of two numbers of
+            -- screen magnitude, so it carries the *position's* rounding
+            -- error, not its own — a vertex that lands almost exactly on
+            -- the origin axis has an offset near zero and an error near
+            -- one ulp of ~600. Bound by the magnitudes actually involved,
+            -- for the same reason 'nearPixels' exists.
+            let (x, y, _) = vertexAt qb j k
                 (x2, y2, _) = vertexAt qb2 j k
-             in property (close 1e-4 (x2 - ox) (2 * (x - ox)) && close 1e-4 (y2 - oy) (2 * (y - oy)))
+             in property
+                  ( nearPixels fv2 x2 (x2 - ox) (2 * (x - ox))
+                      && nearPixels fv2 y2 (y2 - oy) (2 * (y - oy))
+                  )
           | j <- [0 .. qbCount qb - 1]
           , k <- [0 .. 3]
           ]

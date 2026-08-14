@@ -10,7 +10,8 @@ import Text.Printf (printf)
 
 import Magic.Projection (ViewPlane (..))
 
-import App.Effects (HudView (..), ReloadStatus (..), ViewMode (..))
+import App.Camera (Orbit (..), toOrbit)
+import App.Effects (FlatView (..), HudView (..), ReloadStatus (..), ViewMode (..))
 
 -- | One string per HUD line. A failed load contributes its full error
 -- text, expanded so embedded newlines (JSON path + parse position from
@@ -22,9 +23,12 @@ formatHud v =
   , "spell: " ++ hvSpellPath v
   , printf "age: %.2fs" (hvSpellAge v)
   , "view: " ++ viewLabel (hvView v)
+  , steerLine v
   ]
     ++ reloadLines (hvReload v)
-    ++ ["[<-] [->] switch spell   [R] recast   [Tab] 2D/3D   [V] plane"]
+    ++ [ "[<-] [->] switch spell   [R] recast   [Tab] 2D/3D   [V] plane   [T] depth tint"
+       , "[drag] orbit / pan   [wheel] zoom"
+       ]
 
 -- | How the current backend reads on screen (func-spec 0008 §4.4).
 viewLabel :: ViewMode -> String
@@ -32,6 +36,31 @@ viewLabel mode = case mode of
   View3D -> "3D"
   View2D SideXY -> "2D side (X/Y)"
   View2D TopXZ -> "2D top (X/Z)"
+
+-- | Where the live view has been steered to (func-spec 0013 §4): the
+-- orbit camera in 3D, the pan/zoom/tint settings in 2D.
+--
+-- Only the live one is reported. A reader who has just dragged wants to
+-- know where they are now, and a line describing the view they are not
+-- looking at is noise.
+steerLine :: HudView -> String
+steerLine v = case hvView v of
+  View3D ->
+    let ob = toOrbit (hvCamera v)
+     in printf
+          "cam: r %.1f  az %.0f  el %.0f"
+          (obRadius ob)
+          (obAzimuth ob)
+          (obElevation ob)
+  View2D _ ->
+    let fv = hvFlat v
+        (ox, oy) = fvOrigin fv
+     in printf
+          "zoom: %.0f px/unit  origin: %.0f, %.0f  tint: %s"
+          (fvPixelsPerUnit fv)
+          ox
+          oy
+          (if fvDepthTint fv > 0 then "on" else "off" :: String)
 
 reloadLines :: ReloadStatus -> [String]
 reloadLines status = case status of
