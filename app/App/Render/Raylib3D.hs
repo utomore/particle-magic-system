@@ -34,12 +34,13 @@ import Effectful.Dispatch.Dynamic (interpret, localSeqUnliftIO)
 import Foreign (Ptr, Storable (poke, sizeOf), castPtr, free, malloc)
 import qualified Raylib.Core as RL
 import qualified Raylib.Core.Models as RLM
+import qualified Raylib.Core.Shapes as RLS
 import qualified Raylib.Core.Text as RLT
 import Raylib.Types
   ( Camera3D (..)
   , CameraProjection (CameraPerspective)
   , Color (..)
-  , KeyboardKey (KeyLeft, KeyR, KeyRight)
+  , KeyboardKey (KeyLeft, KeyR, KeyRight, KeyTab, KeyV)
   , Material
   , Matrix
   , Mesh (..)
@@ -57,10 +58,12 @@ import qualified Raylib.Util.RLGL as RLGL
 import App.Effects
   ( Camera (..)
   , DemoInput (..)
+  , FlatView (..)
   , HudView
   , Raylib (..)
   )
 import App.Hud (formatHud)
+import App.Render.Flat (buildFlatQuads)
 import App.Render.Quads (QuadBatch (..), buildQuads, quadIndices)
 import Magic.Interface
   ( BlendMode (..)
@@ -106,6 +109,7 @@ runRaylibIO action = do
               unlift inner
         DrawBatch cam batch -> liftIO (withGpu gpuRef $ \gpu -> drawSceneIO gpu cam [batch])
         DrawScene cam batches -> liftIO (withGpu gpuRef $ \gpu -> drawSceneIO gpu cam batches)
+        DrawFlat fv batches -> liftIO (withGpu gpuRef $ \gpu -> drawFlatIO gpu fv batches)
         DrawHud view -> liftIO (drawHudIO view)
         ShouldClose -> liftIO RL.windowShouldClose
         PollInput -> liftIO pollInputIO
@@ -205,6 +209,45 @@ drawSceneIO gpu cam batches =
           )
           (uploadAndDraw gpu quads)
 
+-- | The 2D path (func-spec 0008 §4.5). No @BeginMode3D@: raylib's default
+-- state is already a screen-pixel orthographic projection with depth
+-- testing off, so the same dynamic mesh draws the flat, painter-sorted
+-- quads that 'buildFlatQuads' staged — and drawing them in order IS the
+-- depth resolution.
+--
+-- The y-flip in the screen mapping reverses the quads' winding, so
+-- backface culling is disabled around the draw; everything else (blend
+-- bracket, one mesh update + one draw per batch) is the 3D path's budget,
+-- unchanged.
+drawFlatIO :: QuadGpu -> FlatView -> [RenderBatch] -> IO ()
+drawFlatIO gpu fv batches = do
+  drawFlatAxes fv
+  forM_ batches $ \batch -> do
+    let quads = buildFlatQuads fv (rbParticles batch)
+    when (qbCount quads > 0) $
+      bracket_
+        ( do
+            RL.beginBlendMode (toRaylibBlend (rbBlend batch))
+            RLGL.rlDisableBackfaceCulling
+        )
+        ( do
+            RLGL.rlEnableBackfaceCulling
+            RL.endBlendMode
+        )
+        (uploadAndDraw gpu quads)
+
+-- | A faint cross through the world origin: the 2D views have no ground
+-- grid, and without it the caster's position is guesswork.
+drawFlatAxes :: FlatView -> IO ()
+drawFlatAxes fv = do
+  RLS.drawLine 0 oy w oy axisColor
+  RLS.drawLine ox 0 ox h axisColor
+  where
+    (w, h) = fvScreenSize fv
+    (fx, fy) = fvOrigin fv
+    (ox, oy) = (round fx, round fy)
+    axisColor = Color 60 70 90 255
+
 -- | The per-frame hot path: two zero-copy buffer updates, one poke to set
 -- the draw length, one draw call.
 uploadAndDraw :: QuadGpu -> QuadBatch -> IO ()
@@ -245,4 +288,13 @@ pollInputIO = do
   nxt <- RL.isKeyPressed KeyRight
   prv <- RL.isKeyPressed KeyLeft
   rec' <- RL.isKeyPressed KeyR
-  pure DemoInput {diNextSpell = nxt, diPrevSpell = prv, diRecast = rec'}
+  backend <- RL.isKeyPressed KeyTab
+  plane <- RL.isKeyPressed KeyV
+  pure
+    DemoInput
+      { diNextSpell = nxt
+      , diPrevSpell = prv
+      , diRecast = rec'
+      , diToggleBackend = backend
+      , diTogglePlane = plane
+      }

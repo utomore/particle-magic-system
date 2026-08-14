@@ -28,3 +28,8 @@ delivered function spec (details in `docs/func-spec/`).
   semi-implicit Euler, stable particle identity, three field kinds
   (gravity/attractor/vortex); packaging debt (MIT license, public
   sublibraries, PVP bounds, this README/CHANGELOG). (designed, gated on 0006)
+- **0008 2D orthographic backend** — ADR-0008 made executable: `ViewPlane` /
+  `orthographic` / `depthOrder` (stable painter permutation) in
+  `Magic.Project`, re-exported through `Magic.Projection`; a real 2D draw
+  path (screen-space quads, painter order) beside the 3D one, switchable
+  live with Tab / V. Same `FrameOutput`, no core change. (delivered)

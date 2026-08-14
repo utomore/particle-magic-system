@@ -8,7 +8,9 @@ module App.Hud
 
 import Text.Printf (printf)
 
-import App.Effects (HudView (..), ReloadStatus (..))
+import Magic.Projection (ViewPlane (..))
+
+import App.Effects (HudView (..), ReloadStatus (..), ViewMode (..))
 
 -- | One string per HUD line. A failed load contributes its full error
 -- text, expanded so embedded newlines (JSON path + parse position from
@@ -19,9 +21,17 @@ formatHud v =
   , "particles: " ++ show (hvParticles v)
   , "spell: " ++ hvSpellPath v
   , printf "age: %.2fs" (hvSpellAge v)
+  , "view: " ++ viewLabel (hvView v)
   ]
     ++ reloadLines (hvReload v)
-    ++ ["[<-] [->] switch spell   [R] recast"]
+    ++ ["[<-] [->] switch spell   [R] recast   [Tab] 2D/3D   [V] plane"]
+
+-- | How the current backend reads on screen (func-spec 0008 §4.4).
+viewLabel :: ViewMode -> String
+viewLabel mode = case mode of
+  View3D -> "3D"
+  View2D SideXY -> "2D side (X/Y)"
+  View2D TopXZ -> "2D top (X/Z)"
 
 reloadLines :: ReloadStatus -> [String]
 reloadLines status = case status of

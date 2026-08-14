@@ -50,6 +50,7 @@ library magic-boundary
     hs-source-dirs:   src/boundary
     exposed-modules:  Magic.Codec
                       Magic.Interface
+                      Magic.Projection
                       Magic.Step
                       Magic.Expr.Parse
     build-depends:    base                 ^>=4.22
@@ -71,6 +72,7 @@ executable particle-magic
                     , App.TestInterp
                     , App.Render.Raylib3D
                     , App.Render.Quads
+                    , App.Render.Flat
                     , App.Hud
     build-depends:    base
                     , particle-magic:magic-boundary
@@ -132,11 +134,17 @@ test-suite spec
                     , PhaseSampleSpec
                     , BackCompatSpec
                     , Acceptance6Spec
+                    , ProjectSpec
+                    , FlatQuadSpec
+                    , FlatEffectsSpec
+                    , ViewToggleSpec
+                    , Acceptance8Spec
                     , App.Effects
                     , App.HotReload
                     , App.Loop
                     , App.TestInterp
                     , App.Render.Quads
+                    , App.Render.Flat
                     , App.Hud
     build-depends:    base
                     , particle-magic:magic-core

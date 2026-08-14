@@ -42,13 +42,14 @@ flowchart TD
         Loop["App.Loop<br/>固定時步主迴圈"]
         HotReload["App.HotReload<br/>JSON 檔案監看與重載"]
         Render3D["App.Render.Raylib3D<br/>h-raylib 動態 quad mesh 渲染（ADR-0009）"]
-        Render2D["App.Render.Ortho2D<br/>（未來）2D 正交後端"]
+        Render2D["App.Render.Flat<br/>2D 正交後端：投影＋painter 排序＋螢幕映射"]
         FFIShell["Magic.FFI<br/>（未來）foreign-library C ABI 外殼（ADR-0011）"]
     end
 
     subgraph Boundary["邊界層 （純，定義對外格式）"]
         Interface["Magic.Interface<br/>系統唯一入口：<br/>CastRequest / FrameInput / FrameOutput"]
         Codec["Magic.Codec<br/>Aeson 編解碼、schema 版本、<br/>數學式文字剖析"]
+        Projection["Magic.Projection<br/>投影面再匯出（外殼取用投影的唯一通道）"]
     end
 
     subgraph Core["純核心 Magic.* （零 IO）"]
@@ -59,13 +60,14 @@ flowchart TD
         Analytic["Magic.Particle.Analytic<br/>解析層：時間函數取樣"]
         Field["Magic.Particle.Field<br/>（未來）力場層：固定時步純積分"]
         Buffer["Magic.Particle.Buffer<br/>SoA 粒子緩衝"]
-        Project["Magic.Project<br/>投影抽象（3D/2D）"]
+        Project["Magic.Project<br/>投影抽象：project=id（3D）、<br/>orthographic/depthOrder（2D，spec 0008）"]
     end
 
     Loop --> Interface
     HotReload --> Codec
     Render3D --> Interface
-    Render2D -.-> Interface
+    Render2D --> Interface
+    Render2D --> Projection
     FFIShell -.-> Interface
     FFIShell -.-> Codec
 
@@ -83,6 +85,8 @@ flowchart TD
     Analytic --> Buffer
     Field -.-> Buffer
     Interface --> Project
+    Projection --> Project
+    Project --> Buffer
 ```
 
 **關鍵約束**：
@@ -443,7 +447,7 @@ observeSpell :: ActiveSpell -> FrameOutput
 3. **熱重載下的狀態遷移**：魔法陣 JSON 改變時，進行中的 `ActiveSpell` 怎麼辦？POC 策略：重載＝重新施法（狀態歸零）。未來若要「編輯中即時 morphing」，解析式模型天然支援（同一個 `t` 用新 spell 取樣即可），但 `FieldState` 無法對應遷移，需定義淡出/淡入規則。
 4. **多魔法並行的緩衝管理**：多個 `ActiveSpell` 各持有預算緩衝，總量需要全域上限與配額策略（先到先得？按 power 分配？）——目前介面已預留 `ParticleBudget`，策略留待遊戲層。
 5. **h-raylib 的 FFI 邊界開銷**：每幀把 SoA 緩衝交給 raylib instanced 繪製，若 h-raylib 的綁定強制逐元素 marshalling 會抵銷 SoA 的優勢；需要確保走 `unsafeWith`/指標直傳路徑（見 §9）。
-6. **2D 後端實際落地時的投影語意**：正交投影丟一軸在數學上簡單，但「沿法線擴充立體」的魔法在 2D 下的可讀性（深度重疊）需要視覺設計介入，可能要在 `Magic.Project` 加深度排序/壓平策略。
+6. **2D 後端實際落地時的投影語意**：正交投影丟一軸在數學上簡單，但「沿法線擴充立體」的魔法在 2D 下的可讀性（深度重疊）需要視覺設計介入，可能要在 `Magic.Project` 加深度排序/壓平策略。——**已由 spec 0008 落地**：`Magic.Project` 加了 `ViewPlane`/`orthographic`/`depthOrder`（painter 穩定置換），demo 可即時切 3D／2D 側視／2D 俯視。深度排序這一半已兌現；**可讀性的視覺設計解仍未做**——俯視就是把重疊問題暴露出來的實驗台，壓平比例、輪廓強調等留給後續視覺 spec。
 
 ## 9. 目前技術困難
 
@@ -462,7 +466,7 @@ observeSpell :: ActiveSpell -> FrameOutput
 | 新 Expr 運算子 | `Expr` 加建構子＋`eval` 加 case＋剖析器加規則 | 求值器是單一 fold；序列化自動涵蓋（tagged JSON） |
 | 新屬性元素 | `Element` 加建構子＋顏色/混合對照表加一列 | 屬性只在步驟 1 轉成 `Appearance`，影響面封閉 |
 | 新渲染後端/新遊戲宿主 | 實作新的 `App.Render.*`，消費 `FrameOutput` | 輸出格式零 raylib 依賴（§5.2）；核心完全不動 |
-| 新投影（2D） | `Magic.Project` 加投影函數 | 核心座標本來就是抽象 3D（§1.5） |
+| 新投影（2D） | `Magic.Project` 加投影函數 | 核心座標本來就是抽象 3D（§1.5）；**已由 spec 0008 實證**：同一份 `FrameOutput`，換投影即換維度，核心零變更 |
 | 新生命週期階段 | `Phase` 加建構子＋`PhasePlan` 排程 | 階段是資料驅動的時間表，不是硬編碼狀態機 |
 
 ## 11. 不容易擴充與改動的地方（明知的代價）

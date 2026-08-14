@@ -17,6 +17,8 @@ module App.Loop
   ( LoopConfig (..)
   , LoopStats (..)
   , defaultCamera
+  , applyViewInput
+  , flatViewFor
   , runLoop
   ) where
 
@@ -43,15 +45,20 @@ import Magic.Interface
   )
 import Magic.Step (StepPlan (..), plan)
 
+import Magic.Projection (ViewPlane (..))
+
 import App.Effects
   ( Camera (..)
   , Clock
   , DemoInput (..)
   , FileWatch
+  , FlatView (..)
   , HudView (..)
   , Raylib
   , ReloadStatus (..)
+  , ViewMode (..)
   , checkChanged
+  , drawFlat
   , drawHud
   , drawScene
   , now
@@ -106,6 +113,55 @@ defaultCamera =
 fpsAlpha :: Double
 fpsAlpha = 0.1
 
+-- | Screen scale of the 2D backend, in pixels per world unit. Together
+-- with 'flatViewFor' this is the whole presentation policy of the flat
+-- path — deliberately shell-side constants (func-spec 0008 §4.6), not
+-- part of the frozen projection surface.
+flatPixelsPerUnit :: Float
+flatPixelsPerUnit = 60
+
+-- | The flat view for a window size and plane. The side view puts the
+-- caster near the bottom (spells fire upwards, so the headroom goes
+-- above); the top view centres the world origin, since a formation
+-- spreads out around it.
+flatViewFor :: (Int, Int) -> ViewPlane -> FlatView
+flatViewFor (w, h) plane =
+  FlatView
+    { fvPlane = plane
+    , fvScreenSize = (w, h)
+    , fvOrigin = case plane of
+        SideXY -> (fw * 0.5, fh * 0.8)
+        TopXZ -> (fw * 0.5, fh * 0.5)
+    , fvPixelsPerUnit = flatPixelsPerUnit
+    }
+  where
+    fw = fromIntegral w
+    fh = fromIntegral h
+
+-- | The view state machine (Tab, then V). Pressing both on one frame is
+-- defined rather than forbidden: the backend switches first, the plane
+-- second. The plane is remembered across backends, so it can be chosen
+-- while still in 3D.
+applyViewInput :: DemoInput -> (ViewMode, ViewPlane) -> (ViewMode, ViewPlane)
+applyViewInput input = togglePlane . toggleBackend
+  where
+    toggleBackend (mode, plane)
+      | not (diToggleBackend input) = (mode, plane)
+      | otherwise = case mode of
+          View3D -> (View2D plane, plane)
+          View2D _ -> (View3D, plane)
+    togglePlane (mode, plane)
+      | not (diTogglePlane input) = (mode, plane)
+      | otherwise =
+          let plane' = flipPlane plane
+           in ( case mode of
+                  View3D -> View3D
+                  View2D _ -> View2D plane'
+              , plane'
+              )
+    flipPlane SideXY = TopXZ
+    flipPlane TopXZ = SideXY
+
 data LoopState = LoopState
   { stCircle :: !(Maybe Circle)
   -- ^ Latest successfully loaded circle (kept for finish restarts).
@@ -121,6 +177,11 @@ data LoopState = LoopState
   -- ^ The file currently loaded and watched.
   , stReload :: !ReloadStatus
   , stFpsEma :: !Double
+  , stView :: !ViewMode
+  -- ^ Which backend draws (func-spec 0008). Observation-side state: it
+  -- is orthogonal to the simulation and survives reloads and re-casts.
+  , stPlane :: !ViewPlane
+  -- ^ The remembered orthographic plane, also while in 3D.
   }
 
 runLoop
@@ -149,6 +210,8 @@ runLoop cfg =
           -- the demo shows the reason instead of a black window.
           stReload = either (ReloadFailed t0) (const ReloadIdle) loaded
         , stFpsEma = 0
+        , stView = View3D
+        , stPlane = SideXY
         }
 
 frameLoop
@@ -173,6 +236,9 @@ frameLoop cfg st = do
 
       input <- pollInput
       let index' = shiftIndex cfg input (stIndex st)
+          -- Purely observational: the view never feeds back into the
+          -- simulation, so switching it cannot disturb a running spell.
+          (view', plane') = applyViewInput input (stView st, stPlane st)
 
       st1 <-
         if index' /= stIndex st
@@ -212,10 +278,17 @@ frameLoop cfg st = do
               , hvSpellPath = stPath st2
               , hvSpellAge = maybe 0 (\s -> let Time a = spellAge s in a) spell'
               , hvReload = stReload st2
+              , hvView = view'
               }
 
       withFrame $ do
-        drawScene (lcCamera cfg) (batches output')
+        -- One 'FrameOutput', two consumers (ADR-0008): the 3D backend
+        -- takes it through a perspective camera, the 2D one through an
+        -- orthographic projection. Neither the sampling above nor the
+        -- output itself knows which.
+        case view' of
+          View3D -> drawScene (lcCamera cfg) (batches output')
+          View2D p -> drawFlat (flatViewFor (lcWindowSize cfg) p) (batches output')
         drawHud hud
 
       frameLoop
@@ -227,6 +300,8 @@ frameLoop cfg st = do
           , stFrames = stFrames st2 + 1
           , stSimSteps = stSimSteps st2 + stepsRun
           , stFpsEma = fps'
+          , stView = view'
+          , stPlane = plane'
           }
 
 -- | @n@ pure time advances, no sampling.
