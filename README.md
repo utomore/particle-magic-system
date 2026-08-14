@@ -128,6 +128,11 @@ functions.
 ## Repository layout
 
 - `docs/architecture.md` — the system design (Traditional Chinese)
+- `docs/integration.md` — host integration guide: Haskell, C/C++, Unity (C#)
+  and any other shared-library host — data contract, coordinate system,
+  pitfalls, current limits
+- `docs/roadmap.md` — completeness assessment and the ordered candidate list
+  for the next function specs
 - `docs/adr/` — architecture decision records
 - `docs/func-spec/` — per-iteration function specs (design-before-code, each
   todo paired 1-to-1 with a test module)

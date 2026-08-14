@@ -10,6 +10,8 @@
 | `docs/architecture.md` | 系統架構設計書：模組結構、資料流、型別草圖、介面規格、風險分析 | 任何設計/實作前必讀；架構層變動時更新 |
 | `docs/adr/NNNN-*.md` | 架構決策紀錄（ADR）：一份一決策，含背景/決策/後果/被否決方案 | 違反前必先修訂；新的架構級決策新增一份 |
 | `docs/func-spec/NNNN-*.md` | **功能規格書（function spec）**：一份對應一個模組或一次程式設計迭代的實作細節 | 每輪實作**動工前**寫定；實作中回填驗收紀錄 |
+| `docs/roadmap.md` | **路線圖與完整度盤點**：還差什麼、下一輪該蓋哪一個。內容由各 spec 的 §9 非目標與驗收紀錄盤點而來，不引入新決策 | 決定下一份 spec 主題時讀；每次 func-spec 驗收後更新 |
+| `docs/integration.md` | **宿主整合指南**：Haskell／C／C++／Unity／自製前端各自怎麼接，資料合約速查、限制與相容性承諾 | 對外介面（`Magic.Interface`／`Magic.Codec`／`Magic.Projection`／C ABI header）變動時同步更新 |
 
 ## Func-Spec：功能規格書
 
