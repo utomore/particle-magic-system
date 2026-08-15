@@ -63,6 +63,7 @@ library magic-boundary
                       Magic.Step
                       Magic.Expr.Parse
                       Magic.Columns
+                      Magic.Scene
     -- 'vector' joins the boundary layer in func-spec 0007: Magic.Interface
     -- feeds the force-field layer per-slot inputs and adds its
     -- displacements onto the sampled SoA buffer. Already inside the
@@ -90,6 +91,7 @@ executable particle-magic
                     , App.Render.Quads
                     , App.Render.Flat
                     , App.Render.Order
+                    , App.Render.Chunk
                     , App.Hud
     build-depends:    base
                     , particle-magic:magic-boundary
@@ -220,6 +222,11 @@ test-suite spec
                     , FlatCameraSpec
                     , DepthTintSpec
                     , Acceptance13Spec
+                    , CapacitySpec
+                    , ComposeSpec
+                    , ComposeBudgetSpec
+                    , SceneSpec
+                    , Acceptance12Spec
                     , App.Effects
                     , App.HotReload
                     , App.Loop
@@ -228,6 +235,7 @@ test-suite spec
                     , App.Render.Quads
                     , App.Render.Flat
                     , App.Render.Order
+                    , App.Render.Chunk
                     , App.Hud
     build-depends:    base
                     , particle-magic:magic-core
