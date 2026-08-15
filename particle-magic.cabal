@@ -92,6 +92,7 @@ executable particle-magic
                     , App.Render.Flat
                     , App.Render.Order
                     , App.Render.Chunk
+                    , App.Render.Sprite
                     , App.Hud
     build-depends:    base
                     , particle-magic:magic-boundary
@@ -256,6 +257,10 @@ test-suite spec
                     , SchemaDocSpec
                     , RescanSpec
                     , Acceptance14Spec
+                    , BatchSplitSpec
+                    , ShapeVocabSpec
+                    , SpriteSpec
+                    , Acceptance15Spec
                     , App.Effects
                     , App.HotReload
                     , App.Loop
@@ -265,6 +270,7 @@ test-suite spec
                     , App.Render.Flat
                     , App.Render.Order
                     , App.Render.Chunk
+                    , App.Render.Sprite
                     , App.Hud
     build-depends:    base
                     , particle-magic:magic-core

@@ -38,6 +38,7 @@ module Magic.Compile
   , Appearance (..)
   , ColorRamp (..)
   , BlendMode (..)
+  , BillboardShape (..)
 
     -- * Lifecycle (permanent, spec 0006)
   , Phase (..)
@@ -76,7 +77,8 @@ import Magic.Expr
   , foldConstants
   )
 import Magic.Rune
-  ( BridgeRune (..)
+  ( BillboardShape (..)
+  , BridgeRune (..)
   , Element (..)
   , Envelope (..)
   , EssenceRune (..)
@@ -320,6 +322,10 @@ data Appearance = Appearance
   , appBlend :: !BlendMode
   , appAmplify :: !(Maybe Expr)
   -- ^ Size-multiplier curve (spec 0004); 'Nothing' = no modulation.
+  , appShape :: !BillboardShape
+  -- ^ Billboard form (spec 0015). Opt-in: 'elementAppearance' and
+  -- 'formationAppearance' always answer 'BillboardSquare', so only a
+  -- 'StyleRune' ever moves it.
   }
   deriving (Eq, Show)
 
@@ -398,10 +404,10 @@ defaultSpawn = SpawnAtAnchor 1.6
 -- 0001 plain discharge: solid white, alpha blend, size 0.05.
 elementAppearance :: Element -> Appearance
 elementAppearance element = case element of
-  Neutral -> Appearance (ColorRamp 0xFFFFFFFF 0xFFFFFFFF) 0.05 BlendAlpha Nothing
-  Fire -> Appearance (ColorRamp 0xFFD966FF 0xE6390000) 0.05 BlendAdditive Nothing
-  Water -> Appearance (ColorRamp 0x66CCFFFF 0x1A4DCC33) 0.05 BlendAlpha Nothing
-  Lightning -> Appearance (ColorRamp 0xFFFFCCFF 0x8033FF66) 0.05 BlendAdditive Nothing
+  Neutral -> Appearance (ColorRamp 0xFFFFFFFF 0xFFFFFFFF) 0.05 BlendAlpha Nothing BillboardSquare
+  Fire -> Appearance (ColorRamp 0xFFD966FF 0xE6390000) 0.05 BlendAdditive Nothing BillboardSquare
+  Water -> Appearance (ColorRamp 0x66CCFFFF 0x1A4DCC33) 0.05 BlendAlpha Nothing BillboardSquare
+  Lightning -> Appearance (ColorRamp 0xFFFFCCFF 0x8033FF66) 0.05 BlendAdditive Nothing BillboardSquare
 
 -- | Blend mode of the spell's render batch (first emitter's — always the
 -- casting emitter, spec 0006 keeps index 0 reserved for it; the shell
@@ -439,7 +445,8 @@ compile circle = do
       behavior = foldRing applyInner (innerRings circle) (defaultBehavior seed0)
       modulated0 = foldSlot applyBridge (interLayer circle) behavior
       modulated = applyCastShift castStart modulated0
-      motion = foldRing applyOuter (outerRings circle) (defaultMotion modulated)
+      (motion, styleShape) =
+        foldRing applyOuter (outerRings circle) (defaultMotion modulated, BillboardSquare)
       envelope = bpEnvelope modulated
       Seconds delay = envDelay envelope
       Seconds duration = envDuration envelope
@@ -451,7 +458,7 @@ compile circle = do
           , emCount = count
           , emSpawn = envelope
           , emMotion = motion
-          , emAppearance = ssAppearance (bpSeed modulated)
+          , emAppearance = (ssAppearance (bpSeed modulated)) {appShape = styleShape}
           , emPhase = Casting
           }
       formationEmitters = case mPhases of
@@ -642,12 +649,16 @@ defaultMotion proto =
     }
 
 -- | Fold step 4 — outer rings: presentation runes overwrite the motion's
--- spawn pattern, radiation reference and spawn-range curve.
-applyOuter :: Motion -> OuterRune -> Motion
-applyOuter motion rune = case rune of
-  ShapeRune shape -> motion {motSpawn = SpawnOnShape shape}
-  RadiateRune mode -> motion {motRadiation = mode}
-  RangeRune e -> motion {motRange = Just e}
+-- spawn pattern, radiation reference and spawn-range curve, and (spec
+-- 0015) the billboard form the casting appearance ends up with. Same
+-- override rule as every ring: layer B is applied after A, so a second
+-- 'StyleRune' wins.
+applyOuter :: (Motion, BillboardShape) -> OuterRune -> (Motion, BillboardShape)
+applyOuter (motion, style) rune = case rune of
+  ShapeRune shape -> (motion {motSpawn = SpawnOnShape shape}, style)
+  RadiateRune mode -> (motion {motRadiation = mode}, style)
+  RangeRune e -> (motion {motRange = Just e}, style)
+  StyleRune shape -> (motion, shape)
 
 -- | Apply a ring's two layers in order: A (inner) first, then B (outer).
 foldRing :: (b -> a -> b) -> TwoOf (Maybe a) -> b -> b
@@ -971,9 +982,12 @@ evalInterval expr env = go expr
 -- the same RGB with alpha cleared (a natural per-particle fade, no
 -- popping); smaller than normal casting particles, same blend mode as
 -- the rest of the spell (architecture §10: one blend per spell).
+-- Always 'BillboardSquare', 'StyleRune' or not: a drawn line wants hard
+-- dots to stay sharp (spec 0015 §2), and this is what keeps the shape
+-- vocabulary opt-in for every pre-0015 circle.
 formationAppearance :: Element -> Appearance
 formationAppearance element =
-  let Appearance (ColorRamp start _) _ blend _ = elementAppearance element
-   in Appearance (ColorRamp start (clearAlpha start)) 0.03 blend Nothing
+  let Appearance (ColorRamp start _) _ blend _ _ = elementAppearance element
+   in Appearance (ColorRamp start (clearAlpha start)) 0.03 blend Nothing BillboardSquare
   where
     clearAlpha c = c .&. 0xFFFFFF00

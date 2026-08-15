@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "soft-bloom",
+  "circle": {
+    "outer": [
+      { "rune": "shape", "shape": { "kind": "ring", "rInner": 0.6, "rOuter": 1.2 } },
+      { "rune": "style", "billboard": "soft-dot" }
+    ],
+    "inner": [
+      { "rune": "trajectory", "kind": "spiral", "speed": 1.2, "radius": 0.5, "freq": 0.6 },
+      { "rune": "timing", "delay": 0.0, "duration": 5.0, "lifetime": 2.5 }
+    ],
+    "core": {
+      "center": { "element": "water", "power": 2.0 }
+    },
+    "phases": { "draw": 1.2, "converge": 0.8 }
+  }
+}

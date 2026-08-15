@@ -280,7 +280,7 @@ fillEmitter write ctx t em ranges row0 = goRange row0 ranges
   where
     env = emSpawn em
     count = emCount em
-    Appearance ramp size _blend mAmplify = emAppearance em
+    Appearance ramp size _blend mAmplify _shape = emAppearance em
     Seconds lifetime = envLifetime env
     -- Hoisted out of the per-particle loop (func-spec 0010 S2): the
     -- caster and face frames depend on the emitter, not on the particle,

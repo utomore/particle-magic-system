@@ -144,6 +144,27 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
     lookup "PM_SHAPE_SQUARE" header `shouldBe` Just (fromIntegral (shapeCode BillboardSquare))
     lookup "PM_BATCH_INFO_STRIDE" header `shouldBe` Just 4
 
+  -- Func-spec 0015 S3: the wire code is the constructor's declaration
+  -- index, so the mirror is walked over the whole Bounded enum — in both
+  -- directions, which is what catches a shape added to the sum without a
+  -- define, a define without a constructor, or one slipped into the
+  -- middle of the declaration order (the SQUARE = 0 pin breaks first).
+  it "mirrors every billboard shape as a PM_SHAPE_* define, both directions" $ do
+    header <- headerDefines
+    let shapes = [minBound .. maxBound] :: [BillboardShape]
+    mapM_
+      (\s -> lookup (shapeMacro s) header `shouldBe` Just (fromIntegral (shapeCode s)))
+      shapes
+    let defined = [name | (name, _) <- header, "PM_SHAPE_" `isPrefixOf` name]
+    sort defined `shouldBe` sort (map shapeMacro shapes)
+
+  it "pins the frozen shape and stride values (func-spec 0015 §0.1)" $ do
+    shapeCode BillboardSquare `shouldBe` 0
+    header <- headerDefines
+    -- Sentinel: shapes gaining parameters would need a wider stride; the
+    -- stride is frozen, which is exactly why they never do (ADR-0013).
+    lookup "PM_BATCH_INFO_STRIDE" header `shouldBe` Just 4
+
   it "keeps the foreign library on the shell-layer dependency whitelist" $ do
     deps <- stanzaField "foreign-library particle-magic-ffi" "build-depends"
     let names = map depName (splitOn ',' deps)
@@ -163,6 +184,16 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
   it "lets the test-suite reach the FFI module in process" $ do
     dirs <- stanzaField "test-suite spec" "hs-source-dirs"
     map trim (splitOn ',' dirs) `shouldSatisfy` elem "src/ffi"
+
+-- | Constructor → header macro, stated as a table on purpose: this file
+-- is the header's side of the mirror, so it must not be derived from the
+-- same 'Enum' instance it checks.
+shapeMacro :: BillboardShape -> String
+shapeMacro shape = case shape of
+  BillboardSquare -> "PM_SHAPE_SQUARE"
+  BillboardSoftDot -> "PM_SHAPE_SOFT_DOT"
+  BillboardRing -> "PM_SHAPE_RING"
+  BillboardSpark -> "PM_SHAPE_SPARK"
 
 -- Parsers --------------------------------------------------------------------
 

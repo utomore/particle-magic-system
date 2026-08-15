@@ -213,3 +213,6 @@ blendWire BlendAdditive = 1
 
 shapeWire :: BillboardShape -> Int
 shapeWire BillboardSquare = 0
+shapeWire BillboardSoftDot = 1
+shapeWire BillboardRing = 2
+shapeWire BillboardSpark = 3

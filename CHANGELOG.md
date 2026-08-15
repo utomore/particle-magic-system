@@ -110,3 +110,18 @@ delivered function spec (details in `docs/func-spec/`).
   a deleted current file falls to its neighbour, and an unchanged directory
   is the identity — no reload, no recast. Core, boundary and FFI untouched.
   (delivered)
+- **0015 visual vocabulary (the core half)** — ADR-0013: particle form
+  becomes something a player writes into the circle. `BillboardShape` moves
+  into `Magic.Rune` and grows to four parameterless constructors (square /
+  soft-dot / ring / spark; declaration order IS the C wire code via `Enum`),
+  the outer ring gains `StyleRune` with an opt-in `"style"` JSON tag, and
+  `observeSpell` splits its output into one batch per run of adjacent
+  same-looking emitters — zero-copy slices, with the splitting law (batches
+  concatenate to the un-split buffer, bit for bit) tested structurally.
+  The C ABI grows three `PM_SHAPE_*` defines (stride untouched, C# binding
+  forced along by the existing mirror test). The demo differentiates the
+  shapes with procedurally generated alpha-only sprites through the default
+  shader's diffuse map — no custom shader, no image assets; formation
+  emitters stay hard squares so a drawn circle stays sharp. Every pre-0015
+  example still renders one square batch, bit for bit (golden net unmoved).
+  New example: `soft-bloom.json`. (delivered)

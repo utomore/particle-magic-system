@@ -86,8 +86,12 @@ extern "C" {
 #define PM_BLEND_ALPHA 0
 #define PM_BLEND_ADDITIVE 1
 
-/* batch_info[4*i + 3] -- the billboard geometry the batch expects. */
+/* batch_info[4*i + 3] -- the billboard geometry the batch expects. A host
+   that predates a shape code may draw such batches as PM_SHAPE_SQUARE. */
 #define PM_SHAPE_SQUARE 0
+#define PM_SHAPE_SOFT_DOT 1
+#define PM_SHAPE_RING 2
+#define PM_SHAPE_SPARK 3
 
 /* Ints per batch in the batch_info array: offset, count, blend, shape. */
 #define PM_BATCH_INFO_STRIDE 4

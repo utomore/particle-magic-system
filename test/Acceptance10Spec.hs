@@ -31,6 +31,7 @@ import Magic.Codec (loadCircle)
 import Magic.Compile
   ( Anchor (..)
   , Appearance (..)
+  , BillboardShape (..)
   , BlendMode (..)
   , ColorRamp (..)
   , CompiledSpell (..)
@@ -183,7 +184,7 @@ hugeSpell n =
               , motRange = Nothing
               , motConverge = Nothing
               }
-        , emAppearance = Appearance (ColorRamp 0xFFD966FF 0xE6390000) 0.05 BlendAdditive Nothing
+        , emAppearance = Appearance (ColorRamp 0xFFD966FF 0xE6390000) 0.05 BlendAdditive Nothing BillboardSquare
         , emPhase = Casting
         }
 

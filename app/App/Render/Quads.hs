@@ -14,6 +14,7 @@ module App.Render.Quads
   , buildQuadsOrdered
   , billboardBasis
   , quadIndices
+  , quadTexcoords
   ) where
 
 import Control.Monad (forM_)
@@ -173,6 +174,29 @@ quadIndices cap = S.generate (cap * 6) idx
             4 -> 2
             _ -> 3
        in fromIntegral (q * 4 + v)
+
+-- | Static texture coordinates for @cap@ quads: every quad maps its four
+-- corners onto the whole [0,1]² sprite, in 'buildQuads'' vertex order
+-- @(-r,-u), (+r,-u), (+r,+u), (-r,+u)@ → @(0,0), (1,0), (1,1), (0,1)@.
+--
+-- Like 'quadIndices' this is a pure function of the capacity, not of any
+-- frame's particles (func-spec 0015 S4): written to the GPU once at mesh
+-- upload, never updated — which is why 'QuadBatch' carries no texcoords
+-- and the per-frame upload cost is untouched.
+quadTexcoords :: Int -> S.Vector Float
+quadTexcoords cap = S.generate (cap * 8) uv
+  where
+    uv j =
+      let (_, k) = j `divMod` 8
+       in case k of
+            0 -> 0 -- (0,0)
+            1 -> 0
+            2 -> 1 -- (1,0)
+            3 -> 0
+            4 -> 1 -- (1,1)
+            5 -> 1
+            6 -> 0 -- (0,1)
+            _ -> 1
 
 byteAt :: Int -> Word32 -> Word8
 byteAt bits c = fromIntegral ((c `shiftR` bits) .&. 0xFF)

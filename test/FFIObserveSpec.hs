@@ -195,6 +195,9 @@ blendWire BlendAdditive = 1
 
 shapeWire :: BillboardShape -> Int
 shapeWire BillboardSquare = 0
+shapeWire BillboardSoftDot = 1
+shapeWire BillboardRing = 2
+shapeWire BillboardSpark = 3
 
 -- | Nothing was written: every slot still holds its sentinel.
 untouched :: Observed -> Bool

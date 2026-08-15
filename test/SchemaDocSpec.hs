@@ -70,7 +70,9 @@ spec = describe "docs/spell-schema.md covers schema v1 (func-spec 0014 §1.3)" $
   it "references every shipped example by name" $ do
     doc <- readDoc
     names <- exampleNames
-    length names `shouldBe` 10
+    -- 10 examples at func-spec 0014's delivery; soft-bloom.json joins in
+    -- func-spec 0015.
+    length names `shouldBe` 11
     [n | n <- names, not (n `isInfixOf` doc)] `shouldBe` []
 
   it "tells the author how to check a file" $ do

@@ -88,9 +88,10 @@ wrongVersion = BSC.pack "{\"version\":2,\"name\":\"x\",\"circle\":{}}"
 spec :: Spec
 spec = do
   describe "the shipped examples (func-spec 0014 §1.1)" $ do
-    it "all ten load, compile and cast" $ do
+    it "all shipped examples load, compile and cast" $ do
       paths <- examplePaths
-      length paths `shouldBe` 10
+      -- 10 at func-spec 0014's delivery; soft-bloom.json joins in 0015.
+      length paths `shouldBe` 11
       reports <- mapM reportFor paths
       [repPath r | r <- reports, isFail r] `shouldBe` []
       exitCodeFor reports `shouldBe` 0

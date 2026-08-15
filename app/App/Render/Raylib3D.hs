@@ -27,26 +27,33 @@ module App.Render.Raylib3D
 import Control.Exception (bracket, bracket_)
 import Control.Monad (forM_, when)
 import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.Maybe (fromMaybe)
 import qualified Data.Vector.Storable as S
 import Data.Word (Word16)
 import Effectful (Eff, IOE, liftIO, (:>))
 import Effectful.Dispatch.Dynamic (interpret, localSeqUnliftIO)
-import Foreign (Ptr, Storable (poke, sizeOf), castPtr, free, malloc)
+import Foreign (Ptr, Storable (peek, poke, sizeOf), castPtr, free, malloc, with)
 import qualified Raylib.Core as RL
 import qualified Raylib.Core.Models as RLM
 import qualified Raylib.Core.Shapes as RLS
 import qualified Raylib.Core.Text as RLT
+import qualified Raylib.Core.Textures as RLTex
 import Raylib.Types
   ( Camera3D (..)
   , CameraProjection (CameraPerspective)
   , Color (..)
   , ConfigFlag (WindowResizable)
+  , Image (..)
   , KeyboardKey (KeyLeft, KeyR, KeyRight, KeyT, KeyTab, KeyV)
   , Material
   , Matrix
   , Mesh (..)
   , MouseButton (MouseButtonLeft)
+  , PixelFormat (PixelFormatUncompressedR8G8B8A8)
+  , Texture
   , Vector3
+  , p'material'maps
+  , p'materialMap'texture
   , p'mesh'triangleCount
   , pattern Vector2
   , pattern Vector3
@@ -67,9 +74,11 @@ import App.Hud (formatHud)
 import App.Render.Chunk (chunkBatch)
 import App.Render.Flat (buildFlatQuads)
 import App.Render.Order (orderedQuads)
-import App.Render.Quads (QuadBatch (..), quadIndices)
+import App.Render.Quads (QuadBatch (..), quadIndices, quadTexcoords)
+import App.Render.Sprite (spriteSize, spriteTexels)
 import Magic.Interface
-  ( BlendMode (..)
+  ( BillboardShape (..)
+  , BlendMode (..)
   , RenderBatch (..)
   , V3 (..)
   )
@@ -92,6 +101,16 @@ data QuadGpu = QuadGpu
   { gpuMesh :: !(Ptr Mesh)
   , gpuMaterial :: !(Ptr Material)
   , gpuTransform :: !(Ptr Matrix)
+  , gpuDiffuseSlot :: !(Ptr Texture)
+  -- ^ The diffuse-map texture slot /inside/ 'gpuMaterial' (maps[0]);
+  -- binding a batch's sprite is one 'poke' here (func-spec 0015 S4).
+  , gpuDefaultTex :: !Texture
+  -- ^ The default material's own 1×1 white texture: what
+  -- 'BillboardSquare' draws with — i.e. exactly the pre-0015 pipeline.
+  , gpuShapeTex :: ![(BillboardShape, Texture)]
+  -- ^ One procedurally generated sprite per non-square shape, uploaded
+  -- once at startup ('App.Render.Sprite'). 'BillboardSquare' is absent
+  -- on purpose (it uses 'gpuDefaultTex' and costs no texture).
   }
 
 runRaylibIO :: (IOE :> es) => Eff (Raylib : es) a -> Eff es a
@@ -161,10 +180,42 @@ initQuadGpu = do
   matPtr <- RLM.c'loadMaterialDefault
   xformPtr <- malloc
   poke xformPtr RM.matrixIdentity
-  pure QuadGpu {gpuMesh = meshPtr, gpuMaterial = matPtr, gpuTransform = xformPtr}
+  -- The material's diffuse map slot, kept as a pointer so a batch's
+  -- sprite bind is a single poke; its startup content is the default 1×1
+  -- white texture, remembered for the square (= textureless) batches.
+  diffuseSlot <- p'materialMap'texture <$> peek (p'material'maps matPtr)
+  defaultTex <- peek diffuseSlot
+  shapeTex <-
+    mapM
+      (\shape -> (,) shape <$> RLTex.loadTextureFromImage (spriteImage shape))
+      [BillboardSoftDot, BillboardRing, BillboardSpark]
+  pure
+    QuadGpu
+      { gpuMesh = meshPtr
+      , gpuMaterial = matPtr
+      , gpuTransform = xformPtr
+      , gpuDiffuseSlot = diffuseSlot
+      , gpuDefaultTex = defaultTex
+      , gpuShapeTex = shapeTex
+      }
+
+-- | A sprite's pixels as a raylib CPU-side image, ready for upload.
+spriteImage :: BillboardShape -> Image
+spriteImage shape =
+  Image
+    { image'data = S.toList (spriteTexels shape spriteSize)
+    , image'width = spriteSize
+    , image'height = spriteSize
+    , image'mipmaps = 1
+    , image'format = PixelFormatUncompressedR8G8B8A8
+    }
 
 freeQuadGpu :: QuadGpu -> IO ()
 freeQuadGpu gpu = do
+  -- Put the default texture back before the material is torn down: the
+  -- sprite textures are unloaded here and must not dangle from it.
+  poke (gpuDiffuseSlot gpu) (gpuDefaultTex gpu)
+  forM_ (gpuShapeTex gpu) $ \(_, tex) -> with tex RLTex.c'unloadTexture
   RLM.c'unloadMesh (gpuMesh gpu)
   free (gpuMesh gpu)
   free (gpuMaterial gpu)
@@ -173,14 +224,16 @@ freeQuadGpu gpu = do
 -- | A zeroed mesh of @cap@ quads with the static triangle index pattern
 -- already in place. Normals and texcoords exist because raylib uploads a
 -- VBO per non-null attribute and the default shader expects both; their
--- values never change.
+-- values never change. Since func-spec 0015 the texcoords carry the
+-- per-quad sprite mapping ('quadTexcoords') instead of zeros — still
+-- written once here, never updated.
 emptyQuadMesh :: Int -> Mesh
 emptyQuadMesh cap =
   Mesh
     { mesh'vertexCount = verts
     , mesh'triangleCount = cap * 2
     , mesh'vertices = replicate verts (Vector3 0 0 0)
-    , mesh'texcoords = Just (replicate verts (Vector2 0 0))
+    , mesh'texcoords = Just (uvPairs (quadTexcoords cap))
     , mesh'texcoords2 = Nothing
     , mesh'normals = replicate verts (Vector3 0 0 1)
     , mesh'tangents = Nothing
@@ -197,6 +250,14 @@ emptyQuadMesh cap =
     }
   where
     verts = cap * 4
+
+-- | The flat (u, v, u, v, …) stream as the vector-of-pairs shape the
+-- h-raylib 'Mesh' record wants.
+uvPairs :: S.Vector Float -> [RT.Vector2]
+uvPairs uv =
+  [ Vector2 (uv S.! (2 * i)) (uv S.! (2 * i + 1))
+  | i <- [0 .. S.length uv `div` 2 - 1]
+  ]
 
 -- | Draw every batch of one frame: 3D mode once, grid once, then per
 -- batch a blend-mode bracket around a single mesh update + draw.
@@ -216,6 +277,7 @@ drawSceneIO gpu cam batches =
       when (qbCount quads > 0) $
         bracket_
           ( do
+              bindShapeTexture gpu (rbShape batch)
               RL.beginBlendMode (toRaylibBlend (rbBlend batch))
               -- Additive particles must not write depth or they occlude
               -- each other and the accumulation shows draw-order seams.
@@ -245,6 +307,7 @@ drawFlatIO gpu fv batches = do
     when (qbCount quads > 0) $
       bracket_
         ( do
+            bindShapeTexture gpu (rbShape batch)
             RL.beginBlendMode (toRaylibBlend (rbBlend batch))
             RLGL.rlDisableBackfaceCulling
         )
@@ -290,6 +353,15 @@ uploadAndDraw gpu quads = do
   -- count is exactly "draw the first n quads".
   poke (p'mesh'triangleCount meshPtr) (fromIntegral (n * 2))
   RLM.c'drawMesh meshPtr (gpuMaterial gpu) (gpuTransform gpu)
+
+-- | Point the shared material's diffuse map at the batch's sprite
+-- (func-spec 0015 S4): one 20-byte poke, no FFI call, no shader change —
+-- the default shader was sampling this slot all along.
+-- 'BillboardSquare' restores the default white texture, i.e. the exact
+-- pre-0015 draw state.
+bindShapeTexture :: QuadGpu -> BillboardShape -> IO ()
+bindShapeTexture gpu shape =
+  poke (gpuDiffuseSlot gpu) (fromMaybe (gpuDefaultTex gpu) (lookup shape (gpuShapeTex gpu)))
 
 -- | VBO slots, in raylib's @UpdateMeshBuffer@ index order (which is the
 -- 'RT.DefaultShaderAttributeLocation' order): 0 position, 1 texcoord,
