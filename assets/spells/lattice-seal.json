@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "name": "lattice-seal",
+  "circle": {
+    "phases": { "draw": 1.6, "converge": 0.8 },
+    "outer": [
+      { "rune": "radiate", "mode": "radial-outward" },
+      { "rune": "style", "billboard": "spark" }
+    ],
+    "bridge": { "rune": "converge", "expr": "clamp(1 - t / 3, 0, 1)" },
+    "inner": [
+      { "rune": "trajectory", "kind": "orbit", "radius": 0.6, "freq": 0.5 },
+      { "rune": "timing", "delay": 0.0, "duration": 3.0, "lifetime": 1.5 }
+    ],
+    "core": {
+      "center": { "element": "lightning", "power": 1.0 },
+      "nodes": {
+        "north": { "rune": "dir-bias", "strength": 0.3 },
+        "south": { "rune": "dir-bias", "strength": 0.3 },
+        "east": { "rune": "dir-bias", "strength": -0.3 },
+        "west": { "rune": "dir-bias", "strength": -0.3 }
+      }
+    }
+  }
+}

@@ -182,6 +182,8 @@ spellLifetime = castStart + (delay + duration + lifetime)
   phConverge = 0 ⇒ motConverge = Nothing（不合成，避免除零路徑）
 ```
 
+> ⚠ **修訂註記（2026-08-15，func-spec 0017／ADR-0015）**：下方推導鏈的**第 2 步與第 3 步已被撤銷**。陣形不再於 `castStart` 死盡，而是駐留到 `ppEnd`（`envDuration = ppEnd − formLife`）；`kcExpr` 不再合成，陣形 `motConverge` 恆為 `Nothing`，陣待在它被畫出來的位置而不塌縮。第 1 步（全部索引都會出生）與第 4 步（`formLife` 封頂 0.6s 帶來的脈動）**仍然成立且原封不動**——`envDelay` 與 `envLifetime` 的算式一字未改，所以畫陣的節奏就是本節寫的這個。另註：本節原本的 `envDuration` 在 `phConverge < formLife` 時會早於 `phDraw` 關閉生成窗（`bare-sigil` 即為此例：0.9s < 1.0s），使陣在畫完前就開始消散——這個未被察覺的行為一併由 0017 修掉。
+
 **陣形包絡推導鏈**（實作者請複核；由 0002 凍結的排程語意逐步推出）：
 
 1. 首生錯開跨度＝`envLifetime`＝`formLife`；`formLife ≤ castStart − formLife`（因 `formLife ≤ castStart/2`）＝`envDuration`，故**全部索引都會出生**（錯開跨度不超過生成窗）。
@@ -211,7 +213,9 @@ spellLifetime = castStart + (delay + duration + lifetime)
 | 四節點 | 該節點被佔用 | `SpawnAtAnchor 0`，`anchorOffset`＝北 `V3 0 0.35 0`／南 `V3 0 (−0.35) 0`／東 `V3 0.35 0 0`／西 `V3 (−0.35) 0 0` | 各 12 |
 | 核心中心 | `coreCenter` 被佔用 | `SpawnAtAnchor 0`，anchor 原點 | 16 |
 
-共同欄位：`motTraject = Forward 0`（靜置駐留）、`motRadiation = AlongNormal`、`motDrift = V3 0 0 0`、`motRange = Nothing`、`motConverge = Just kcExpr`（`phConverge = 0` 時 `Nothing`）、`emSpawn = formEnv`、`emPhase = Drawing`。外觀：`elementAppearance` 該元素的 `rampStart` 為起色、終色＝同 RGB 而 **alpha 清零**、`appSize = 0.03`、`appBlend` 同元素（整發 spell 單一 blend，`spellBlend` 語意不變）、`appAmplify = Nothing`。
+共同欄位：`motTraject = Forward 0`（靜置駐留）、`motRadiation = AlongNormal`、`motDrift = V3 0 0 0`、`motRange = Nothing`、~~`motConverge = Just kcExpr`（`phConverge = 0` 時 `Nothing`）~~ → **`motConverge = Nothing` 恆真**（func-spec 0017／ADR-0015 D2）、`emSpawn = formEnv`、`emPhase = Drawing`。
+
+> ⚠ **修訂註記（2026-08-15）**：本表的**幾何欄位**（`SpawnPattern` 那一欄）已由 func-spec 0016 整體取代——陣形幾何改由 `Magic.Sigil.sigilPlan` 從魔法陣自身導出，不再是固定的同心環帶；四節點與中心的座標表與粒子數則原樣沿用。`emPhase = Drawing` 保留，它同時是力場層的判準（ADR-0010 D6），使駐留中的陣不被力場吹歪。外觀：`elementAppearance` 該元素的 `rampStart` 為起色、終色＝同 RGB 而 **alpha 清零**、`appSize = 0.03`、`appBlend` 同元素（整發 spell 單一 blend，`spellBlend` 語意不變）、`appAmplify = Nothing`。
 
 註：定點發射器（節點/中心）的粒子恆在自身 anchor 軸上，收束對它們是恆等變換——Converging 的視覺主體是環帶的塌縮，定點光斑駐留至 `castStart` 死盡（ramp 淡出），此為預期行為、明文於此。
 

@@ -64,6 +64,7 @@ import Magic.Compile
   )
 import Magic.Expr (ExprEnv (..), evalFinite, evalFiniteV3)
 import Magic.Rune (FaceShape (..), RadiationMode (..), Trajectory (..))
+import Magic.Sigil (sampleStroke)
 import Magic.Types
   ( CastContext (..)
   , Seconds (..)
@@ -428,6 +429,10 @@ positionIn frame ctx t em i ageD = position
     V2 sx sy = case spawnPattern of
       SpawnAtAnchor _ -> V2 0 0
       SpawnOnShape shape -> vscale2 rangeScale (sampleShape shape i 0)
+      -- Func-spec 0016: the index is a position along the curve, not a
+      -- hash channel — which is the whole difference between a sigil
+      -- being drawn and a sigil fading in.
+      SpawnOnStroke stroke -> vscale2 rangeScale (sampleStroke stroke i)
     spawnW = anchorW + vscale sx u + vscale sy w
 
     -- 'AlongNormal' takes the face normal, whose plane basis is the
@@ -461,6 +466,7 @@ positionIn frame ctx t em i ageD = position
             c1 = hashChan (seed ctx) i 1 - 0.5
          in vscale (c0 * spread) u + vscale (c1 * spread) w
       SpawnOnShape _ -> V3 0 0 0
+      SpawnOnStroke _ -> V3 0 0 0
 
     rawPosition = spawnW + trajTerm + vscale age (spreadDrift + nodeDriftW)
 
