@@ -1,7 +1,7 @@
 # Changelog
 
 All notable changes to this project are documented here, one line per
-delivered function spec (details in `docs/func-spec/`).
+delivered function spec (details in `docs/spec/`).
 
 ## 0.1.0.0 — 2026-08-13
 

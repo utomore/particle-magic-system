@@ -139,7 +139,7 @@ functions.
   them: every key, its range, the formula syntax and the shipped examples
   (Traditional Chinese; kept honest by `test/SchemaDocSpec.hs`)
 - `docs/adr/` — architecture decision records
-- `docs/func-spec/` — per-iteration function specs (design-before-code, each
+- `docs/spec/` — per-iteration function specs (design-before-code, each
   todo paired 1-to-1 with a test module)
 - `assets/spells/*.json` — example spells
 - `include/particle_magic.h` — the frozen C ABI contract; `cbits/`, `src/ffi/`
