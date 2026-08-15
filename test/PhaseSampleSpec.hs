@@ -18,6 +18,7 @@ import Magic.Compile
 import Magic.Particle.Analytic (particleAge, sample)
 import Magic.Particle.Buffer (ParticleBuffer (..), bufferInvariant)
 import Magic.Rune (InnerRune (..), NodeRune (..))
+import Magic.Sigil (sigilPlan, spStrokes, strokeRadius)
 import Magic.Types
   ( CastContext (..)
   , Seconds (..)
@@ -81,13 +82,35 @@ aliveIndices em t =
 
 spec :: Spec
 spec = describe "end-to-end phase sampling (spec 0006 S5)" $ do
-  it "Drawing: boundary-ring particles exist and lie in the [1.45, 1.55] band" $ do
+  it "Drawing: sigil particles exist and every one lies inside its stroke's radius bound" $ do
     let pc = PhaseConfig (Seconds 1.2) (Seconds 0.6)
-        spell = compiled (boundaryCircle pc)
-        buf = sample spell ctx (Time 0.5) -- within [0, 1.2) = Drawing
+        circle = boundaryCircle pc
+        spell = compiled circle
+        t = Time 0.5 -- within [0, 1.2) = Drawing
+        buf = sample spell ctx t
         radii = map radial (positionsOf buf)
+        -- The plan's own conservative bound replaces spec 0006's fixed
+        -- [1.45, 1.55] band: the geometry is derived now, the bound is
+        -- what stays checkable (func-spec 0016 §2).
+        bound = maximum (map strokeRadius (V.toList (spStrokes (sigilPlan circle))))
     length radii `shouldSatisfy` (> 0)
-    radii `shouldSatisfy` all (\r -> r >= 1.45 - 1e-3 && r <= 1.55 + 1e-3)
+    radii `shouldSatisfy` all (\r -> r <= bound + 1e-3)
+
+  it "Drawing: the boundary ring is drawn, not scattered — its points sit on the silhouette" $ do
+    let pc = PhaseConfig (Seconds 1.2) (Seconds 0.6)
+        circle = boundaryCircle pc
+        spell = compiled circle
+        em = boundaryEmitter spell
+        t = Time 0.5
+        alive = aliveIndices em t
+        buf = sample spell ctx t
+        -- The casting emitter has not started, so the buffer's leading
+        -- rows are this emitter's, in index order.
+        ringPos = take (length alive) (positionsOf buf)
+        radii = map radial ringPos
+    length alive `shouldSatisfy` (> 0)
+    -- The boundary stroke is a closed ring of radius 1.5 plus jitter.
+    radii `shouldSatisfy` all (\r -> abs (r - 1.5) < 0.05)
 
   it "Drawing: a node emitter's particles sit exactly at its fixed anchor (mapped through the caster frame)" $ do
     let pc = PhaseConfig (Seconds 1.2) (Seconds 0.6)
@@ -99,7 +122,8 @@ spec = describe "end-to-end phase sampling (spec 0006 S5)" $ do
         spell = compiled c
         t = Time 0.5
         buf = sample spell ctx t
-        [castingEm, boundaryEm, node] = V.toList (spellEmitters spell) -- 0=casting, 1=boundary, 2=north
+        emitters = V.toList (spellEmitters spell)
+        node = last emitters
         facing = normalize (casterFacing ctx)
         (fu, fw) = basisFromNormal facing
         -- Node offset in face coords is (0, 0.35, 0); the caster frame
@@ -107,8 +131,8 @@ spec = describe "end-to-end phase sampling (spec 0006 S5)" $ do
         expectedAnchor = casterPos ctx + vscale 0.35 fw + vscale 0 fu
         -- Skip exactly as many buffer entries as the emitters before the
         -- node one actually contributed (not their nominal counts — a
-        -- ring's alive count varies with t within its spawn window).
-        skipCount = length (aliveIndices castingEm t) + length (aliveIndices boundaryEm t)
+        -- stroke's alive count varies with t within its spawn window).
+        skipCount = sum [length (aliveIndices em t) | em <- init emitters]
         nodePos = drop skipCount (positionsOf buf)
     length nodePos `shouldSatisfy` (> 0)
     emCount node `shouldBe` 12

@@ -525,6 +525,7 @@ void     pm_free(PmSpell*);
 | **環層數結構**（外2/夾1/內2/核心） | `Circle` 型別與 JSON schema、陣形幾何、解釋器 fold 順序都依賴此結構 | 若未來要可變層數，`TwoOf` 需換成帶長度約束的向量並遷移 schema——當作大版本處理 |
 | **SoA 緩衝欄位佈局** | `ParticleBuffer` 欄位被熱路徑、FFI 傳遞、渲染後端三方依賴；加欄位＝三處同步改 | 欄位增減集中在單一模組；用 pattern synonym/record 輔助函數隔離直接欄位存取 |
 | **Expr 的破壞性變更**（改變既有運算子語意、變數重新命名） | 玩家寫的式子存在 JSON 裡；語意變更會靜默改變舊魔法的行為 | 只加不改；真要改走 schema 版本＋`migrate` 重寫 AST |
+| **`hashCircle` 摘要函數**（ADR-0014 D3） | 摘要決定符文陣的長相，玩家以外觀辨識法術。改摘要＝**靜默改變每一個法術的長相**，與上一列同級；浮點必須以位元進入摘要，否則同一份 JSON 在不同平台畫出不同的陣 | 交付即凍結；`emptyCircle` 的摘要值在測試裡當哨兵。真要改視同重新設計視覺辨識，需盤點所有既存法術 |
 | **固定時步假設** | 力場層的確定性與重播依賴固定 `dt`；改成可變時步會破壞重播與測試基準 | 視為系統公理。渲染幀率與模擬時步以 accumulator 解耦，模擬永遠固定步 |
 | **「粒子對粒子」互動** | 目前模型（解析＋場對粒子）從根本上沒有粒子間查詢；要加需要空間分割結構與完全不同的複雜度等級 | 明確列為非目標（§7）；若未來必要，以獨立的模擬層模組並存，不改造現有兩層 |
 
@@ -543,3 +544,6 @@ void     pm_free(PmSpell*);
 | [ADR-0009](adr/0009-dynamic-quad-mesh-rendering.md) | 渲染路徑採動態 quad mesh，不採 instancing |
 | [ADR-0010](adr/0010-force-field-composition.md) | 力場層組合點語意：加法位移疊加、穩定槽位身分、熱重載歸零 |
 | [ADR-0011](adr/0011-ffi-c-abi-boundary.md) | C ABI FFI 邊界：foreign-library、JSON 進、SoA copy-out、handle 生命週期 |
+| [ADR-0012](adr/0012-multi-circle-scene.md) | 多陣合成與場景層配額 |
+| [ADR-0013](adr/0013-billboard-vocabulary.md) | 告示板詞彙：無參數列舉、型別落點遷移、程序生成貼圖 |
+| [ADR-0014](adr/0014-sigil-from-circle-hash.md) | 符文陣由魔法陣資料導出：摘要即合約、混合導出、逐位元豁免只到 Drawing／Converging |

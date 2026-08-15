@@ -90,6 +90,12 @@ import Magic.Rune
   , RadiationMode (..)
   , Trajectory (..)
   )
+import Magic.Sigil
+  ( SigilPlan (..)
+  , SigilStroke (..)
+  , sigilPlan
+  , strokeRadius
+  )
 import Magic.Types
   ( CastContext (..)
   , Seconds (..)
@@ -313,6 +319,11 @@ data SpawnPattern
     SpawnAtAnchor !Float
   | -- | Born on the initial face shape (no drift spread).
     SpawnOnShape !FaceShape
+  | -- | Born /along/ a sigil stroke (func-spec 0016): index order is
+    -- position along the curve, so the emitter draws its stroke instead
+    -- of scattering over an area. No drift spread, same as
+    -- 'SpawnOnShape'.
+    SpawnOnStroke !SigilStroke
   deriving (Eq, Show)
 
 data Appearance = Appearance
@@ -669,20 +680,27 @@ foldSlot f slot z = maybe z (f z) slot
 
 -- Fold step 5 — formation geometry emitters (spec 0006 §4.4) -----------------
 
--- | Circle geometry → the formation-drawing emitters (func-spec 0006
--- §4.4's export table). Only called when 'circlePhases' is 'Just'; the
--- boundary ring is unconditional ("陣" always has a silhouette, even the
--- all-empty circle — 'bare-sigil.json's judgment call), every other
--- element only appears when its slot is occupied.
+-- | Circle geometry → the formation-drawing emitters. Only called when
+-- 'circlePhases' is 'Just'.
+--
+-- Func-spec 0016 replaces 0006's fixed table of concentric bands with
+-- 'Magic.Sigil.sigilPlan': the geometry is now derived from the circle
+-- itself (structure picks the skeleton, the circle's digest picks the
+-- ornament), and each stroke of the plan becomes one emitter. Settling
+-- the budget, culling dead time windows and grouping render batches all
+-- stay per-emitter, so a stroke pays exactly what a ring band used to —
+-- and 'Magic.Sigil.sampleStroke' stays O(1) with no prefix sums.
+--
+-- What 0006 keeps: the boundary group is unconditional ("陣" always has
+-- a silhouette, even the all-empty circle), the four node emitters and
+-- the center emitter keep their coordinate table and particle counts, and
+-- an outer slot holding a 'ShapeRune' still previews the player's own
+-- shape (§4.4's exception, now carried by 'spShapes').
 formationEmittersFor :: Circle -> PhaseConfig -> Seconds -> Element -> [EmitterSpec]
 formationEmittersFor circle pc castStart element =
   concat
-    [ [ringSlotEmitter 96 (SpawnOnShape (Ring 1.45 1.55))]
-    , outerRingSlot 64 1.25 1.35 (ringB (outerRings circle))
-    , outerRingSlot 64 1.10 1.20 (ringA (outerRings circle))
-    , plainSlot 64 0.95 1.05 (interLayer circle)
-    , plainSlot 64 0.80 0.90 (ringB (innerRings circle))
-    , plainSlot 64 0.65 0.75 (ringA (innerRings circle))
+    [ [ringSlotEmitter (skCount sk) (SpawnOnStroke sk) | sk <- V.toList (spStrokes plan)]
+    , [ringSlotEmitter cnt (SpawnOnShape shape) | (shape, cnt) <- V.toList (spShapes plan)]
     , nodeSlotEmitter 12 (V3 0 0.35 0) (north (coreNodes (core circle)))
     , nodeSlotEmitter 12 (V3 0 (-0.35) 0) (south (coreNodes (core circle)))
     , nodeSlotEmitter 12 (V3 0.35 0 0) (east (coreNodes (core circle)))
@@ -690,6 +708,7 @@ formationEmittersFor circle pc castStart element =
     , centerSlotEmitter 16 (coreCenter (core circle))
     ]
   where
+    plan = sigilPlan circle
     formEnv = formEnvFor castStart
     mKc = case pc of
       PhaseConfig _ (Seconds c) | c > 0 -> Just (kcExprFor castStart (Seconds c))
@@ -705,20 +724,6 @@ formationEmittersFor circle pc castStart element =
         , emAppearance = appearance
         , emPhase = Drawing
         }
-
-    -- Outer-ring slots: a 'ShapeRune' occupant previews the player's
-    -- drawn shape instead of the nominal band (§4.4 exception).
-    outerRingSlot :: Int -> Double -> Double -> Maybe OuterRune -> [EmitterSpec]
-    outerRingSlot cnt rIn rOut mRune = case mRune of
-      Nothing -> []
-      Just (ShapeRune shape) -> [ringSlotEmitter cnt (SpawnOnShape shape)]
-      Just _ -> [ringSlotEmitter cnt (SpawnOnShape (Ring rIn rOut))]
-
-    -- Bridge/inner-ring slots: occupied ⇒ the nominal band, no exception.
-    plainSlot :: Int -> Double -> Double -> Maybe a -> [EmitterSpec]
-    plainSlot cnt rIn rOut mRune = case mRune of
-      Nothing -> []
-      Just _ -> [ringSlotEmitter cnt (SpawnOnShape (Ring rIn rOut))]
 
     nodeSlotEmitter :: Int -> V3 -> Maybe NodeRune -> [EmitterSpec]
     nodeSlotEmitter cnt offset mRune = case mRune of
@@ -842,6 +847,7 @@ emitterBounds ctx (Seconds horizon) em = (anchorW - corner, anchorW + corner)
     spawnRadius = case spawnPattern of
       SpawnAtAnchor _ -> 0
       SpawnOnShape shape -> rangeScale * shapeRadius shape
+      SpawnOnStroke stroke -> rangeScale * strokeRadius stroke
 
     trajectoryRadius = case trajectory of
       Forward speed -> abs (realToFrac speed) * maxAge
@@ -857,6 +863,7 @@ emitterBounds ctx (Seconds horizon) em = (anchorW - corner, anchorW + corner)
     spreadRadius = case spawnPattern of
       SpawnAtAnchor spread -> abs spread
       SpawnOnShape _ -> 0
+      SpawnOnStroke _ -> 0
     driftRadius = maxAge * (spreadRadius + norm drift)
 
     rawRadius = spawnRadius + trajectoryRadius + driftRadius

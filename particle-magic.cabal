@@ -43,6 +43,7 @@ library magic-core
                       Magic.Particle.Buffer
                       Magic.Rune
                       Magic.Circle
+                      Magic.Sigil
                       Magic.Compile
                       Magic.Particle.Analytic
                       Magic.Particle.Field
@@ -261,6 +262,12 @@ test-suite spec
                     , ShapeVocabSpec
                     , SpriteSpec
                     , Acceptance15Spec
+                    , SigilGen
+                    , SigilHashSpec
+                    , SigilStrokeSpec
+                    , SigilPlanSpec
+                    , SigilWiringSpec
+                    , Acceptance16Spec
                     , App.Effects
                     , App.HotReload
                     , App.Loop

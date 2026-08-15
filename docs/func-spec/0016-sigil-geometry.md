@@ -1,6 +1,6 @@
 # Func-Spec 0016：符文陣（陣形幾何由魔法陣資料導出）
 
-> 狀態：**設計定案，待實作**
+> 狀態：**已完成**（2026-08-15，驗收紀錄見 §9）
 > 性質：一般 —— 交付後凍結 `hashCircle` 的摘要函數（見 §2 的「摘要即合約」）、`Magic.Sigil` 匯出面、`SpawnOnStroke` 的取樣律。
 > 前置依賴：**spec 0015（需已完成）**——與 0015 同碰 `src/core/Magic/Compile.hs`（0015 改 fold 步驟 4 的 `Appearance`，本 spec 改步驟 5 的 `formationEmittersFor`），依 SKILL.md 規則 4 不得平行，**動工門檻＝0015 驗收**。**與 spec 0014 平行**（0014 觸 `tools/`／`app/Main.hs`／`Loop`／`Effects`／`HotReload`／`docs/spell-schema.md`／`BoundarySpec`，與本清單逐檔交集 = ∅，§0.2 附證明）。
 > 依據：architecture §1.1（Circle as Data）、§1.2（特效即魔法）、§3.3（生命週期——「魔法陣本身的幾何就是繪製階段的粒子來源」）、§4.3（`hashChan` 的確定性隨機通道）、§11（破壞性變更的硬點表）；ADR-0003（槽位固定職責）、ADR-0007（核心零 IO）；spec 0006 §4.4（陣形導出的現況與其 `ShapeRune` 例外）、§9（陣形旋轉／動態陣形記帳）。摘要即合約與逐位元豁免屬架構級語意 → **本輪同步交付 ADR-0014**（先例：0007↔ADR-0010、0009↔ADR-0011、0012↔ADR-0012、0015↔ADR-0013）。
@@ -190,11 +190,11 @@ flowchart LR
 
 | # | Todo | 測試 |
 |---|---|---|
-| S1 | `hashCircle`（結構 fold、浮點取位元、splitmix64 混合） | `test/SigilHashSpec.hs`（決定論；`saveCircle`→`loadCircle` round-trip 後不變；QuickCheck 生成語料庫內 `c1 /= c2 ⇒ digest 相異`（無碰撞）；每個 ADT 葉節點各一條「改這裡 digest 就變」的見證（含 `Expr` 內部的 `Lit`）；`emptyCircle` 的 digest **哨兵值——凍結**） |
-| S2 | 六種 `StrokeKind`＋`sampleStroke`＋`strokeRadius` | `test/SigilStrokeSpec.hs`（**索引序＝繪製序律**：固定臂上曲線參數對 `i div sym` 嚴格單調（property，全 kind）；n 支臂等分且旋轉對稱到 1e-5；`|p| ≤ strokeRadius` 恆成立（property，全 kind）；`Polygram {n/k}` 的頂點集 ≡ 正 n 邊形頂點集；`GlyphBand` 覆蓋的線段數 ≡ `popCount mask`；`skJitter = 0` 時逐位元可重現；全分量有限值） |
-| S3 | `sigilPlan` 導出規則＋`sigilBudget` 等比裁切 | `test/SigilPlanSpec.hs`（決定論；佔用槽位數 ↔ 層數的對應表；`spSymmetry ∈ [3..9]`；`Σ skCount ≤ sigilBudget` 恆成立（property，含裁切邊界）；外圈 `ShapeRune` 例外保留（見證）；`emptyCircle` 仍有邊界環；三個範例陣的 plan 兩兩可區分） |
-| S4 | `SpawnOnStroke` 入 `SpawnPattern`；`formationEmittersFor` 改用 plan；`positionIn` 兩 case；`emitterBounds` 補案；改寫 `FormationSpec`／`PhaseSampleSpec` | `test/SigilWiringSpec.hs`（**Casting 相位零影響律**：8 個無 `phases` 的範例陣 `FrameOutput` 逐位元不變；兩個有 `phases` 的陣其 Casting 發射器逐位元不變；陣形粒子恆落在 `emitterBounds` 內；`bufferInvariant`；`spellBudget = Σ emCount`；超額仍回 `BudgetExceeded`） |
-| S5 | 端到端驗收＋`assets/spells/lattice-seal.json`＋ADR-0014 | `test/Acceptance16Spec.hs`（三陣摘要兩兩相異；陣形點集可區分且各自跨執行穩定；240 幀決定論；`isFinished` 於 `ppEnd` 翻轉不變）＋**手動 smoke**（開窗目視三個陣的 Drawing→Converging→Casting 全弧線，截圖描述入 §9） |
+| S1 ✅ | `hashCircle`（結構 fold、浮點取位元、splitmix64 混合） | `test/SigilHashSpec.hs`（決定論；`saveCircle`→`loadCircle` round-trip 後不變；QuickCheck 生成語料庫內 `c1 /= c2 ⇒ digest 相異`（無碰撞）；每個 ADT 葉節點各一條「改這裡 digest 就變」的見證（含 `Expr` 內部的 `Lit`）；`emptyCircle` 的 digest **哨兵值——凍結**） |
+| S2 ✅ | 六種 `StrokeKind`＋`sampleStroke`＋`strokeRadius` | `test/SigilStrokeSpec.hs`（**索引序＝繪製序律**：固定臂上曲線參數對 `i div sym` 嚴格單調（property，全 kind）；n 支臂等分且旋轉對稱到 1e-5；`|p| ≤ strokeRadius` 恆成立（property，全 kind）；`Polygram {n/k}` 的頂點集 ≡ 正 n 邊形頂點集；`GlyphBand` 覆蓋的線段數 ≡ `popCount mask`；`skJitter = 0` 時逐位元可重現；全分量有限值） |
+| S3 ✅ | `sigilPlan` 導出規則＋`sigilBudget` 等比裁切 | `test/SigilPlanSpec.hs`（決定論；佔用槽位數 ↔ 層數的對應表；`spSymmetry ∈ [3..9]`；`Σ skCount ≤ sigilBudget` 恆成立（property，含裁切邊界）；外圈 `ShapeRune` 例外保留（見證）；`emptyCircle` 仍有邊界環；三個範例陣的 plan 兩兩可區分） |
+| S4 ✅ | `SpawnOnStroke` 入 `SpawnPattern`；`formationEmittersFor` 改用 plan；`positionIn` 兩 case；`emitterBounds` 補案；改寫 `FormationSpec`／`PhaseSampleSpec` | `test/SigilWiringSpec.hs`（**Casting 相位零影響律**：8 個無 `phases` 的範例陣 `FrameOutput` 逐位元不變；兩個有 `phases` 的陣其 Casting 發射器逐位元不變；陣形粒子恆落在 `emitterBounds` 內；`bufferInvariant`；`spellBudget = Σ emCount`；超額仍回 `BudgetExceeded`） |
+| S5 ✅ | 端到端驗收＋`assets/spells/lattice-seal.json`＋ADR-0014 | `test/Acceptance16Spec.hs`（三陣摘要兩兩相異；陣形點集可區分且各自跨執行穩定；240 幀決定論；`isFinished` 於 `ppEnd` 翻轉不變）＋**手動 smoke**（開窗目視三個陣的 Drawing→Converging→Casting 全弧線，截圖描述入 §9） |
 
 ## 8. 非目標
 
@@ -208,4 +208,45 @@ flowchart LR
 
 ## 9. 驗收紀錄
 
-（實作時回填：日期、`cabal test` 結果、三個範例陣的手動 smoke 截圖描述、`emptyCircle` 的 digest 哨兵值；凍結清單：`hashCircle` 全函數、`Magic.Sigil` 匯出面、`sampleStroke` 的索引律與六種 kind 的閉式定義、`SpawnOnStroke` 建構子。）
+**日期**：2026-08-15。**測試**：`cabal test` → **1123 examples, 0 failures**（GHC 9.14.1 / cabal 3.16.1.0，Windows）。
+
+### 9.1 五個 Todo 的測試結果
+
+| # | 測試模組 | 結果 |
+|---|---|---|
+| S1 | `test/SigilHashSpec.hs` | 綠。決定論、shipped 12 個範例的 save/load round-trip 摘要不變、21 條「改這個葉節點摘要就變」見證（含 `Expr` 內部 `Lit`／`Chan`／形狀）、24 個生成陣的無碰撞 property、`emptyCircle` 哨兵 |
+| S2 | `test/SigilStrokeSpec.hs` | 綠。索引律（全 kind × 對稱階 1–9 × 每支臂嚴格遞增）、臂間旋轉對稱到 1e-5、`|p| ≤ strokeRadius` property、`Polygram {n/k}` 頂點集 ≡ 正 n 邊形（含 gcd≠1 的退化）、`GlyphBand` 覆蓋線段數 ≡ `popCount`、`skJitter = 0` 逐位元可重現 |
+| S3 | `test/SigilPlanSpec.hs` | 綠。決定論、佔用槽位數 ↔ 層數對應表（k 個槽 → 2 筆邊界＋k 層）、半徑帶沿用 0006、`spSymmetry ∈ [3..9]` 且以佔用數為中心 ±1、`Σ count ≤ sigilBudget` property、`ShapeRune` 例外見證、三個範例陣 plan 兩兩相異 |
+| S4 | `test/SigilWiringSpec.hs` | 綠。Casting 零影響律、plan → 發射器逐筆對應、預算 Σ 與 `ParticleBudget` 對齊、`BudgetExceeded` 仍生效、陣形粒子恆落在 `emitterBounds` 內、buffer 不變式與決定論 |
+| S5 | `test/Acceptance16Spec.hs` | 綠。三陣摘要兩兩相異、陣形點集可區分且跨執行穩定、240 幀決定論、`isFinished` 於 `ppEnd` 翻轉、Drawing 期粒子數隨時間成長（＝陣是被畫出來的） |
+
+**`emptyCircle` 的 digest 哨兵值（凍結）**：`11072995449257717738`。
+
+### 9.2 手動 smoke（開窗目視，2026-08-15）
+
+demo 以 `aaa-` 前綴法逐一載入三個陣，Tab→2D、V→top 俯視、滾輪放大，逐幀截圖後讀 HUD 的 `age` 對照相位。三張代表性畫面：
+
+- **`bare-sigil`**（HUD `age 0.33s`，132 粒）：一條**畫到約三分之二的開口弧**——陣正在被畫，還沒接合。同一次施放 `age 0.85s`（232 粒）時圓環已閉合，外加 4–5 個刻度短線。這正是「索引序＝繪製序」律在畫面上的樣子：0006 時期同一個陣是一團在圓環面積裡的霧，不會有「畫到一半」這個狀態。
+- **`grand-sigil`**（`age 1.28s`，1163 粒）：火色多層陣——最外側點狀邊界環、其外圈刻度、一圈明亮密實的環、以及內側一個**看得出直邊的多邊形輪廓**（`Polygram`），中心附近是四個節點與中心點。
+- **`lattice-seal`**（`age 1.22s`，1166 粒）：與 grand-sigil 明顯不同的另一個陣——點狀邊界環、帶輻條刻度的內環（約 8 階對稱）、環帶上一圈**直角折線紋樣**（`GlyphBand` 的點陣線段）、中央一組**花瓣狀曲線**（`Rose`）。同一陣在 `age 2.00s`（Converging）可見整個圖形正往中軸收攏。
+
+三個陣以肉眼一望即可區分，且各自穩定——§1-7 的目視條件成立。
+
+### 9.3 凍結清單（下游 spec 可引用）
+
+- `hashCircle :: Circle -> Word64` **全函數**（ADR-0014 D3；已併入 architecture §11 硬點表）。含其邊界：`circleFields` **不在**摘要內（D4）。
+- `Magic.Sigil` 匯出面：`hashCircle`、`SigilPlan(..)`、`SigilStroke(..)`、`StrokeKind(..)`、`sigilPlan`、`sigilBudget`、`sampleStroke`、`strokeParam`、`strokeRadius`。
+- `sampleStroke` 的索引律（`arm = i mod sym`、`j = i div sym`、`s` 對 `j` 嚴格遞增）與六種 kind 的閉式定義。
+- `Magic.Compile.SpawnPattern` 的 `SpawnOnStroke` 建構子。
+- 逐位元豁免的邊界（ADR-0014 D5）：只涵蓋有 `phases` 的法術在 `t < castStart` 的畫面。
+
+### 9.4 實作備註（與設計文件的偏差）
+
+1. **`circleFields` 不進摘要**（§0.1 的「對整棵 ADT 做結構 fold」在此收窄）。設計時未察覺：把力場折進摘要會讓「掛一個重力井就靜默重畫整個陣」，直接違反 spec 0007 交付的 ADR-0010 D9（力場不改變解釋器其他產物）——實作時由 `CompileFieldSpec` 兩條既有 property 當場抓到。裁決記於 ADR-0014 D4，`SigilHashSpec` 改以「力場**不**影響摘要」的正面斷言守住。
+2. **`SigilPlan` 多一個欄位 `spShapes`**（§3 的 ADT 只有 `spSymmetry`／`spStrokes`）。0006 §4.4 的 `ShapeRune` 例外必須被 plan 自己表達，否則規則會被切成「plan 一半、`Compile` 一半」。`spShapes :: V.Vector (FaceShape, Int)` 承載這些預覽，發射器順序為「筆畫群 → 形狀預覽 → 節點 → 中心」。
+3. **多一個匯出 `strokeParam`**（§3 未列）。「索引序＝繪製序」律需要一個可觀測的曲線參數才測得動；它同時是骨幹的一部分，一併凍結（§9.3）。
+4. **`sigilBudget` 涵蓋 plan，不涵蓋節點與中心**。§1-6 寫「`Σ emCount`（陣形部分）≤ 1536」；實作把裁切定義在 plan（筆畫＋形狀預覽）上，節點 4×12 與中心 16（沿用 0006 的結構常數，共 ≤ 64 粒）在其外，故陣形總量上界為 `sigilBudget + 64`。S3 測的是 §7 表格寫的 `Σ skCount ≤ sigilBudget`，S4 另測 `≤ sigilBudget + 64`。
+5. **多一個測試輔助模組 `test/SigilGen.hs`**（§0.2 預期 test other-modules +5，實為 +6）。三份 property spec 共用同一個 `Circle` 生成器，比複製三份誠實；先例是 `ExprGen`。
+6. **重錄了兩個 golden 與兩個摘要**（§0.2 未列這四處）：`test/golden/perf-0010/{bare,grand}-sigil.txt` 與 `test/FieldPlumbingSpec.hs` 的兩個 pre-0007 digest。這是 §1-5 豁免的必然代價；實測差異範圍與豁免邊界完全吻合——`bare-sigil` 差異落在幀 0–89（castStart = 1.5 s ＝幀 90），`grand-sigil` 落在幀 0–106（castStart = 1.8 s ＝幀 107），此後逐位元相同。豁免的邊界另由 `SigilWiringSpec` 的結構性斷言守住，不靠重錄後的數字自證。
+7. **動到 0014 的兩個計數與 `docs/spell-schema.md`**（§0.2 明文列為不碰）。新增 `lattice-seal.json` 使 shipped 範例由 11 增至 12，`ValidateSpec`／`SchemaDocSpec` 的計數與「每個範例都被文件提及」的守護因此各需一行級更新；順帶把 §8-7 記帳的那句「陣長什麼樣由陣的內容決定」補進作者文件（不含任何新 JSON 鍵，故未觸發鍵名守護）。
+8. **`Polygram` 的 `k` 正規化**：`gcd n k /= 1`（含 `k = 0`）時退回 `k = 1`，使「頂點集 ≡ 正 n 邊形頂點集」對任何 `(n, k)` 無條件成立，取樣函數保持全域可用。

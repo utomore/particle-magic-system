@@ -125,3 +125,23 @@ delivered function spec (details in `docs/func-spec/`).
   emitters stay hard squares so a drawn circle stays sharp. Every pre-0015
   example still renders one square batch, bit for bit (golden net unmoved).
   New example: `soft-bloom.json`. (delivered)
+- **0016 sigil geometry (a circle's figure is derived from the circle)** —
+  ADR-0014: the drawing phase stops being six concentric bands of fog and
+  becomes strokes — curves walked at a constant pace. New core module
+  `Magic.Sigil` carries `hashCircle` (a structural digest of the whole
+  `Circle`, floats entering by their bits; frozen on delivery and listed in
+  architecture §11, since it picks how every spell looks), `sigilPlan`
+  (structure sets the skeleton — which layers exist, at which radii, how
+  symmetric; the digest sets the ornament — which stroke, at which phase,
+  with which parameters) and closed-form sampling for six stroke kinds
+  (arc ring, star polygon, spokes, ticks, rose, 3×3 lattice glyph band).
+  `SpawnPattern` gains one constructor, `SpawnOnStroke`. Because index
+  order is now position along the curve, spec 0002's frozen birth schedule
+  makes the sigil *draw itself* — no new scheduling machinery at all.
+  `Magic.Codec` is untouched: no schema bump, no new rune, no new JSON key.
+  Force fields are deliberately outside the digest, so spec 0007's law that
+  fields change nothing else the interpreter produces survives intact.
+  Bit-for-bit compatibility is waived for exactly the Drawing and
+  Converging windows of spells that declare `phases`; from castStart on,
+  every phased spell samples exactly its casting emitter, and unphased
+  spells are untouched. New example: `lattice-seal.json`. (delivered)
