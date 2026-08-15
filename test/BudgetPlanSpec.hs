@@ -5,8 +5,8 @@
 --
 --   * 'ParticleBudget' is bookkeeping — a breakdown of a number the
 --     compiler already had. Its invariants are exact equalities, and they
---     have to hold for every circle shape (phased, fieldless, at the cap,
---     the empty one).
+--     have to hold for every circle shape (phased, fieldless, dense, the
+--     empty one).
 --
 --   * 'emitterBounds' is an /over/-approximation, and the only thing an
 --     over-approximation may never do is under-approximate. So the law is
@@ -29,6 +29,7 @@ import Magic.Compile
   ( CompiledSpell (..)
   , EmitterSpec (..)
   , ParticleBudget (..)
+  , budgetCap
   , compile
   , emitterBounds
   )
@@ -145,12 +146,24 @@ synthetic =
         }
     )
   ,
-    ( "at the cap"
+    ( "a dense core"
     , emptyCircle
         { core = Core (Just (EssenceRune Lightning 16)) (Nodes Nothing Nothing Nothing Nothing)
         }
     )
   ]
+
+-- | A circle whose casting emitter is exactly 'budgetCap' particles —
+-- derived from the cap rather than written out, so raising the cap
+-- (func-spec 0012 S1) moves this fixture with it instead of stranding it.
+atCapCircle :: Circle
+atCapCircle =
+  emptyCircle
+    { core =
+        Core
+          (Just (EssenceRune Lightning (fromIntegral budgetCap / 256)))
+          (Nodes Nothing Nothing Nothing Nothing)
+    }
 
 formulaOf :: String -> String -> String -> ExprV3
 formulaOf x y z = ExprV3 (exprOf x) (exprOf y) (exprOf z)
@@ -283,13 +296,13 @@ spec = describe "ParticleBudget and emitterBounds (func-spec 0010 §7 S7)" $ do
           spell = castOf circle
       I.budgetPlanOf spell `shouldBe` spellBudgetPlan (compiledOf circle)
 
-    it "maxSpellParticles is the compile-time cap, unchanged this round" $ do
-      I.maxSpellParticles `shouldBe` 4096
-      -- The 4096 above is a sentinel, not a design statement: func-spec
-      -- 0010 §8 non-goal 1 keeps the value where it is, and func-spec
-      -- 0012 S1 is what raises it (and this line with it).
-      budgetTotal (I.budgetPlanOf (castOf (syntheticNamed "at the cap")))
-        `shouldBe` I.maxSpellParticles
+    it "maxSpellParticles is the compile-time cap" $ do
+      -- Stated as the law rather than as the number: func-spec 0010 left
+      -- the value at 4096 and func-spec 0012 S1 raised it to 16384, and
+      -- neither move should have needed an edit here. The sentinel for
+      -- the value itself lives in @CapacitySpec@, in one place.
+      I.maxSpellParticles `shouldBe` budgetCap
+      budgetTotal (I.budgetPlanOf (castOf atCapCircle)) `shouldBe` I.maxSpellParticles
 
     it "emittersOf feeds emitterBounds, and the boxes contain the sample" $ do
       let circle = syntheticNamed "diamond + spiral + drift"

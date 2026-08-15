@@ -11,6 +11,7 @@ module App.TestInterp
   ( runClockVirtual
   , runFileWatchScript
   , runFileWatchScriptMap
+  , runFileWatchScriptDirs
   , HeadlessLog (..)
   , runRaylibHeadless
   , runRaylibHeadlessWith
@@ -19,7 +20,7 @@ module App.TestInterp
 import qualified Data.ByteString as BS
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
-import Effectful (Eff, (:>))
+import Effectful (Eff)
 import Effectful.Dispatch.Dynamic (localSeqUnlift, reinterpret)
 import Effectful.State.Static.Local (evalState, get, put, runState, state)
 import Magic.Interface (BlendMode, RenderBatch (..), pbCount)
@@ -44,7 +45,9 @@ runClockVirtual perCall =
 
 -- | Scripted file watch: the n-th 'CheckChanged' call answers the n-th
 -- list element (exhausted script => no more changes); 'ReadBytes' always
--- serves the given bytes.
+-- serves the given bytes. 'ScanDir' answers "no listing", so a run driven
+-- by this interpreter behaves exactly as it did before func-spec 0014
+-- existed.
 runFileWatchScript
   :: BS.ByteString
   -> [Bool]
@@ -57,6 +60,7 @@ runFileWatchScript bytes script =
         [] -> pure False
         (c : cs) -> put cs >> pure c
     ReadBytes _ -> pure (Right bytes)
+    ScanDir _ -> pure []
 
 -- | Multi-file scripted watch (func-spec 0005 §4.3): each path serves its
 -- own bytes and its own per-path change script, so spell switching can be
@@ -66,17 +70,43 @@ runFileWatchScriptMap
   :: Map FilePath (BS.ByteString, [Bool])
   -> Eff (FileWatch : es) a
   -> Eff es a
-runFileWatchScriptMap table0 =
-  reinterpret (evalState scripts0) $ \_ -> \case
+runFileWatchScriptMap table0 = runFileWatchScriptDirs table0 []
+
+-- | As 'runFileWatchScriptMap', plus a script for 'ScanDir' (func-spec
+-- 0014 S3): the n-th scan answers the n-th listing, and once the script
+-- runs out the last listing is repeated forever.
+--
+-- Repeating rather than emptying is what models the real interpreter: a
+-- throttled 'App.HotReload.scanDirIO' between scans repeats its cached
+-- answer, it does not report an empty directory. An /empty/ script (what
+-- 'runFileWatchScriptMap' passes) means "no listing at all", which is the
+-- one answer the loop is required to ignore — that is the zero-ripple
+-- law every pre-0014 test rides on.
+runFileWatchScriptDirs
+  :: Map FilePath (BS.ByteString, [Bool])
+  -> [[FilePath]]
+  -> Eff (FileWatch : es) a
+  -> Eff es a
+runFileWatchScriptDirs table0 dirScript0 =
+  reinterpret (evalState (scripts0, dirScript0)) $ \_ -> \case
     CheckChanged path ->
-      get >>= \scripts -> case M.lookup path scripts of
-        Just (c : cs) -> put (M.insert path cs scripts) >> pure c
+      get @ScriptState >>= \(scripts, dirs) -> case M.lookup path scripts of
+        Just (c : cs) -> put (M.insert path cs scripts, dirs) >> pure c
         _ -> pure False
     ReadBytes path -> pure $ case M.lookup path table0 of
       Just (bytes, _) -> Right bytes
       Nothing -> Left ("no such file (test script): " ++ path)
+    ScanDir _ ->
+      get @ScriptState >>= \(scripts, dirs) -> case dirs of
+        [] -> pure []
+        [listing] -> pure listing
+        (listing : rest) -> put (scripts, rest) >> pure listing
   where
     scripts0 = M.map snd table0
+
+-- | The scripted watch's carried state: the per-path change scripts, and
+-- the remaining directory listings.
+type ScriptState = (Map FilePath [Bool], [[FilePath]])
 
 -- | What the headless renderer observed (assertions for T7/T8 and for
 -- func-spec 0005 §8).

@@ -12,10 +12,12 @@
 --     with finite values in every column;
 --   * determinism survives an irregular host cadence: the same dt
 --     sequence replays bit for bit;
---   * @maxSpellParticles@ is still 4096. That is a /sentinel/, not a
---     design statement: func-spec 0010 §8 non-goal 1 leaves the value
---     alone, and func-spec 0012 S1 is the round that raises it — this
---     line and the golden files are what will tell it to.
+--   * @maxSpellParticles@ is the cap the core currently publishes. It was
+--     4096 when this file was written — func-spec 0010 §8 non-goal 1 left
+--     the value alone — and func-spec 0012 S1 raised it to 16384, which
+--     is what this sentinel now reads. The golden files above are the
+--     other half of that check: raising the cap must not move a single
+--     bit of any spell that already fitted.
 module Acceptance10Spec (spec) where
 
 import qualified Data.ByteString as BS
@@ -235,9 +237,9 @@ spec = describe "func-spec 0010 acceptance (§7 S9)" $ do
       maximum (map fst frames) `shouldSatisfy` (> 100)
       length (filter ((/= 0) . snd) frames) `shouldSatisfy` (> 100)
 
-  describe "the particle cap is untouched this round (§8 non-goal 1)" $ do
-    it "maxSpellParticles is 4096" $
-      maxSpellParticles `shouldBe` 4096
+  describe "the particle cap (raised by func-spec 0012 S1)" $ do
+    it "maxSpellParticles is 16384" $
+      maxSpellParticles `shouldBe` 16384
 
     it "and a circle that would exceed it still fails to compile" $ do
       bytes <- BS.readFile "assets/spells/ring-fire.json"
@@ -245,7 +247,8 @@ spec = describe "func-spec 0010 acceptance (§7 S9)" $ do
       -- Sanity: the shipped example compiles, well under the cap.
       case compile circle of
         Left err -> expectationFailure (show err)
-        Right spell -> budgetTotal (spellBudgetPlan spell) `shouldSatisfy` (<= 4096)
+        Right spell ->
+          budgetTotal (spellBudgetPlan spell) `shouldSatisfy` (<= maxSpellParticles)
 
     it "every example's budget plan agrees with its emitters" $
       mapM_

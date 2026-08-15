@@ -194,6 +194,23 @@ legacyDepthCost plane pb = sum (map fst (sortOn (Down . snd) keyed))
 syntheticSizes :: [Int]
 syntheticSizes = [10000, 50000, 100000]
 
+-- | The whole per-frame CPU cost at one particle count: sample the buffer
+-- and expand it into quads, the two terms func-spec 0005 §10 and 0010
+-- §9.2 measured separately.
+--
+-- Func-spec 0012 S1 picks the particle cap by this number: the largest
+-- power of two whose frame cost stays under 2 ms. Measuring it directly
+-- at the candidate values beats extrapolating from the 100k figure, which
+-- is what the 0010 acceptance record could only offer.
+frameCost :: CompiledSpell -> Time -> Float
+frameCost spell t =
+  let pb = sample spell ctx t
+   in forceQuads pb + fromIntegral (pbCount pb)
+
+-- | The powers of two either side of the cap func-spec 0012 chose.
+capCandidates :: [Int]
+capCandidates = [4096, 8192, 16384, 32768]
+
 -- | Cast and force the compiled spell to its constructor. 'isFinished'
 -- reads @spellLifetime@, so the strict 'CompiledSpell' record exists —
 -- but its emitter vector's elements stay lazy, so this is the floor of
@@ -273,6 +290,13 @@ main = do
         "sample (synthetic, past the cap)"
         [ bench (show n ++ " particles") (whnf (\s -> sampleCost s (Time 2.5)) spell)
         | n <- syntheticSizes
+        , let spell = syntheticSpell n
+        ]
+    , -- func-spec 0012 S1: the cap selection measurement ----------------
+      bgroup
+        "frame CPU (sample + buildQuads)"
+        [ bench (show n ++ " particles") (whnf (\s -> frameCost s (Time 2.5)) spell)
+        | n <- capCandidates
         , let spell = syntheticSpell n
         ]
     ]

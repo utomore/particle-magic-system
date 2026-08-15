@@ -5,6 +5,10 @@
 -- Spec 0005: the demo no longer hardcodes one spell file. It scans
 -- @assets\/spells@ once at startup and the arrow keys cycle through what
 -- it found, so every example is reachable without editing this file.
+--
+-- Spec 0014: that startup scan is now only the starting value — the loop
+-- rescans the same directory as it runs, so a file the author creates
+-- (or deletes) shows up without restarting the demo.
 module Main (main) where
 
 import Data.List (isSuffixOf, sort)
@@ -60,7 +64,10 @@ main = do
   stats <-
     runEff
       . runRaylibIO
-      . runFileWatchIO 0.5
+      -- Files are stat'ed twice a second (a save should show up at once);
+      -- the directory is listed every two seconds, which is often enough
+      -- for a file the author just created and rare enough to be free.
+      . runFileWatchIO 0.5 2.0
       . runClockIO
       $ runLoop (config paths)
   putStrLn $
