@@ -57,7 +57,9 @@ import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Unboxed.Mutable as MU
 import Magic.Circle (Circle, emptyCircle)
 import Magic.Compile
-  ( BlendMode (..)
+  ( Appearance (appBlend, appShape)
+  , BillboardShape (..)
+  , BlendMode (..)
   , CompileError (..)
   , CompiledSpell (..)
   , EmitterSpec (..)
@@ -67,7 +69,6 @@ import Magic.Compile
   , compile
   , compileMany
   , emitterBounds
-  , spellBlend
   )
 import Magic.Particle.Analytic
   ( aliveRanges
@@ -89,9 +90,9 @@ import Magic.Types
   , V3 (..)
   )
 
--- | Billboard geometry hint for the renderer.
-data BillboardShape = BillboardSquare
-  deriving (Eq, Show)
+-- 'BillboardShape' is defined in the core's "Magic.Rune" since spec 0015
+-- (it became player vocabulary) and re-exported here unchanged — the
+-- host-visible surface is the same text it has been since 0005.
 
 data CastRequest = CastRequest
   { circleOf :: Circle
@@ -250,6 +251,11 @@ fieldInputs spell ctx t = runST $ do
 -- D1): the accumulated displacements are lined up with the buffer's rows
 -- through 'aliveSlots', the single enumeration @sample@ itself defines.
 -- With no fields the buffer is returned exactly as sampled (D9).
+--
+-- Since func-spec 0015 the output is one batch per run of adjacent
+-- same-looking emitters, not always one batch — see 'splitBatches' for
+-- the splitting law. The signature and 'FrameOutput' are unchanged;
+-- @batches@ was always a list.
 observeSpell :: ActiveSpell -> FrameOutput
 observeSpell spell =
   let t = Time (asElapsed spell)
@@ -260,13 +266,64 @@ observeSpell spell =
           let slots = aliveSlotIndices (asSpell spell) t
               (dx, dy, dz) = Field.displacementColumns (asField spell) slots
            in displaceBuffer sampled dx dy dz
-      batch =
-        RenderBatch
-          { rbParticles = buffer
-          , rbBlend = spellBlend (asSpell spell)
-          , rbShape = BillboardSquare
-          }
-   in FrameOutput {batches = [batch]}
+   in FrameOutput {batches = splitBatches (asSpell spell) t buffer}
+
+-- | Cut the sampled buffer into render batches: adjacent emitters with
+-- the same @(appBlend, appShape)@ merge into one batch, in emitter order
+-- (func-spec 0015 S1).
+--
+-- Splitting law: @concat (map rbParticles batches)@ is the input buffer,
+-- bit for bit, six columns, rows in order — structural, because the
+-- buffer's rows are the emitters' rows concatenated in emitter order
+-- (0010's @sample@), so a run of adjacent emitters IS a contiguous slice.
+-- Equal keys that are /not/ adjacent deliberately stay separate batches:
+-- merging them would reorder rows and break both the law and the
+-- 'aliveSlotIndices' alignment. Slices are 'U.slice' — zero copies.
+--
+-- A spell with no emitters (@mempty@, e.g. @castSpells []@) has zero
+-- batches; every compiled circle has at least the casting emitter and so
+-- at least one batch, even when no particle is currently alive.
+splitBatches :: CompiledSpell -> Time -> ParticleBuffer -> [RenderBatch]
+splitBatches compiled t buffer =
+  [ RenderBatch
+      { rbParticles = sliceBuffer offset len buffer
+      , rbBlend = blend
+      , rbShape = shape
+      }
+  | ((blend, shape), offset, len) <- placed
+  ]
+  where
+    keyed =
+      [ ((appBlend look, appShape look), rows)
+      | em <- V.toList (spellEmitters compiled)
+      , let look = emAppearance em
+            rows = sum [hi - lo | (lo, hi) <- aliveRanges (emSpawn em) (emCount em) t]
+      ]
+    grouped = foldr mergeRun [] keyed
+    mergeRun (key, n) ((key', n') : rest) | key == key' = (key, n + n') : rest
+    mergeRun kn rest = kn : rest
+    placed =
+      zipWith
+        (\(key, n) offset -> (key, offset, n))
+        grouped
+        (scanl (+) 0 (map snd grouped))
+
+-- | One contiguous row window of the buffer, as a buffer: each of the six
+-- columns sliced in place (no copy), the count the window's length.
+sliceBuffer :: Int -> Int -> ParticleBuffer -> ParticleBuffer
+sliceBuffer offset len pb =
+  ParticleBuffer
+    { pbPosX = cut (pbPosX pb)
+    , pbPosY = cut (pbPosY pb)
+    , pbPosZ = cut (pbPosZ pb)
+    , pbSize = cut (pbSize pb)
+    , pbLife = cut (pbLife pb)
+    , pbColor = cut (pbColor pb)
+    , pbCount = len
+    }
+  where
+    cut :: (U.Unbox a) => U.Vector a -> U.Vector a
+    cut = U.slice offset len
 
 -- | Add one displacement column per position column. Row count, sizes,
 -- life fractions and colors are untouched, so the

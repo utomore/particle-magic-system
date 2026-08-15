@@ -43,6 +43,9 @@ namespace ParticleMagic
         public const int BlendAlpha = 0;        // PM_BLEND_ALPHA
         public const int BlendAdditive = 1;     // PM_BLEND_ADDITIVE
         public const int ShapeSquare = 0;       // PM_SHAPE_SQUARE
+        public const int ShapeSoftDot = 1;      // PM_SHAPE_SOFT_DOT
+        public const int ShapeRing = 2;         // PM_SHAPE_RING
+        public const int ShapeSpark = 3;        // PM_SHAPE_SPARK
 
         public const int PlaneSideXY = 0;       // PM_PLANE_SIDE_XY: (x, y), depth = -z
         public const int PlaneTopXZ = 1;        // PM_PLANE_TOP_XZ:  (x, z), depth = -y

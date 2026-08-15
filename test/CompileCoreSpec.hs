@@ -7,6 +7,7 @@ import qualified Data.Vector as V
 import Magic.Circle (Circle (..), Core (..), Nodes (..), TwoOf (..), emptyCircle)
 import Magic.Compile
   ( Appearance (..)
+  , BillboardShape (..)
   , BlendMode (..)
   , ColorRamp (..)
   , CompiledSpell (..)
@@ -64,11 +65,12 @@ spec = describe "compile fold steps 1-2 (spec 0002 S5)" $ do
         , appSize = 0.05
         , appBlend = BlendAlpha
         , appAmplify = Nothing
+        , appShape = BillboardSquare
         }
 
   it "each element looks up its own appearance; Neutral is 0001's white" $ do
     elementAppearance Neutral
-      `shouldBe` Appearance (ColorRamp 0xFFFFFFFF 0xFFFFFFFF) 0.05 BlendAlpha Nothing
+      `shouldBe` Appearance (ColorRamp 0xFFFFFFFF 0xFFFFFFFF) 0.05 BlendAlpha Nothing BillboardSquare
     let looks = map elementAppearance [Neutral, Fire, Water, Lightning]
     -- All four table rows are distinct, and the essence reaches the emitter.
     length looks `shouldBe` 4

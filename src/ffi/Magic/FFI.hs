@@ -94,7 +94,7 @@ import Magic.Codec (loadCircle, renderLoadError)
 import Magic.Columns (fromColumns)
 import Magic.Interface
   ( ActiveSpell
-  , BillboardShape (..)
+  , BillboardShape
   , BlendMode (..)
   , CastContext (..)
   , CastRequest (..)
@@ -172,10 +172,13 @@ blendCode = \case
   BlendAlpha -> 0
   BlendAdditive -> 1
 
--- | Wire codes for 'BillboardShape', declaration order.
+-- | Wire codes for 'BillboardShape': the constructor's declaration index,
+-- by definition rather than by convention (func-spec 0015 S3 — the core
+-- derives 'Enum', so a new shape appended to the sum brings its code with
+-- it, and @test\/FFIContractSpec.hs@ walks @[minBound .. maxBound]@
+-- against the header's @PM_SHAPE_*@ defines in both directions).
 shapeCode :: BillboardShape -> CInt
-shapeCode = \case
-  BillboardSquare -> 0
+shapeCode = fromIntegral . fromEnum
 
 -- Handle ---------------------------------------------------------------------
 

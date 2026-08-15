@@ -1,6 +1,6 @@
 # Func-Spec 0015：視覺表現力・核心半場（展現詞彙與多批次輸出）
 
-> 狀態：**設計定案，待實作**
+> 狀態：**已完成**（2026-08-15，驗收紀錄見 §9）
 > 性質：一般 —— 交付後凍結 `BillboardShape` 的建構子宣告序（＝ C wire code）、`StyleRune` 的 JSON 形狀、批次分割律。
 > 前置依賴：**spec 0012（需已完成）**——本 spec 與 0012 同碰 `Compile.hs`／`Interface.hs`／`FFI.hs`／`FFIContractSpec.hs`／`Raylib3D.hs` 五個檔案（§0.2 逐檔列出），依 SKILL.md 規則 4 不得平行，**動工門檻＝0012 驗收**。**與 spec 0014 平行**（0014 觸 `tools/`／`app/Main.hs`／`Loop`／`Effects`／`HotReload`／`docs/spell-schema.md`／`BoundarySpec`，與本清單逐檔交集 = ∅，§0.2 附證明）。
 > 依據：architecture §1.2（特效即魔法——粒子形態就是魔法的語意）、§5.2（輸出格式含 `BillboardShape`）、§10「新符文／新渲染後端」兩列；ADR-0003（展現＝外圈職責）、ADR-0009（動態 quad mesh，不自訂 shader）、ADR-0011 D7（header add-only）；[roadmap.md](../roadmap.md) §3.4、§6-3；spec 0008 §9-5（`rbShape` 差異化）、spec 0013 §8-1（明文把「動核心的那半」留給本輪）。**本輪同步交付 ADR-0013**（先例：0007↔ADR-0010、0009↔ADR-0011、0012↔ADR-0012）。
@@ -162,12 +162,12 @@ flowchart LR
 
 | # | Todo | 測試 |
 |---|---|---|
-| S0 | h-raylib texcoord／材質貼圖 spike（風險前置；含退場判定） | **手動 smoke**（開窗截圖，比照 0005 S0 慣例；結果入 §9） |
-| S1 | `observeSpell` 依 `(blend, shape)` 對相鄰發射器 run-length 分批（`U.slice` 零拷貝） | `test/BatchSplitSpec.hs`（分割律：批次串接 ≡ 分批前單一 buffer 逐位元；單一鍵 ⇒ 恰一批；空 spell ⇒ 零批；批次順序＝發射器順序；`pbCount` 總和守恆；QuickCheck 隨機陣） |
-| S2 | `BillboardShape` 遷入 `Magic.Rune`＋4 建構子；`Appearance.appShape`；`StyleRune`＋fold case；Codec `"style"` tag；Interface re-export | `test/ShapeVocabSpec.hs`（符文 → `rbShape` 端到端見證；JSON round-trip；未知 `billboard` 名稱的錯誤含行列；陣形發射器恆為 `BillboardSquare`；**opt-in 逐位元律**：10 個既有範例陣的 `FrameOutput` 與交付前逐位元相同——六欄、批次數、`rbBlend`、`rbShape`） |
-| S3 | `shapeCode ≡ fromEnum`；header `PM_SHAPE_*` +3；C# const +3 | `test/FFIContractSpec.hs` 擴充（遍歷 `[minBound .. maxBound]`：每個建構子都有同值的 `PM_SHAPE_*` define，且反向亦然；`PM_SHAPE_SQUARE == 0` 釘選；`PM_BATCH_INFO_STRIDE == 4` 未變哨兵）。C# 由既有 `BindingContractSpec` 自動強制（0011 S4） |
-| S4 | `App.Render.Sprite.spriteTexels`＋`quadTexcoords`＋mesh texcoord 填值＋逐 batch 綁材質 | `test/SpriteSpec.hs`（長度 ＝ `n*n*4`；RGB 恆為 255（顏色只來自頂點色）；`Square` 的 alpha 全 255（保住現況）；`SoftDot` alpha 沿半徑單調不增且中心為 255；`Ring` 的最大 alpha 在 r≈0.5 的環帶上；`Spark` 兩軸對稱；`quadTexcoords` 長度與逐 quad 圖樣）。GPU 綁定靠 S0／§9 手動 smoke |
-| S5 | 端到端驗收＋`assets/spells/soft-bloom.json`＋ADR-0013 定稿 | `test/Acceptance15Spec.hs`（帶 `StyleRune` 的陣在 Drawing 期恰分兩批且 shape 分別為 Square／SoftDot；240 幀決定論；10 個既有範例陣的六欄 golden 零回歸；新範例陣可載入可編譯且預算合法） |
+| ✅ S0 | h-raylib texcoord／材質貼圖 spike（風險前置；含退場判定） | **手動 smoke**（開窗截圖，比照 0005 S0 慣例；結果入 §9） |
+| ✅ S1 | `observeSpell` 依 `(blend, shape)` 對相鄰發射器 run-length 分批（`U.slice` 零拷貝） | `test/BatchSplitSpec.hs`（分割律：批次串接 ≡ 分批前單一 buffer 逐位元；單一鍵 ⇒ 恰一批；空 spell ⇒ 零批；批次順序＝發射器順序；`pbCount` 總和守恆；QuickCheck 隨機陣） |
+| ✅ S2 | `BillboardShape` 遷入 `Magic.Rune`＋4 建構子；`Appearance.appShape`；`StyleRune`＋fold case；Codec `"style"` tag；Interface re-export | `test/ShapeVocabSpec.hs`（符文 → `rbShape` 端到端見證；JSON round-trip；未知 `billboard` 名稱的錯誤含行列；陣形發射器恆為 `BillboardSquare`；**opt-in 逐位元律**：10 個既有範例陣的 `FrameOutput` 與交付前逐位元相同——六欄、批次數、`rbBlend`、`rbShape`） |
+| ✅ S3 | `shapeCode ≡ fromEnum`；header `PM_SHAPE_*` +3；C# const +3 | `test/FFIContractSpec.hs` 擴充（遍歷 `[minBound .. maxBound]`：每個建構子都有同值的 `PM_SHAPE_*` define，且反向亦然；`PM_SHAPE_SQUARE == 0` 釘選；`PM_BATCH_INFO_STRIDE == 4` 未變哨兵）。C# 由既有 `BindingContractSpec` 自動強制（0011 S4） |
+| ✅ S4 | `App.Render.Sprite.spriteTexels`＋`quadTexcoords`＋mesh texcoord 填值＋逐 batch 綁材質 | `test/SpriteSpec.hs`（長度 ＝ `n*n*4`；RGB 恆為 255（顏色只來自頂點色）；`Square` 的 alpha 全 255（保住現況）；`SoftDot` alpha 沿半徑單調不增且中心為 255；`Ring` 的最大 alpha 在 r≈0.5 的環帶上；`Spark` 兩軸對稱；`quadTexcoords` 長度與逐 quad 圖樣）。GPU 綁定靠 S0／§9 手動 smoke |
+| ✅ S5 | 端到端驗收＋`assets/spells/soft-bloom.json`＋ADR-0013 定稿 | `test/Acceptance15Spec.hs`（帶 `StyleRune` 的陣在 Drawing 期恰分兩批且 shape 分別為 Square／SoftDot；240 幀決定論；10 個既有範例陣的六欄 golden 零回歸；新範例陣可載入可編譯且預算合法） |
 
 ## 8. 非目標
 
@@ -181,4 +181,26 @@ flowchart LR
 
 ## 9. 驗收紀錄
 
-（實作時回填：日期、`cabal test` 結果、S0 spike 的結論與是否啟用退場方案、手動 smoke 的截圖描述；凍結清單：`BillboardShape` 建構子宣告序與對應 `PM_SHAPE_*`、`StyleRune` 的 JSON 形狀與名稱表、`observeSpell` 的分割律。）
+### 9.1 結果（2026-08-15）
+
+- **`cabal test`：1045 examples, 0 failures**（交付前基線 1018）。`cabal build all` 綠：demo exe、`magic-validate` exe、bench、foreign-library 全數編譯通過。
+- **S0 spike 結論：h-raylib 貼圖路徑可行，未啟用退場方案**（純幾何變體不需要）。實際路徑比預期更短：`Image { image'data, format = PixelFormatUncompressedR8G8B8A8 }` → `loadTextureFromImage`，逐 batch 綁定是對材質 maps[0] 的 texture 槽**直接 `poke`**（20 bytes，經 `p'material'maps`／`p'materialMap'texture` 指標，零 FFI 呼叫）；`BillboardSquare` poke 回開機時記下的預設 1×1 白貼圖。
+- **手動 smoke**（合成輸入驅動視窗＋截圖，比照 0005 S0 慣例）：`soft-bloom` 施放期（age 4.87s、512 粒、60 fps）粒子為**清晰的徑向漸淡軟光點**；同一法術畫陣期（age 1.02s、368 粒）陣形粒子為**硬邊方點**——同一幀兩個批次各自綁對材質，D4（陣形恆方塊）目視成立。切回既有範例的方塊外觀由 golden 網守（見下）。
+- **10 個既有範例逐位元零回歸**：`PerfGoldenSpec` 的 240 幀六欄 golden **零重錄全綠**；`ShapeVocabSpec` 另斷言全部 10 個範例在多個時間點都恰為 1 批、shape 恆 `BillboardSquare`（opt-in 律）。
+- 各 Todo 對應測試全綠：S1 `BatchSplitSpec`（分割律 QuickCheck＋run-length 順序＋空 spell 零批）、S2 `ShapeVocabSpec`、S3 `FFIContractSpec` 擴充（`[minBound..maxBound]` 雙向鏡射＋SQUARE=0 釘選＋stride=4 哨兵；C# 由既有 `BindingContractSpec` 自動強制，未新寫測試）、S4 `SpriteSpec`、S5 `Acceptance15Spec`（Drawing 期恰兩批 [SoftDot, Square]、240 幀決定論、soft-bloom 預算合法）。
+
+### 9.2 實作備註（偏差與連帶）
+
+1. **`Appearance` 第 5 欄的機械漣漪**：加欄位使位置模式／建構子的 arity 改變，被迫對 §0.2「明文不碰」清單中的三個檔案做**純機械**修改——`src/core/Magic/Particle/Analytic.hs`（一個 pattern 加 `_shape`）、`bench/Bench.hs`／`test/FormationSpec.hs`／`test/SampleFillSpec.hs`（同性質 arity 補位）。零語意變更，golden 網證明零漣漪。
+2. **fold 步驟 4 的形狀載體**：`applyOuter` 由 `Motion -> OuterRune -> Motion` 改為 `(Motion, BillboardShape) -> OuterRune -> (Motion, BillboardShape)`——shape 不屬於 `Motion`,而 fold 步驟 4 是唯一讀外圈的地方，配對摺疊是最小改動。
+3. **§8-7 合併順序條款已履行**：0014 已合併於本分支基底，故 `docs/spell-schema.md` 補了 §6.4（`style`／`billboard` 鍵與名稱表）並把 soft-bloom 列入 §11 導覽；`SchemaDocSpec`／`ValidateSpec` 中寫死的範例數 10 → 11（行級聯集性質，與 0012 §9.5-5 更新寫死 4096 同例）。
+4. **未知 `billboard` 名稱的錯誤定位**：與既有慣例一致走 aeson JSON path（`$.circle.outer[0].billboard`）＋合法名稱清單；「行列位置」由 `LoadError` 既有機制在 JSON 語法錯誤時提供，值域錯誤提供的是路徑（與 `element`／`kind` 等既有欄位同一行為）。
+
+### 9.3 凍結清單（交付即凍結）
+
+| 凍結物 | 內容 |
+|---|---|
+| `BillboardShape` 建構子宣告序 ＝ C wire code | `BillboardSquare`=0（永久釘選）、`BillboardSoftDot`=1、`BillboardRing`=2、`BillboardSpark`=3；新 shape 只能**append**；永遠無參數（ADR-0013 D1） |
+| `PM_SHAPE_*` header 常數 | `PM_SHAPE_SQUARE 0`／`PM_SHAPE_SOFT_DOT 1`／`PM_SHAPE_RING 2`／`PM_SHAPE_SPARK 3`；`PM_BATCH_INFO_STRIDE 4` 零觸碰 |
+| `StyleRune` JSON 形狀 | `{"rune": "style", "billboard": <name>}`；名稱表 `"square"`／`"soft-dot"`／`"ring"`／`"spark"`；缺鍵即無（opt-in），與 `phases`／`fields` 同慣例 |
+| `observeSpell` 分割律 | 依**相鄰發射器**的 `(appBlend, appShape)` run-length 分批；`concat (map rbParticles batches)` ≡ 分批前 buffer（六欄逐位元、含順序）；批次順序＝發射器順序；不相鄰同鍵**不合併**；無發射器 ⇒ 零批 |

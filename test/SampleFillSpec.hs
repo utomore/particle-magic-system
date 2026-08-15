@@ -96,7 +96,7 @@ referenceSample spell c t@(Time seconds)
 
     row em i ageD =
       let Seconds lifetime = envLifetime (emSpawn em)
-          Appearance ramp size _blend mAmplify = emAppearance em
+          Appearance ramp size _blend mAmplify _shape = emAppearance em
           lifeFrac = realToFrac (ageD / lifetime) :: Float
           env =
             ExprEnv

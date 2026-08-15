@@ -15,6 +15,7 @@ module Magic.Rune
     OuterRune (..)
   , FaceShape (..)
   , RadiationMode (..)
+  , BillboardShape (..)
 
     -- * Interlayer: modulation
   , BridgeRune (..)
@@ -45,7 +46,31 @@ data OuterRune
   | -- | Spawn-offset scale curve (spec 0004; t = this particle's birth
     -- time, frozen at birth). A no-op without a 'ShapeRune'.
     RangeRune Expr
+  | -- | Billboard form of the main-effect particles (spec 0015; the
+    -- outer ring is presentation, ADR-0003). Formation emitters ignore
+    -- it — a drawn circle stays crisp squares.
+    StyleRune BillboardShape
   deriving (Eq, Show)
+
+-- | Billboard geometry hint the renderer receives per batch (spec 0015).
+-- Moved here from the boundary's @Magic.Interface@ (which still
+-- re-exports it) the moment it became player vocabulary.
+--
+-- Declaration order IS the C wire code: @shapeCode = fromEnum@, and each
+-- constructor's @PM_SHAPE_*@ define pins its index forever — new shapes
+-- append at the end, never in the middle (ADR-0013). Always
+-- parameterless: @batch_info@'s frozen stride gives a shape one int of
+-- room and nothing more (ADR-0013 records the rejected alternatives).
+data BillboardShape
+  = -- | Hard-edged square (wire code 0, the original and default look).
+    BillboardSquare
+  | -- | Soft dot: radial alpha falloff, full at the center.
+    BillboardSoftDot
+  | -- | Hollow ring: alpha peaks on the r ≈ 0.5 band.
+    BillboardRing
+  | -- | Four-pointed cross flare.
+    BillboardSpark
+  deriving (Eq, Show, Enum, Bounded)
 
 -- | The drawn 2D face the spell is born on (face coordinates).
 data FaceShape

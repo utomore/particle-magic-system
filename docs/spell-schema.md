@@ -149,7 +149,7 @@
 
 ## 6. `outer`：呈現層（最多 2 層）
 
-合法的 `rune` 值：`"shape"`、`"radiate"`、`"range"`。
+合法的 `rune` 值：`"shape"`、`"radiate"`、`"range"`、`"style"`。
 
 ### 6.1 `"shape"`：粒子從哪個圖形上生出來
 
@@ -181,6 +181,23 @@
 
 ```json
 { "rune": "range", "expr": "1 + sin(t*2)*0.5" }
+```
+
+### 6.4 `"style"`：粒子長什麼樣子
+
+`billboard` 決定主效果粒子的告示板形態：
+
+| `billboard` | 樣子 |
+|---|---|
+| `"square"` | 硬邊方塊（預設；不放 `style` 就是它）。 |
+| `"soft-dot"` | 中心全亮、往外漸淡的軟光點。 |
+| `"ring"` | 中空圓環。 |
+| `"spark"` | 十字光芒。 |
+
+只影響**施放主體**的粒子；「畫陣」階段的粒子永遠是硬邊方塊——畫出來的線要銳利。
+
+```json
+{ "rune": "style", "billboard": "soft-dot" }
 ```
 
 ---
@@ -309,6 +326,7 @@ OK assets/spells/grand-sigil.json
 | 檔案 | 看什麼 |
 |---|---|
 | `ring-fire.json` | 完整四層：環形生成、`phase` 延遲、螺旋軌跡、火元素。 |
+| `soft-bloom.json` | `style` 軟光點 + `phases`：畫陣是硬邊方塊、主效果是軟光點，一眼看出兩個批次。 |
 | `pulse-ring.json` | 兩條曲線同時作用：`range` 讓生成半徑脈動，`amplify` 讓尺寸脈動。 |
 | `converge-flame.json` | `converge` 收束曲線 `1 - life`：粒子邊飛邊向軸線收攏。 |
 | `lissajous.json` | `formula` 自訂軌跡，三個分量各一條公式。 |

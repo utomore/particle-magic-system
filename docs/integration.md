@@ -64,7 +64,7 @@ uint8_t a =  c        & 0xFF;
 | `batch_info[4*i + 0]` | 第 i 批的第一顆粒子在六條陣列裡的位移（offset） |
 | `batch_info[4*i + 1]` | 第 i 批的粒子數 |
 | `batch_info[4*i + 2]` | 混合模式：`PM_BLEND_ALPHA`(0) / `PM_BLEND_ADDITIVE`(1) |
-| `batch_info[4*i + 3]` | billboard 形狀：`PM_SHAPE_SQUARE`(0) |
+| `batch_info[4*i + 3]` | billboard 形狀：`PM_SHAPE_SQUARE`(0) / `PM_SHAPE_SOFT_DOT`(1) / `PM_SHAPE_RING`(2) / `PM_SHAPE_SPARK`(3)。不認得的碼照 `PM_SHAPE_SQUARE` 畫即可（func-spec 0015 起，形狀由魔法陣的 `style` 符文指定） |
 
 一批＝一次 draw call（設好混合狀態，畫這一段）。目前每個法術的批次數很少（個位數），`max_batches = 8` 足夠；不夠時 `pm_observe` 回 `PM_ERR_CAPACITY` 而**不寫入任何東西**——你不會拿到畫到一半的幀。
 
@@ -530,7 +530,7 @@ void Update()
 | **RTS 不可重啟** | `pm_shutdown()` 之後不能再 `pm_init()`；一個 process 一份 GHC RTS |
 | **DLL 約 46 MB** | `standalone` 內嵌整個 GHC RTS 的代價；換來的是宿主端零 Haskell 依賴 |
 | **只有 win64 被完整實測** | `.so` / `.dylib` 由 cabal stanza 天然涵蓋，但沒有列入驗收 |
-| **只有方形 billboard** | `PM_SHAPE_SQUARE` 是目前唯一的形狀碼 |
+| **billboard 形狀是無參數列舉** | func-spec 0015 起有四種形狀碼（square／soft-dot／ring／spark），但形狀**永遠不帶參數**（拉伸、旋轉需另開查詢，ADR-0013）；怎麼畫每種形狀由宿主自行決定（demo 用 64×64 程序生成 alpha 貼圖，RGB 全白、顏色仍來自頂點色） |
 | **只有 Unity 被實測過** | C# 綁定在 Unity 6000.5.7f1 batchmode 實測通過（[0011 §9.3](func-spec/0011-host-integration-surface.md)，可用 `examples/unity/PmSmoke.cs` 一鍵複驗）；Godot／Unreal／其他 .NET 宿主只有合約保證，沒有實測 |
 
 ---

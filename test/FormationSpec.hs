@@ -179,7 +179,7 @@ spec = describe "compile step 5: formation geometry emitters (spec 0006 S4)" $ d
   it "formation particles fade to the same RGB with alpha cleared, smaller and same blend" $ do
     let spell = compiled mixedCircle
         formation = V.toList (spellEmitters spell) !! 2
-        Appearance (ColorRamp start end) size blend _ = emAppearance formation
+        Appearance (ColorRamp start end) size blend _ _ = emAppearance formation
     (start .&. 0x000000FF) `shouldBe` 0xFF -- Neutral start alpha untouched
     (end .&. 0xFFFFFF00) `shouldBe` (start .&. 0xFFFFFF00) -- same RGB
     (end .&. 0x000000FF) `shouldBe` 0 -- alpha cleared

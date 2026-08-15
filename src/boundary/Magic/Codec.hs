@@ -8,7 +8,8 @@
 -- @empty.json@ loads byte-for-byte unchanged.
 --
 -- Runes are tagged by a @"rune"@ field. Valid tags: outer @shape@ |
--- @radiate@ | @range@, bridge @phase@ | @converge@ | @amplify@, inner
+-- @radiate@ | @range@ | @style@ (spec 0015),
+-- bridge @phase@ | @converge@ | @amplify@, inner
 -- @trajectory@ | @timing@ | @formula@, nodes @dir-bias@ (the Expr-payload
 -- tags added by spec 0004 §4.6). Unknown tags are load errors listing the
 -- valid tags for that slot. All new errors go through the frozen
@@ -66,7 +67,8 @@ import Magic.Circle (Circle (..), Core (..), Nodes (..), PhaseConfig (..), TwoOf
 import Magic.Expr (Expr, ExprV3 (..))
 import Magic.Expr.Parse (parseExpr, renderExpr, renderExprParseError)
 import Magic.Rune
-  ( BridgeRune (..)
+  ( BillboardShape (..)
+  , BridgeRune (..)
   , Element (..)
   , Envelope (..)
   , EssenceRune (..)
@@ -234,12 +236,27 @@ runeTag slotName valid v k = withObject slotName go v
 
 parseOuterRune :: Value -> Parser OuterRune
 parseOuterRune = \v ->
-  runeTag "outer ring slot" ["shape", "radiate", "range"] v $ \tag o -> case tag of
+  runeTag "outer ring slot" ["shape", "radiate", "range", "style"] v $ \tag o -> case tag of
     "shape" -> do
       shapeValue <- o .: "shape"
       ShapeRune <$> (parseFaceShape shapeValue <?> Key "shape")
     "range" -> RangeRune <$> exprField o "expr"
+    -- The key is "billboard", not "shape": "shape" is already the
+    -- ShapeRune's face-geometry key (spec 0015 §1 point 3).
+    "style" -> StyleRune <$> ((o .: "billboard" >>= parseBillboard) <?> Key "billboard")
     _ -> RadiateRune <$> (o .: "mode" >>= parseRadiationMode)
+
+parseBillboard :: Value -> Parser BillboardShape
+parseBillboard = withText "billboard" $ \t -> case t of
+  "square" -> pure BillboardSquare
+  "soft-dot" -> pure BillboardSoftDot
+  "ring" -> pure BillboardRing
+  "spark" -> pure BillboardSpark
+  other ->
+    fail $
+      "unknown billboard "
+        ++ show (T.unpack other)
+        ++ "; valid billboards: square, soft-dot, ring, spark"
 
 parseFaceShape :: Value -> Parser FaceShape
 parseFaceShape = withObject "shape" $ \o -> do
@@ -479,6 +496,14 @@ encodeOuterRune rune = case rune of
   ShapeRune shape -> object ["rune" .= ("shape" :: Text), "shape" .= encodeFaceShape shape]
   RadiateRune mode -> object ["rune" .= ("radiate" :: Text), "mode" .= encodeRadiationMode mode]
   RangeRune e -> object ["rune" .= ("range" :: Text), "expr" .= renderExpr e]
+  StyleRune shape -> object ["rune" .= ("style" :: Text), "billboard" .= encodeBillboard shape]
+
+encodeBillboard :: BillboardShape -> Text
+encodeBillboard shape = case shape of
+  BillboardSquare -> "square"
+  BillboardSoftDot -> "soft-dot"
+  BillboardRing -> "ring"
+  BillboardSpark -> "spark"
 
 encodeFaceShape :: FaceShape -> Value
 encodeFaceShape shape = case shape of
