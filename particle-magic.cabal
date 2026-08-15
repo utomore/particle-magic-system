@@ -63,6 +63,7 @@ library magic-boundary
                       Magic.Step
                       Magic.Expr.Parse
                       Magic.Columns
+                      Magic.Scene
     -- 'vector' joins the boundary layer in func-spec 0007: Magic.Interface
     -- feeds the force-field layer per-slot inputs and adds its
     -- displacements onto the sampled SoA buffer. Already inside the
@@ -90,6 +91,7 @@ executable particle-magic
                     , App.Render.Quads
                     , App.Render.Flat
                     , App.Render.Order
+                    , App.Render.Chunk
                     , App.Hud
     build-depends:    base
                     , particle-magic:magic-boundary
@@ -98,10 +100,31 @@ executable particle-magic
                     , bytestring
                     , vector
                     , directory
+                    , filepath
                     , time
                     , containers
     default-language: GHC2021
     ghc-options:      -Wall -threaded -O2
+
+-- The boundary layer's third consumer (func-spec 0014): an authoring
+-- tool that loads and casts a spell file and reports what happened. It
+-- opens no window and draws nothing, which is the point -- the same
+-- dependency discipline as the demo executable (magic-core is NOT
+-- reachable, and neither is a renderer), guarded by test/BoundarySpec.hs.
+-- 'aeson' is here because the tool reads the two circle-level opt-in keys
+-- (phases, fields) back off Magic.Codec's own canonical encoding.
+executable magic-validate
+    main-is:          Main.hs
+    hs-source-dirs:   tools
+    other-modules:    Validate
+    build-depends:    base
+                    , particle-magic:magic-boundary
+                    , aeson
+                    , bytestring
+                    , vector
+                    , directory
+    default-language: GHC2021
+    ghc-options:      -Wall -O2
 
 -- The second supported consumption mode (ADR-0011, func-spec 0009): the
 -- same boundary layer behind a C ABI, so non-Haskell hosts (Unity, Godot,
@@ -140,7 +163,10 @@ test-suite spec
     -- foreign-exported functions are ordinary Haskell functions, called
     -- here through real CStrings and Ptrs (func-spec 0009 §2). Loading the
     -- built shared object is the manual smoke, §8 S6.
-    hs-source-dirs:   test, app, src/ffi
+    -- tools/ joins them in func-spec 0014 for the same reason app/ is
+    -- here: the CLI's pure half is tested as-built. tools/Main.hs (the IO
+    -- shell) is not listed, so no second 'Main' module is compiled in.
+    hs-source-dirs:   test, app, src/ffi, tools
     other-modules:    BoundarySpec
                     , TypesSpec
                     , CircleSpec
@@ -220,6 +246,16 @@ test-suite spec
                     , FlatCameraSpec
                     , DepthTintSpec
                     , Acceptance13Spec
+                    , CapacitySpec
+                    , ComposeSpec
+                    , ComposeBudgetSpec
+                    , SceneSpec
+                    , Acceptance12Spec
+                    , Validate
+                    , ValidateSpec
+                    , SchemaDocSpec
+                    , RescanSpec
+                    , Acceptance14Spec
                     , App.Effects
                     , App.HotReload
                     , App.Loop
@@ -228,16 +264,19 @@ test-suite spec
                     , App.Render.Quads
                     , App.Render.Flat
                     , App.Render.Order
+                    , App.Render.Chunk
                     , App.Hud
     build-depends:    base
                     , particle-magic:magic-core
                     , particle-magic:magic-boundary
                     , hspec
                     , QuickCheck
+                    , aeson
                     , bytestring
                     , vector
                     , effectful
                     , directory
+                    , filepath
                     , time
                     , containers
                     , text

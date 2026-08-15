@@ -24,6 +24,7 @@ import Foreign.Storable (peek)
 import qualified GHC.Foreign as GHCF
 import GHC.IO.Encoding (utf8)
 import Magic.Codec (loadCircle, renderLoadError)
+import Magic.Compile (budgetCap)
 import Magic.FFI (isNullSpell, nullSpell, pm_cast_ex, pmErrBudget, pmErrJson, writeErr)
 import Test.Hspec
 import Test.QuickCheck
@@ -35,12 +36,13 @@ badVersion = BS8.pack "{ \"version\": 7, \"circle\": {} }"
 badRune = BS8.pack "{ \"version\": 1, \"circle\": { \"bridge\": { \"rune\": \"bogus\" } } }"
 badElement = BS8.pack "{ \"version\": 1, \"circle\": { \"core\": { \"center\": { \"element\": \"aether\", \"power\": 1 } } } }"
 
--- | Well-formed, decodes fine, and asks for 40 × 256 = 10240 particles —
--- past the core's cap of 4096.
+-- | Well-formed, decodes fine, and asks for 80 × 256 = 20480 particles —
+-- past the core's cap (4096 when this was written, 16384 since func-spec
+-- 0012 S1).
 overBudget :: BS.ByteString
 overBudget =
   BS8.pack
-    "{ \"version\": 1, \"circle\": { \"core\": { \"center\": { \"element\": \"fire\", \"power\": 40.0 } } } }"
+    "{ \"version\": 1, \"circle\": { \"core\": { \"center\": { \"element\": \"fire\", \"power\": 80.0 } } } }"
 
 -- | A message with characters outside ASCII, so the truncation sweep has
 -- multi-byte boundaries to get wrong (2-, 3- and 4-byte sequences).
@@ -80,7 +82,8 @@ spec = describe "C ABI error protocol (func-spec 0009 §8 S3)" $ do
         Right _ -> expectationFailure "an over-budget circle was cast"
         Left failure -> do
           cfCode failure `shouldBe` pmErrBudget
-          cfMessage failure `shouldSatisfy` isInfixOf "BudgetExceeded 10240 4096"
+          cfMessage failure
+            `shouldSatisfy` isInfixOf ("BudgetExceeded 20480 " ++ show budgetCap)
 
     it "distinguishes the two failures by code, not only by text" $ do
       jsonCode <- failureCode badSyntax

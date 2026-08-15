@@ -191,8 +191,10 @@ spec = describe "compile step 5: formation geometry emitters (spec 0006 S4)" $ d
     spellBudget spell `shouldBe` sum (map emCount (V.toList (spellEmitters spell)))
 
   it "the Sigma budget check fires BudgetExceeded when casting + formation exceeds the cap" $
-    -- power 15 -> casting count 3840 (well under cap alone); + 480 formation = 4320 > 4096.
-    compile (fullCircle Neutral 15) `shouldBe` Left (BudgetExceeded 4320 budgetCap)
+    -- power 63 -> casting count 16128 (under the 16384 cap on its own);
+    -- + 480 formation = 16608, over it. The point of the case is the
+    -- /sum/, so the numbers track the cap func-spec 0012 S1 raised.
+    compile (fullCircle Neutral 63) `shouldBe` Left (BudgetExceeded 16608 budgetCap)
 
   it "index 0 is always the casting emitter; spellBlend reads it regardless of formation emitters" $ do
     let spell = compiled (fullCircle Fire 1.0)
