@@ -24,8 +24,9 @@ Three rings, dependencies pointing strictly inward
   deterministic and replayable). Depends only on `base`, `vector`, `deepseq`.
 - **Pure boundary** (`magic-boundary`): the system's only public surface —
   `Magic.Interface` (cast/step/observe), `Magic.Codec` (JSON in/out,
-  formula-text parsing) and `Magic.Projection` (orthographic projection +
-  painter ordering, for 2D hosts).
+  formula-text parsing), `Magic.Projection` (orthographic projection +
+  painter ordering, for 2D hosts) and `Magic.Scene` (several casts at once
+  under one global particle quota).
 - **Effect shell** (this repo's executable): fixed-timestep loop, hot reload,
   h-raylib rendering. Host games replace this ring entirely.
 
@@ -48,7 +49,8 @@ build-depends: particle-magic:magic-boundary
 ```
 
 Your code imports `Magic.Interface` and `Magic.Codec` only — plus
-`Magic.Projection` if you render in 2D. Nothing else is part of the contract.
+`Magic.Projection` if you render in 2D, and `Magic.Scene` if you run several
+spells at once. Nothing else is part of the contract.
 
 ## Using it from a non-Haskell engine (C ABI)
 

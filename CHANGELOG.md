@@ -76,3 +76,21 @@ delivered function spec (details in `docs/func-spec/`).
   blob it used to be. Every control is the identity on idle input, so an
   untouched run renders exactly what func-spec 0008 delivered — asserted
   end-to-end. Core, boundary, FFI and `app/Main.hs` untouched. (delivered)
+- **0012 multi-circle composition & scene layer** — ADR-0012, and the last
+  row of Init.md's parameter table: `CompiledSpell` becomes a lawful
+  `Semigroup`/`Monoid`, so stacking circles is a fold rather than a special
+  case. Emitters, force fields and per-emitter budgets concatenate;
+  `PhasePlan` merges landmark by landmark with `max`, which is the only
+  merge that preserves the ordering invariant without truncating either
+  component. `compileMany` / `Magic.Interface.castSpells` cast a
+  composition as one spell, checked against the same cap as a single
+  circle. New boundary module `Magic.Scene`: several casts alive at once
+  under one global quota, first come first served, a pure value with no IO
+  and no second ledger — a finished spell releases its share by being
+  dropped. And the particle cap finally moves: **4096 → 16384**, the
+  largest power of two whose whole per-frame CPU cost stays under 2 ms
+  (measured 1.45 ms; 32768 would be 2.87 ms). The C header is untouched —
+  `PM_MAX_PARTICLES` stays pinned at the first generation's 4096 and
+  `pm_max_particles()` answers the new value, exactly as func-spec 0011
+  designed it. All ten example spells stay bit-identical across the raise.
+  (delivered)

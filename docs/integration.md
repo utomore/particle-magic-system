@@ -97,7 +97,9 @@ pm_observe(spell, ...);                     /* 每個畫面幀只取樣一次 */
 
 **用 `pm_max_particles()` 查，不要用 `PM_MAX_PARTICLES` 常數。**
 
-兩者今天都是 4096，但意義不同：header 是凍結合約，`PM_MAX_PARTICLES` 因此**永遠**停在第 1 代的 4096；`pm_max_particles()` 是執行期查詢，核心上限提升時它跟著變。用查詢配置的宿主換一顆新版 DLL 就直接受惠，用常數的宿主會在大法術上收到 `PM_ERR_CAPACITY`（整幀不畫，不會壞掉，但你也看不到東西）。
+兩者的意義不同：header 是凍結合約，`PM_MAX_PARTICLES` 因此**永遠**停在第 1 代的 4096；`pm_max_particles()` 是執行期查詢，核心上限提升時它跟著變。用查詢配置的宿主換一顆新版 DLL 就直接受惠，用常數的宿主會在大法術上收到 `PM_ERR_CAPACITY`（整幀不畫，不會壞掉，但你也看不到東西）。
+
+**這件事已經發生過一次**：func-spec 0012 把核心上限從 4096 提到 **16384**，header 一字未改。用查詢的宿主什麼都不用做；用常數的宿主仍然跑得動每一個 4096 粒以內的法術，只是拿不到更大的。
 
 ```c
 int cap = pm_max_particles();
@@ -166,7 +168,7 @@ runSpell bytes =
 同樣從 `Magic.Interface` 匯出，都是純函數，都可以在第一幀之前就問：
 
 ```haskell
-maxSpellParticles :: Int                    -- 單一法術的粒子上限（= 編譯期護欄，目前 4096）
+maxSpellParticles :: Int                    -- 單一法術的粒子上限（= 編譯期護欄，目前 16384）
 budgetPlanOf      :: ActiveSpell -> ParticleBudget
 emittersOf        :: ActiveSpell -> [EmitterSpec]
 emitterBounds     :: CastContext -> Seconds -> EmitterSpec -> (V3, V3)
@@ -177,7 +179,7 @@ data ParticleBudget = ParticleBudget
   }
 ```
 
-- **`maxSpellParticles`** 是配置緩衝的正確依據，而不是把 4096 抄進你的程式碼。C ABI 側的等價查詢是 `pm_max_particles()`（func-spec 0011 交付）。
+- **`maxSpellParticles`** 是配置緩衝的正確依據，而不是把數字抄進你的程式碼——它已經從 4096 變成 16384 一次了（func-spec 0012）。C ABI 側的等價查詢是 `pm_max_particles()`（func-spec 0011 交付）。
 - **`budgetPlanOf`** 給的是**這一次施法**的上限（`budgetTotal`），通常遠小於 `maxSpellParticles`。想預先配置剛好夠用的頂點緩衝就用它。
 - **`emitterBounds ctx horizon em`** 回一個**保守的世界座標 AABB**：這個發射器在 `[0, horizon]` 秒內取樣得到的每一顆粒子都在盒內。它刻意不做視錐剔除——核心沒有相機概念（ADR-0008），要不要因為整個發射器在畫面外而跳過它，是你的決定。`horizon` 是**你選的時窗**：傳一個涵蓋整個法術的秒數就得到全程包絡，傳 `0.5` 就是問「接下來半秒它最遠會跑到哪裡」。傳得越長，盒子越保守。
 - `EmitterSpec` 在這裡是**不透明型別**：從 `emittersOf` 拿到，交回給 `emitterBounds`，不要試圖解構它。
@@ -192,6 +194,48 @@ visibleEmitters ctx spell =
   , yourFrustumTest box
   ]
 ```
+
+### 3.2 多陣合成與場景層（func-spec 0012 新增，僅 Haskell 面）
+
+**合成**——把幾張陣當成一個法術施放：
+
+```haskell
+castSpells :: [Circle] -> CastContext -> Either CompileError ActiveSpell
+```
+
+回來的是一個普通的 `ActiveSpell`，`advanceSpell`／`observeSpell`／`isFinished` 全部照舊。語意（ADR-0012）：
+
+- 粒子是各成分的**疊加**——取樣輸出就是各成分的輸出串接，逐位元；
+- 生命週期的四個界標**逐一取最大值**，於是合成陣的每個階段持續到最慢的成分結束，誰都不會被截斷；
+- 預算**相加**，並對**同一個** `maxSpellParticles` 檢查——合成不是提高上限的手段，兩張各自合格的陣加起來仍可能回 `BudgetExceeded`（帶合成後的總需求）；
+- 力場**融合**：任一成分的場作用於整個合成法術的粒子（把重力井疊上火環，火會被吸過去）；
+- 混合模式取**第一張陣**的（見 §8 的限制列）。
+
+`castSpells [c] ctx` 與 `castSpell (CastRequest c ctx)` 逐位元相同，所以既有呼叫端不必改。
+
+**場景層**——多個法術在一個全域配額下共存：
+
+```haskell
+import Magic.Scene
+
+newScene     :: SceneConfig -> Scene                -- SceneConfig { scGlobalCap :: Int }
+castInto     :: CastRequest -> Scene -> Either CastRefusal (SpellId, Scene)
+castManyInto :: [Circle] -> CastContext -> Scene -> Either CastRefusal (SpellId, Scene)
+dismiss      :: SpellId -> Scene -> Scene
+advanceScene :: FrameInput -> Scene -> Scene        -- 推進全部，移除已完成者
+observeScene :: Scene -> FrameOutput                -- batch 串接，SpellId 升冪
+sceneBudget  :: Scene -> (Int, Int)                 -- (已用, 上限)
+sceneSpells  :: Scene -> [SpellId]
+```
+
+`Scene` 是純值，和 `ActiveSpell` 一樣沒有 IO、沒有鎖。配額是**先到先得**：塞不下就回 `QuotaExceeded 需求 剩餘`，而且場景一個位元都不變；法術結束時 `advanceScene` 把它移除，配額自動回收（已用量是從現存法術即時求和的，沒有第二本帳）。
+
+```haskell
+frame :: FrameInput -> Scene -> (Scene, FrameOutput)
+frame fi scene = let scene' = advanceScene fi scene in (scene', observeScene scene')
+```
+
+進階配額策略（按強度加權、優先權搶佔）刻意不做：庫給的是拒收與剩餘量，要先 `dismiss` 掉什麼是遊戲的決定，不是粒子系統的（ADR-0012 D6）。
 
 ---
 
@@ -479,8 +523,9 @@ void Update()
 
 | 限制 | 說明 |
 |---|---|
-| **粒子上限 4096** | **這是護欄值，不是速度上限**：func-spec 0010 已把熱路徑做到 100 000 粒 6.5 ms（60 fps 預算的 39%），值本身的提升排在 func-spec 0012。超過上限的魔法陣在 `pm_cast`／`castSpell` 就會被擋下（`PM_ERR_BUDGET`），不會在執行期爆掉。**請用執行期查詢，不要把 4096 抄進程式碼**——它會變：Haskell 宿主用 `Magic.Interface.maxSpellParticles`，C 宿主用 `pm_max_particles()`（`PM_MAX_PARTICLES` 是 ABI 第 1 代的值，永久凍結） |
-| **一次一張陣** | 沒有多陣合成／疊加 API。想同時放多個法術＝持有多個 handle，總量控制是你的事 |
+| **粒子上限 16384** | **這是護欄值，不是速度上限**：func-spec 0010 已把熱路徑做到 100 000 粒 6.5 ms（60 fps 預算的 39%）；func-spec 0012 依「單幀純 CPU ≤ 2 ms」的規則把值定在 16384（實測 1.45 ms）。超過上限的魔法陣在 `pm_cast`／`castSpell` 就會被擋下（`PM_ERR_BUDGET`），不會在執行期爆掉。**請用執行期查詢，不要把數字抄進程式碼**——它已經變過一次：Haskell 宿主用 `Magic.Interface.maxSpellParticles`，C 宿主用 `pm_max_particles()`（`PM_MAX_PARTICLES` 是 ABI 第 1 代的 4096，永久凍結） |
+| **合成與場景層只在 Haskell 面** | func-spec 0012 交付了多陣合成（`castSpells`）與全域配額場景層（`Magic.Scene`），但**沒有對應的 C ABI**（`pm_scene_*` 不存在，ADR-0012 D8）。C／Unity 宿主仍是「一個 handle 一個法術」，多法術的總量控制是你的事（配額邏輯是十行加法） |
+| **合成後只有一個 blend mode** | 合成法術渲染成一個 batch，混合模式取第一張陣的（ADR-0012 D5）。把火（additive）與水（alpha）疊起來，整體以第一張的模式繪製 |
 | **單執行緒 handle** | 庫內無鎖 |
 | **RTS 不可重啟** | `pm_shutdown()` 之後不能再 `pm_init()`；一個 process 一份 GHC RTS |
 | **DLL 約 46 MB** | `standalone` 內嵌整個 GHC RTS 的代價；換來的是宿主端零 Haskell 依賴 |
@@ -497,7 +542,7 @@ void Update()
 | `include/particle_magic.h` | **只加不改**。既有的每個函數簽名、常數值、`batch_info` 佈局都不會變。新增功能＝新增宣告 |
 | `pm_abi_version()` | 上述承諾破裂時（如果真有那一天）才會遞增。啟動時比對它 |
 | 魔法陣 JSON `"version"` 欄位 | schema v1。未來遞增時，`Magic.Codec` 保留舊版解碼器並提供 migrate，舊魔法檔不會失效 |
-| `PM_MAX_PARTICLES` vs `pm_max_particles()` | 常數**永遠**是第 1 代的 4096（header 凍結）；查詢跟著核心走。核心提升上限時 header 一字不動，用查詢配置的宿主不必重編 |
+| `PM_MAX_PARTICLES` vs `pm_max_particles()` | 常數**永遠**是第 1 代的 4096（header 凍結）；查詢跟著核心走。核心提升上限時 header 一字不動，用查詢配置的宿主不必重編。**已驗證**：func-spec 0012 把核心上限提到 16384，header 零字元變更、既有宿主零重編譯 |
 | Haskell 側 `Magic.Interface` / `Magic.Codec` / `Magic.Projection` / `Magic.Columns` | 各自的 func-spec 驗收紀錄明列「凍結介面清單」；凍結後的變更視同架構變更，要先改 ADR |
 | `bindings/csharp/ParticleMagic.cs` | 不是凍結合約，是**參考實作**；但它與 header 的一致性由 `test/BindingContractSpec.hs` 守護，不會偷偷落後 |
 | 決定論 | 同一組輸入永遠產生逐位元相同的輸出，且**兩條路徑（Haskell／C ABI）的結果相同**——這不是文件承諾，是 `test/Acceptance9Spec.hs`（取樣）與 `test/Acceptance11Spec.hs`（投影）的斷言 |

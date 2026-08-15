@@ -46,6 +46,7 @@ module Magic.Compile
 
     -- * Compilation
   , compile
+  , compileMany
   , CompileError (..)
   , budgetCap
 
@@ -135,6 +136,91 @@ data CompiledSpell = CompiledSpell
   -- data for 'Magic.Particle.Field' to interpret.
   }
   deriving (Eq, Show)
+
+-- | Composition of two circles' compiled products into one spell
+-- (func-spec 0012 §2, ADR-0012). Every field composes the only way its
+-- own meaning allows:
+--
+-- * 'spellEmitters' and 'spellFields' concatenate, left spell first —
+--   the sampler walks emitters independently, so concatenating them is
+--   exactly "run both", and the row order of the sampled buffer is the
+--   concatenation order (the superposition law, @test\/Acceptance12Spec@);
+-- * 'spellBudget' and 'budgetTotal' add, 'budgetPerEmitter' concatenates,
+--   which keeps 'ParticleBudget' index-aligned with the concatenated
+--   emitters and its sum invariant intact;
+-- * 'spellPhases' takes the per-landmark maximum, and 'spellLifetime'
+--   (always @ppEnd@) follows it.
+--
+-- Per-landmark @max@ is the only merge that preserves the 'PhasePlan'
+-- invariant without truncating either component: @max@ is monotone in
+-- each argument, so @a₁≤a₂≤a₃≤a₄@ and @b₁≤b₂≤b₃≤b₄@ give
+-- @max a₁ b₁ ≤ max a₂ b₂ ≤ …@. Semantically each stage of the composed
+-- circle lasts until the slowest component's does; a faster component
+-- fades inside its own envelope with nothing to truncate it.
+--
+-- Associativity is inherited term by term (@max@, @+@, and both
+-- concatenations are associative), so this is a lawful 'Semigroup' —
+-- guarded bit for bit by @test\/ComposeSpec.hs@.
+instance Semigroup CompiledSpell where
+  a <> b =
+    CompiledSpell
+      { spellLifetime = ppEnd mergedPlan
+      , spellBudget = spellBudget a + spellBudget b
+      , spellEmitters = spellEmitters a <> spellEmitters b
+      , spellPhases = mergedPlan
+      , spellBudgetPlan = mergeBudget (spellBudgetPlan a) (spellBudgetPlan b)
+      , spellFields = spellFields a <> spellFields b
+      }
+    where
+      mergedPlan = mergePhases (spellPhases a) (spellPhases b)
+
+-- | The empty spell: no emitters, no fields, no budget, and a fully
+-- degenerate 'PhasePlan' (every landmark 0, so 'phaseAt' classifies every
+-- instant as 'Dissipating' and 'Magic.Interface.isFinished' holds
+-- immediately).
+--
+-- It is an identity for '<>' on every value satisfying the 'PhasePlan'
+-- invariant — which is every value 'compile' can produce, since
+-- @max 0 x = x@ needs @x >= 0@ and @0 <= ppDrawEnd@ is the invariant's
+-- first clause. Note that @compile emptyCircle@ is /not/ 'mempty': an
+-- empty circle still casts a plain discharge (architecture §3.3). The
+-- unit laws are asserted about 'mempty' itself, not about that spell.
+instance Monoid CompiledSpell where
+  mempty =
+    CompiledSpell
+      { spellLifetime = Seconds 0
+      , spellBudget = 0
+      , spellEmitters = V.empty
+      , spellPhases =
+          PhasePlan
+            { ppDrawEnd = Seconds 0
+            , ppConvergeEnd = Seconds 0
+            , ppCastingEnd = Seconds 0
+            , ppEnd = Seconds 0
+            }
+      , spellBudgetPlan = ParticleBudget {budgetPerEmitter = U.empty, budgetTotal = 0}
+      , spellFields = []
+      }
+
+-- | Per-landmark maximum (func-spec 0012 §2). Invariant-preserving, see
+-- the 'Semigroup' instance's note.
+mergePhases :: PhasePlan -> PhasePlan -> PhasePlan
+mergePhases x y =
+  PhasePlan
+    { ppDrawEnd = ppDrawEnd x `max` ppDrawEnd y
+    , ppConvergeEnd = ppConvergeEnd x `max` ppConvergeEnd y
+    , ppCastingEnd = ppCastingEnd x `max` ppCastingEnd y
+    , ppEnd = ppEnd x `max` ppEnd y
+    }
+
+-- | Concatenate the per-emitter breakdown and add the totals — the
+-- 'ParticleBudget' counterpart of concatenating 'spellEmitters'.
+mergeBudget :: ParticleBudget -> ParticleBudget -> ParticleBudget
+mergeBudget x y =
+  ParticleBudget
+    { budgetPerEmitter = budgetPerEmitter x <> budgetPerEmitter y
+    , budgetTotal = budgetTotal x + budgetTotal y
+    }
 
 data EmitterSpec = EmitterSpec
   { emAnchor :: !Anchor
@@ -268,12 +354,24 @@ data CompileError
     BudgetExceeded !Int !Int
   deriving (Eq, Show)
 
--- | Hard particle cap for this round: 4096 still renders per-particle;
--- a guardrail for the skeleton renderer, not a performance design. Since
--- spec 0006, this bounds Σ emCount across every emitter (casting +
--- formation), not just casting's.
+-- | Hard particle cap: the most particles one compiled spell — a single
+-- circle or a composition of several ('compileMany') — may add up to,
+-- summed over every emitter (casting + formation) since spec 0006.
+--
+-- Func-spec 0012 S1 raises it from the skeleton renderer's 4096 guardrail
+-- to a measurement-backed value. Selection rule: the largest power of two
+-- whose whole per-frame CPU cost (sampling + quad expansion, the two
+-- terms func-spec 0010 §9.2 measured) stays under 2 ms — an eighth of the
+-- 60 fps frame, leaving the host the rest. At 0010's measured constants
+-- that is 16384; see func-spec 0012 §9 for the numbers taken at this
+-- value itself.
+--
+-- Raising it again is an interface event, not an edit: the C ABI mirrors
+-- it through @pm_max_particles@ (func-spec 0011's query mirror law) and
+-- the demo's GPU mesh capacity is sized independently and chunked, so a
+-- host that asks rather than assumes keeps working.
 budgetCap :: Int
-budgetCap = 4096
+budgetCap = 16384
 
 -- Plain-discharge defaults (spec 0002 §4.5, constants from the delivered
 -- 0001 stub) ----------------------------------------------------------------
@@ -389,6 +487,29 @@ compile circle = do
                 }
           , spellFields = circleFields circle
           }
+
+-- | Compile several circles and compose them into one spell (func-spec
+-- 0012 S3): every circle compiles on its own, the results are merged with
+-- the 'Monoid' instance in list order, and the /composed/ total is
+-- checked against 'budgetCap' — so two circles that each fit may still be
+-- refused together, with the same 'BudgetExceeded' constructor carrying
+-- the combined demand.
+--
+-- Laws (@test\/ComposeBudgetSpec.hs@):
+--
+-- > compileMany []  == Right mempty
+-- > compileMany [c] == compile c
+--
+-- The second holds because a single circle's own budget check is the
+-- composed check, and @mconcat [x] == x@.
+compileMany :: [Circle] -> Either CompileError CompiledSpell
+compileMany circles = do
+  spells <- traverse compile circles
+  let composed = mconcat spells
+      total = spellBudget composed
+  if total > budgetCap
+    then Left (BudgetExceeded total budgetCap)
+    else Right composed
 
 -- | Fold every variable-free subtree of every formula an emitter carries
 -- (func-spec 0010 S6). Compile time is where a player's constant

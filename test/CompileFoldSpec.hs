@@ -97,8 +97,8 @@ spec = describe "compile fold steps 3-4 (spec 0002 S6)" $ do
             Left err -> counterexample (show err) False
 
   it "power beyond the cap compiles to Left (BudgetExceeded requested cap)" $ do
-    -- power 20 → 5120 > 4096.
-    compile (essenceCircle 20) `shouldBe` Left (BudgetExceeded 5120 budgetCap)
+    -- power 80 → 20480, past the 16384 cap func-spec 0012 S1 set.
+    compile (essenceCircle 80) `shouldBe` Left (BudgetExceeded 20480 budgetCap)
 
   it "spellLifetime == envDelay + envDuration + envLifetime" $ do
     let timing = Envelope (Seconds 0.5) (Seconds 3) (Seconds 1.5)

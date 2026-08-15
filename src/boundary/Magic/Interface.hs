@@ -33,6 +33,7 @@ module Magic.Interface
     -- * Spell lifecycle
   , ActiveSpell
   , castSpell
+  , castSpells
   , stepSpell
   , advanceSpell
   , observeSpell
@@ -64,6 +65,7 @@ import Magic.Compile
   , Phase (Casting)
   , budgetCap
   , compile
+  , compileMany
   , emitterBounds
   , spellBlend
   )
@@ -131,15 +133,37 @@ data ActiveSpell = ActiveSpell
   }
 
 castSpell :: CastRequest -> Either CompileError ActiveSpell
-castSpell req = do
-  compiled <- compile (circleOf req)
-  pure
-    ActiveSpell
-      { asSpell = compiled
-      , asCtx = ctxOf req
-      , asElapsed = 0
-      , asField = Field.emptyFieldState (map emCount (V.toList (spellEmitters compiled)))
-      }
+castSpell req = activate (ctxOf req) <$> compile (circleOf req)
+
+-- | Cast several circles as one composed spell (func-spec 0012 S3): the
+-- multi-circle entry point, and the only form in which composition
+-- reaches a host — 'Magic.Compile.compileMany' composes
+-- @CompiledSpell@s, which this layer deliberately keeps out of its
+-- vocabulary.
+--
+-- The composed cast behaves as the superposition of its components
+-- (func-spec 0012 §1-5): the sampled buffer is each component's rows,
+-- concatenated in list order. Two deliberate exceptions, both of them
+-- ADR-0012 decisions rather than accidents: force fields fuse (every
+-- component's fields act on every component's casting particles), and the
+-- batch's blend mode is the first component's, since a spell renders as
+-- one batch (architecture §10).
+--
+-- > castSpells [c] ctx == castSpell (CastRequest c ctx)
+-- > castSpells []  ctx  -- a spell with no particles that is finished at once
+castSpells :: [Circle] -> CastContext -> Either CompileError ActiveSpell
+castSpells circles ctx = activate ctx <$> compileMany circles
+
+-- | A compiled spell plus the cast it belongs to, clock at zero and the
+-- force-field layer at rest (ADR-0010 D8).
+activate :: CastContext -> CompiledSpell -> ActiveSpell
+activate ctx compiled =
+  ActiveSpell
+    { asSpell = compiled
+    , asCtx = ctx
+    , asElapsed = 0
+    , asField = Field.emptyFieldState (map emCount (V.toList (spellEmitters compiled)))
+    }
 
 -- | Advance the spell's clock, and with it the force-field integration
 -- (one fixed step per call — func-spec 0005's @advanceSpell ×n@ loop is
@@ -293,12 +317,15 @@ budgetPlanOf :: ActiveSpell -> ParticleBudget
 budgetPlanOf = spellBudgetPlan . asSpell
 
 -- | The most particles any single spell can be compiled to (a compile
--- that would exceed it fails with 'BudgetExceeded').
+-- that would exceed it fails with 'BudgetExceeded') — a composed cast
+-- ('castSpells') included: composition is checked against the same cap as
+-- a single circle, not a multiple of it.
 --
--- First time this number reaches the public interface: hosts and the C
--- ABI's @pm_max_particles@ have had to know it by other means. Its
--- /value/ is untouched this round — raising the cap is func-spec 0012's
--- job, and it will raise this constant, not add a second one.
+-- Func-spec 0012 raised this constant (4096 → 16384) rather than adding a
+-- second one, exactly as func-spec 0010 promised. A host that /asks/ —
+-- here or through the C ABI's @pm_max_particles@ — sizes its buffers
+-- correctly across the change; one that hard-codes 4096 keeps working for
+-- every spell that fitted before.
 maxSpellParticles :: Int
 maxSpellParticles = budgetCap
 
