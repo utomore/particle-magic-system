@@ -1,6 +1,6 @@
 # ADR-0014：符文陣由魔法陣資料導出——摘要即合約、混合導出、逐位元豁免的邊界
 
-- 狀態：已採納（2026-08-15）
+- 狀態：已採納（2026-08-15）；**D5 已由 [ADR-0015](0015-sigil-persists-through-cast.md) D4 取代（2026-08-15）**——陣形改為駐留到 `ppEnd`，D5「豁免只到 Drawing／Converging 為止」的前提（陣形於 `castStart` 死盡）不再成立。本文其餘決策不受影響。
 - 相關：[architecture.md §1.1（Circle as Data）、§3.3（生命週期）、§4.3（`hashChan`）、§11（破壞性變更硬點表）](../architecture.md)；ADR-0003（槽位固定職責）、ADR-0007（核心零 IO）、ADR-0010 D4／D9（力場是陣的物理環境、零場逐位元相容律）；落地 spec：0016
 
 ## 背景
@@ -29,7 +29,9 @@
 
 **D4（力場不進摘要）** `circleFields` 刻意**不**折進 `hashCircle`。ADR-0010 D4 已經裁定力場是陣的**物理環境**，既不是任何槽位的意義、也不是對意義的調變；ADR-0010 D9 則交付了「零場逐位元相容律」與「力場不改變解釋器其他產物」。若把力場折進摘要，掛一個重力井就會靜默重畫整個陣——那是對 D9 的可見違反。所以力場一如它穿過 `compile` 的方式：被攜帶，不被折疊。
 
-**D5（逐位元豁免只到 Drawing／Converging 為止）** 本輪改變的是畫陣階段的幾何，因此：
+**D5（逐位元豁免只到 Drawing／Converging 為止）** ⚠ **已由 ADR-0015 D4 取代**——邊界收窄為 `t < min(phDraw, castStart − formLife)`，理由見該處。以下保留原文作為記錄。
+
+本輪改變的是畫陣階段的幾何，因此：
 
 - `circlePhases = Nothing` 的法術**完全不受影響**（它們根本沒有陣形發射器）——0010 的 golden 網對這 8 個範例零重錄；
 - 有 `phases` 的法術，只有 `t < castStart` 的畫面改變；`t ≥ castStart` 起，緩衝區就是施放發射器自己的，逐位元不變。實測驗證：`bare-sigil` 240 幀中差異落在幀 0–89（castStart = 1.5 s ＝幀 90），`grand-sigil` 落在幀 0–106（castStart = 1.8 s ＝幀 107），此後每一幀逐位元相同。

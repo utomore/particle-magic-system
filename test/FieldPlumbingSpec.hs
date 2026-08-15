@@ -49,17 +49,19 @@ import Test.Hspec
 -- particle count of every frame.
 preFieldDigests :: [(FilePath, Word64)]
 preFieldDigests =
-  [ -- The two phased examples were re-captured at func-spec 0016, whose
-    -- whole point is that a drawn sigil's geometry changes: its
-    -- exemption from bit-for-bit compatibility covers the Drawing and
-    -- Converging windows and nothing else (ADR-0014). What still holds
-    -- unchanged for them — and is checked structurally by
-    -- @test\/SigilWiringSpec.hs@ — is that from castStart on the buffer
-    -- is exactly the casting emitter's, field layer included.
-    ("assets/spells/bare-sigil.json", 11931136425577964786)
+  [ -- The two phased examples were re-captured at func-spec 0016 (the
+    -- sigil's geometry changed) and again at 0017 (the sigil now holds
+    -- until 'ppEnd' instead of collapsing at castStart) — see ADR-0015
+    -- for the scope of that waiver. What this law still guards for them,
+    -- unchanged and load-bearing, is the /field/ side of the claim: a
+    -- fieldless spell runs through the same arithmetic it always did,
+    -- and @test\/PersistWiringSpec.hs@ now checks the harder half —
+    -- formation rows stay exactly undisplaced even while the field layer
+    -- is bending the casting rows right next to them.
+    ("assets/spells/bare-sigil.json", 16740094377505200858)
   , ("assets/spells/converge-flame.json", 16464387485720134342)
   , ("assets/spells/empty.json", 3634073563866035966)
-  , ("assets/spells/grand-sigil.json", 10600619274652936582)
+  , ("assets/spells/grand-sigil.json", 18167520682498334567)
   , ("assets/spells/lissajous.json", 17185893384502476165)
   , ("assets/spells/pulse-ring.json", 9492385642234227627)
   , ("assets/spells/ring-fire.json", 10271734941662667557)

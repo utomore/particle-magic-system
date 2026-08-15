@@ -1,7 +1,12 @@
 -- | S5 (func-spec 0006 §8): end-to-end phase sampling behavior through
--- the untouched 'sample' function — Drawing-period geometry, Converging
--- collapse, formation death at castStart, casting's delayed first birth,
--- determinism and the buffer invariant.
+-- the untouched 'sample' function — Drawing-period geometry, casting's
+-- delayed first birth, determinism and the buffer invariant.
+--
+-- Func-spec 0016 replaced the geometry (bands of fog became strokes) and
+-- func-spec 0017 replaced the time axis (the sigil holds where it was
+-- drawn and lives until 'ppEnd' instead of collapsing and dying at
+-- castStart); the properties below track those two changes at the same
+-- strength rather than being deleted.
 module PhaseSampleSpec (spec) where
 
 import Data.Maybe (isJust, isNothing)
@@ -138,7 +143,12 @@ spec = describe "end-to-end phase sampling (spec 0006 S5)" $ do
     emCount node `shouldBe` 12
     nodePos `shouldSatisfy` all (\p -> norm (p - expectedAnchor) < 1e-3)
 
-  prop "Converging: paired-index lateral distance from the axis is non-increasing as t grows toward castStart" $
+  -- Func-spec 0017 replaces spec 0006's convergence semantics: the sigil
+  -- no longer collapses onto the axis at castStart, it holds the position
+  -- it was drawn at for as long as the spell lasts. The three properties
+  -- that asserted the collapse and the death at castStart are replaced by
+  -- their successors here, at the same strength.
+  prop "Converging: a paired index stays exactly where it was drawn (no collapse)" $
     forAll genPhaseConfig $ \pc ->
       let spell = compiled (boundaryCircle pc)
           em = boundaryEmitter spell
@@ -149,22 +159,37 @@ spec = describe "end-to-end phase sampling (spec 0006 S5)" $ do
               let alive1 = zip (aliveIndices em (Time t1)) (positionsOf (sample spell ctx (Time t1)))
                   alive2 = zip (aliveIndices em (Time t2)) (positionsOf (sample spell ctx (Time t2)))
                   paired = [(radial p1, radial p2) | (i1, p1) <- alive1, (i2, p2) <- alive2, i1 == i2]
-               in not (null paired) ==> property (all (\(r1, r2) -> r2 <= r1 + 1e-3) paired)
+               in not (null paired) ==> property (all (\(r1, r2) -> abs (r2 - r1) < 1e-3) paired)
 
-  prop "formation particles never survive at or after castStart" $
+  prop "formation particles are alive throughout the cast, right up to ppEnd" $
     forAll genPhaseConfig $ \pc ->
       let spell = compiled (boundaryCircle pc)
           em = boundaryEmitter spell
-          Seconds castStart = phConvergeEndOf spell
-       in forAll (choose (castStart, castStart + 20)) $ \t ->
+          Seconds end = ppEnd (spellPhases spell)
+       in forAll (choose (0.01, end - 0.01)) $ \t ->
+            property (any (\i -> isJust (particleAge (emSpawn em) (emCount em) i (Time t))) [0 .. emCount em - 1])
+
+  prop "formation particles never survive past ppEnd" $
+    forAll genPhaseConfig $ \pc ->
+      let spell = compiled (boundaryCircle pc)
+          em = boundaryEmitter spell
+          Seconds end = ppEnd (spellPhases spell)
+       in forAll (choose (end, end + 20)) $ \t ->
             property (all (\i -> isNothing (particleAge (emSpawn em) (emCount em) i (Time t))) [0 .. emCount em - 1])
 
-  prop "at t = castStart the buffer holds exactly the casting emitter's first particle (formation is fully dead)" $
+  prop "at t = castStart the sigil is still drawn, and the casting emitter has just started" $
     forAll genPhaseConfig $ \pc ->
       let spell = compiled (boundaryCircle pc)
           Seconds castStart = phConvergeEndOf spell
           buf = sample spell ctx (Time castStart)
-       in pbCount buf === 1
+          casting = V.head (spellEmitters spell)
+          castingAlive =
+            length
+              [ i
+              | i <- [0 .. emCount casting - 1]
+              , isJust (particleAge (emSpawn casting) (emCount casting) i (Time castStart))
+              ]
+       in castingAlive === 1 .&&. pbCount buf > 1
 
   prop "casting's own first particle is never born earlier than castStart + its own delay" $
     forAll genPhaseConfig $ \pc -> forAll (choose (0, 5)) $ \da ->

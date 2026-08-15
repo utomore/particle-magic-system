@@ -70,6 +70,8 @@
 3. 六種筆畫 `ArcRing`／`Polygram`／`Spokes`／`Ticks`／`Rose`／`GlyphBand` 各有閉式取樣，`sampleStroke` 為 O(1)、無配置（S2）。
 4. **索引序＝繪製序律**：對固定的臂，極角（或弧長參數）對 `i div sym` 嚴格單調 ⇒ 陣是被**畫出來**的，不是浮現出來的。這條律不需要任何新排程機制，它直接從 0002 的 `firstBirth` 得到（S2）。
 5. **Casting 相位零影響律**：`circlePhases = Nothing` 的 8 個範例陣，`FrameOutput` 逐位元不變；有 `phases` 的兩陣，其 Casting 相位發射器逐位元不變。改變**只**發生在 Drawing／Converging 兩個相位（S4）。
+
+   > ⚠ **修訂註記（2026-08-15，func-spec 0017／ADR-0015 D4）**：本條的後半段（「改變只發生在 Drawing／Converging」）已被撤銷——0017 讓陣形駐留到 `ppEnd`，Casting 期間陣與主效果並存。仍然成立的是**前半段與其精神**：無 `phases` 的 8 個範例完全不受影響，且施放發射器本身逐位元不變（陣只是與它並存，不與它交互）。逐位元邊界的當前定義見 ADR-0015 D4。
 6. `Σ emCount`（陣形部分）恆 ≤ `sigilBudget = 1536`，且合併總預算仍受既有 `budgetCap` 檢查（S3／S4）。
 7. 三個範例陣（`bare-sigil`、`grand-sigil`、新增的 `lattice-seal`）摘要兩兩相異，陣形點集可區分且各自穩定；手動 smoke 目視三個陣（S5）。
 8. ADR-0014 交付：摘要即合約、逐位元豁免的精確範圍、被否決方案（S5）。

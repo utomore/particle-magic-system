@@ -95,7 +95,11 @@ spec = describe "sigil wiring (func-spec 0016 S4)" $ do
         )
         unphasedExamples
 
-    it "from castStart on, a phased spell samples exactly its casting emitter alone" $
+    -- Func-spec 0017 retired the stronger form of this ("from castStart
+    -- on the buffer is the casting emitter's alone"): the sigil now stays
+    -- drawn for the whole cast. What survives is the part that was always
+    -- the point — the casting emitter itself is untouched by any of this.
+    it "the casting emitter's rows are the same whether or not the sigil is drawn beside it" $
       mapM_
         ( \name -> do
             circle <- circleOf name
@@ -103,8 +107,15 @@ spec = describe "sigil wiring (func-spec 0016 S4)" $ do
                 castingOnly = spell {spellEmitters = V.take 1 (spellEmitters spell)}
                 Seconds castStart = ppConvergeEnd (spellPhases spell)
                 Seconds end = spellLifetime spell
+                castingRows t =
+                  let em = V.head (spellEmitters spell)
+                   in [ particlePosition ctx (Time t) em i age
+                      | i <- [0 .. emCount em - 1]
+                      , Just age <- [particleAge (emSpawn em) (emCount em) i (Time t)]
+                      ]
+                soloRows t = positionsOf (sample castingOnly ctx (Time t))
             sequence_
-              [ sample spell ctx (Time t) `shouldBe` sample castingOnly ctx (Time t)
+              [ castingRows t `shouldBe` soloRows t
               | t <- [castStart, castStart + 0.1 .. end + 0.5]
               ]
         )
@@ -180,6 +191,10 @@ spec = describe "sigil wiring (func-spec 0016 S4)" $ do
       forAll (choose (-1, 12)) $ \t ->
         let spell = compiled fullCircle
          in sample spell ctx (Time t) === sample spell ctx (Time t)
+
+positionsOf :: ParticleBuffer -> [V3]
+positionsOf buf =
+  [V3 (pbPosX buf U.! j) (pbPosY buf U.! j) (pbPosZ buf U.! j) | j <- [0 .. pbCount buf - 1]]
 
 inside :: V3 -> V3 -> V3 -> Bool
 inside (V3 lx ly lz) (V3 hx hy hz) (V3 x y z) =

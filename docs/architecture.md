@@ -146,16 +146,17 @@ stateDiagram-v2
     Casting --> Dissipating : 效果時間結束
     Dissipating --> [*]
 
-    Drawing : 繪製陣形－粒子沿魔法陣幾何（環、槽位、節點）生成
-    Drawing : 發射器由 Circle 的形狀資料直接導出
-    Converging : 收束－陣形粒子向核心收束
-    Converging : 收束曲線由 phases 設定導出（spec 0006）；玩家夾層 ConvergeRune 調變的是主效果（0004 凍結語意）
-    Casting : 發動－主效果發射器啟動
+    Drawing : 繪製陣形－粒子沿魔法陣幾何（筆畫、節點）被「畫」出來
+    Drawing : 幾何由 Circle 自身導出（spec 0016：結構定骨架、摘要定花紋）
+    Converging : 蓄力－陣畫完後原地駐留（spec 0017／ADR-0015：不再塌縮）
+    Converging : phConverge 決定主效果何時開始；玩家夾層 ConvergeRune 調變的是主效果（0004 凍結語意）
+    Casting : 發動－主效果發射器啟動，法術從仍然存在的陣中射出
     Casting : 沿法線方向擴充立體
-    Dissipating : 消散－粒子淡出、緩衝回收
+    Dissipating : 消散－粒子淡出、緩衝回收；陣與法術同時收場（陣活到 ppEnd）
 ```
 
 - `CompiledSpell` 內含各階段的發射器與時間包絡（`Envelope`）；階段切換由**時間**驅動，不是狀態機事件——整個生命週期仍是 `t` 的純函數。
+- **陣不是被消耗掉的**（spec 0017／ADR-0015）：陣形發射器的生存窗延到 `ppEnd`，所以魔法陣從畫出來的那一刻起持續存在到法術結束，法術是**從陣裡射出來**而不是把陣燒掉。`Converging` 這個階段名稱保留（它是 C 線碼的一部分），語意為「畫完後原地蓄力」。陣形發射器維持 `emPhase = Drawing`，於是力場只作用於施放粒子（ADR-0010 D6）——重力井吸得動法術，吸不動陣。
 - **無魔法陣的施法**（Init.md：「沒有魔法陣就是單純的魔力放出」）：全空的 `Circle`（所有槽位 `Nothing`）編譯為一個跳過 Drawing/Converging、只有預設放出發射器的 `CompiledSpell`。空陣即素放——不需特例分支。
 
 ---
@@ -546,4 +547,5 @@ void     pm_free(PmSpell*);
 | [ADR-0011](adr/0011-ffi-c-abi-boundary.md) | C ABI FFI 邊界：foreign-library、JSON 進、SoA copy-out、handle 生命週期 |
 | [ADR-0012](adr/0012-multi-circle-scene.md) | 多陣合成與場景層配額 |
 | [ADR-0013](adr/0013-billboard-vocabulary.md) | 告示板詞彙：無參數列舉、型別落點遷移、程序生成貼圖 |
-| [ADR-0014](adr/0014-sigil-from-circle-hash.md) | 符文陣由魔法陣資料導出：摘要即合約、混合導出、逐位元豁免只到 Drawing／Converging |
+| [ADR-0014](adr/0014-sigil-from-circle-hash.md) | 符文陣由魔法陣資料導出：摘要即合約、混合導出、逐位元豁免只到 Drawing／Converging（D5 已由 ADR-0015 取代） |
+| [ADR-0015](adr/0015-sigil-persists-through-cast.md) | 陣駐留到法術結束：取消陣形收束、逐位元邊界收窄 |

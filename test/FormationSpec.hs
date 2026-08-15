@@ -24,12 +24,12 @@ import Magic.Compile
   , Envelope (..)
   , Motion (..)
   , Phase (..)
+  , PhasePlan (..)
   , SpawnPattern (..)
   , budgetCap
   , compile
   , spellBlend
   )
-import Magic.Expr (ExprEnv (..), evalFinite)
 import Magic.Rune
   ( BridgeRune (..)
   , Element (..)
@@ -42,11 +42,8 @@ import Magic.Rune
   , Trajectory (..)
   )
 import Magic.Sigil (SigilStroke (..), sigilPlan, spShapes, spStrokes)
-import Magic.Types (Seconds (..), Seed (..), V3 (..))
+import Magic.Types (Seconds (..), V3 (..))
 import Test.Hspec
-
-envAt :: Float -> ExprEnv
-envAt t = ExprEnv {envT = t, envLife = 0, envPIndex = 0, envSeed = Seed 0}
 
 compiled :: Circle -> CompiledSpell
 compiled c = either (error . show) id (compile c)
@@ -144,34 +141,32 @@ spec = describe "compile step 5: formation geometry emitters (spec 0006 S4)" $ d
     let spell = compiled mixedCircle
         formation = V.toList (spellEmitters spell) !! 1 -- the boundary ring
         env = emSpawn formation
+    -- The pace is spec 0006's, unchanged: delay 0, lifetime capped at 0.6.
     envDelay env `shouldBe` Seconds 0
-    envDuration env `shouldBe` Seconds 0.9
     envLifetime env `shouldBe` Seconds 0.6
-    -- derivation chain step 2: the last batch dies exactly at castStart.
+    -- Func-spec 0017 moved the chain's endpoint: the last batch now dies
+    -- at ppEnd (the sigil outlives the prelude) rather than at castStart.
     let Seconds dur = envDuration env
         Seconds life = envLifetime env
-    (dur + life) `shouldBe` 1.5
+        Seconds end = ppEnd (spellPhases spell)
+    abs (dur + life - end) `shouldSatisfy` (< 1e-9)
 
   it "formEnv caps formLife at 0.6s even for a long prelude (castStart 4s)" $ do
     let c = emptyCircle {core = Core Nothing (Nodes (Just (DirBias 0.1)) Nothing Nothing Nothing), circlePhases = Just (PhaseConfig (Seconds 3.0) (Seconds 1.0))}
         spell = compiled c
         formation = V.toList (spellEmitters spell) !! 1
         env = emSpawn formation
+        Seconds end = ppEnd (spellPhases spell)
+        Seconds dur = envDuration env
     envLifetime env `shouldBe` Seconds 0.6
-    envDuration env `shouldBe` Seconds 3.4
+    abs (dur + 0.6 - end) `shouldSatisfy` (< 1e-9)
 
-  it "kcExpr evaluates to 1 at t=0, 1 at t=phDraw, 0 at t=castStart" $ do
+  it "formation carries no convergence curve at all (func-spec 0017: it holds where it was drawn)" $ do
     let spell = compiled mixedCircle -- draw=1.0, converge=0.5, castStart=1.5
-        formation = V.toList (spellEmitters spell) !! 1
-        kc = case motConverge (emMotion formation) of
-          Just e -> e
-          Nothing -> error "expected a synthesized convergence curve"
-        at t = evalFinite kc (envAt t)
-    at 0 `shouldBe` 1
-    at 1.0 `shouldBe` 1
-    at 1.5 `shouldBe` 0
+        formation = drop 1 (V.toList (spellEmitters spell))
+    map (motConverge . emMotion) formation `shouldSatisfy` all (== Nothing)
 
-  it "phConverge = 0 synthesizes no convergence curve (Nothing, no divide-by-zero path)" $ do
+  it "phConverge = 0 is still a legal configuration, with no curve either" $ do
     let c = emptyCircle {core = Core Nothing (Nodes (Just (DirBias 0.1)) Nothing Nothing Nothing), circlePhases = Just (PhaseConfig (Seconds 1.0) (Seconds 0))}
         spell = compiled c
         formation = V.toList (spellEmitters spell) !! 1

@@ -463,6 +463,10 @@ compile circle = do
       Seconds duration = envDuration envelope
       Seconds lifetime = envLifetime envelope
       count = ssCount (bpSeed modulated)
+      -- The whole cast's end (= 'ppEnd'): the moment the last casting
+      -- particle dies. Func-spec 0017 hands it to step 5 so the sigil
+      -- lives exactly as long as the spell does.
+      spellEnd = Seconds (delay + duration + lifetime)
       castingEmitter =
         EmitterSpec
           { emAnchor = originAnchor
@@ -474,7 +478,7 @@ compile circle = do
           }
       formationEmitters = case mPhases of
         Nothing -> []
-        Just pc -> formationEmittersFor circle pc castStart element
+        Just _ -> formationEmittersFor circle castStart spellEnd element
       element = essenceElementOf (core circle)
       allEmitters = map foldEmitterExprs (castingEmitter : formationEmitters)
       totalCount = sum (map emCount allEmitters)
@@ -487,7 +491,7 @@ compile circle = do
           { ppDrawEnd = maybe (Seconds 0) phDraw mPhases
           , ppConvergeEnd = castStart
           , ppCastingEnd = Seconds (delay + duration)
-          , ppEnd = Seconds (delay + duration + lifetime)
+          , ppEnd = spellEnd
           }
   if totalCount > budgetCap
     then Left (BudgetExceeded totalCount budgetCap)
@@ -696,8 +700,13 @@ foldSlot f slot z = maybe z (f z) slot
 -- the center emitter keep their coordinate table and particle counts, and
 -- an outer slot holding a 'ShapeRune' still previews the player's own
 -- shape (§4.4's exception, now carried by 'spShapes').
-formationEmittersFor :: Circle -> PhaseConfig -> Seconds -> Element -> [EmitterSpec]
-formationEmittersFor circle pc castStart element =
+--
+-- Func-spec 0017 gives every one of these emitters the whole cast to live
+-- in (@spellEnd@ = 'ppEnd') instead of dying at @castStart@, and drops the
+-- synthesized convergence curve: the spell is now fired /out of/ a sigil
+-- that is still there, rather than consuming it.
+formationEmittersFor :: Circle -> Seconds -> Seconds -> Element -> [EmitterSpec]
+formationEmittersFor circle castStart spellEnd element =
   concat
     [ [ringSlotEmitter (skCount sk) (SpawnOnStroke sk) | sk <- V.toList (spStrokes plan)]
     , [ringSlotEmitter cnt (SpawnOnShape shape) | (shape, cnt) <- V.toList (spShapes plan)]
@@ -709,10 +718,7 @@ formationEmittersFor circle pc castStart element =
     ]
   where
     plan = sigilPlan circle
-    formEnv = formEnvFor castStart
-    mKc = case pc of
-      PhaseConfig _ (Seconds c) | c > 0 -> Just (kcExprFor castStart (Seconds c))
-      _ -> Nothing
+    formEnv = formEnvFor castStart spellEnd
     appearance = formationAppearance element
 
     ringSlotEmitter cnt spawn =
@@ -720,7 +726,7 @@ formationEmittersFor circle pc castStart element =
         { emAnchor = originAnchor
         , emCount = cnt
         , emSpawn = formEnv
-        , emMotion = formationMotion spawn mKc
+        , emMotion = formationMotion spawn
         , emAppearance = appearance
         , emPhase = Drawing
         }
@@ -733,7 +739,7 @@ formationEmittersFor circle pc castStart element =
             { emAnchor = Anchor {anchorOffset = offset, anchorNormal = V3 0 0 1}
             , emCount = cnt
             , emSpawn = formEnv
-            , emMotion = formationMotion (SpawnAtAnchor 0) mKc
+            , emMotion = formationMotion (SpawnAtAnchor 0)
             , emAppearance = appearance
             , emPhase = Drawing
             }
@@ -747,50 +753,56 @@ formationEmittersFor circle pc castStart element =
             { emAnchor = originAnchor
             , emCount = cnt
             , emSpawn = formEnv
-            , emMotion = formationMotion (SpawnAtAnchor 0) mKc
+            , emMotion = formationMotion (SpawnAtAnchor 0)
             , emAppearance = appearance
             , emPhase = Drawing
             }
         ]
 
-formationMotion :: SpawnPattern -> Maybe Expr -> Motion
-formationMotion spawn mKc =
+-- | Formation particles hold the position they were drawn at.
+--
+-- @motConverge = Nothing@ is the func-spec 0017 decision: the sigil no
+-- longer collapses onto the axis at @castStart@. The spell is fired out
+-- of a circle that is still there, so there is nothing to converge —
+-- and the sampler's existing "no modulation" branch is all it takes.
+-- (A player's own 'Magic.Rune.ConvergeRune' is untouched by this: spec
+-- 0004 froze it as a casting-emitter curve, and it still is one.)
+formationMotion :: SpawnPattern -> Motion
+formationMotion spawn =
   Motion
     { motSpawn = spawn
     , motTraject = Forward 0
     , motRadiation = AlongNormal
     , motDrift = V3 0 0 0
     , motRange = Nothing
-    , motConverge = mKc
+    , motConverge = Nothing
     }
 
--- | The formation particles' envelope (spec 0006 §4.3 derivation chain):
--- the whole drawing+converging prelude is the spawn window, capped at a
--- 0.6s lifetime so long preludes still pulse with short-lived particles
--- instead of one long-tailed batch; every index is guaranteed to be born
--- (the stagger span never exceeds the spawn window) and the last batch
--- dies out exactly at 'castStart'.
-formEnvFor :: Seconds -> Envelope
-formEnvFor (Seconds castStartD) =
+-- | The formation particles' envelope. @castStart@ sets the /pace/ the
+-- sigil is drawn at, @spellEnd@ ('ppEnd') sets how long it stays.
+--
+-- Derivation (func-spec 0017 §2, re-proving spec 0006 §4.3's chain with
+-- the new endpoint):
+--
+-- 1. the birth stagger spans 'envLifetime' = @formLife@, and
+--    @formLife <= castStart - formLife <= spellEnd - formLife@ =
+--    'envDuration', so /every index is born/ — unchanged from 0006;
+-- 2. the last batch is born before @spellEnd - formLife@ and so dies by
+--    @spellEnd@ exactly: the sigil and the spell end together;
+-- 3. @formLife@ is capped at 0.6s and derived from @castStart@ alone, so
+--    the drawing pace is bit-for-bit what it was — 'firstBirth' reads
+--    'envDelay' and 'envLifetime' and never 'envDuration', which is why
+--    holding the sigil for the whole cast costs nothing in the Drawing
+--    window and why it keeps pulsing (redrawing itself every @formLife@)
+--    rather than freezing.
+formEnvFor :: Seconds -> Seconds -> Envelope
+formEnvFor (Seconds castStartD) (Seconds spellEndD) =
   let formLife = min 0.6 (castStartD / 2)
    in Envelope
         { envDelay = Seconds 0
-        , envDuration = Seconds (castStartD - formLife)
+        , envDuration = Seconds (max 0 (spellEndD - formLife))
         , envLifetime = Seconds formLife
         }
-
--- | The lateral-convergence curve driving formation collapse: 1 while
--- drawing (@t <= castStart - phConverge@, i.e. before Converging starts),
--- ramping linearly to 0 exactly at 'castStart' — the same
--- 'Magic.Rune.ConvergeRune' machinery (spec 0004) the sampler already
--- evaluates, just synthesized by the compiler instead of a player rune.
-kcExprFor :: Seconds -> Seconds -> Expr
-kcExprFor (Seconds castStartD) (Seconds convergeD) =
-  Fun3
-    FClamp
-    (Bin Div (Bin Sub (Lit (realToFrac castStartD)) (Var VarT)) (Lit (realToFrac convergeD)))
-    (Lit 0)
-    (Lit 1)
 
 -- Spatial extent (func-spec 0010 S7) ----------------------------------------
 
