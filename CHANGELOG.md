@@ -145,3 +145,22 @@ delivered function spec (details in `docs/func-spec/`).
   Converging windows of spells that declare `phases`; from castStart on,
   every phased spell samples exactly its casting emitter, and unphased
   spells are untouched. New example: `lattice-seal.json`. (delivered)
+- **0017 the sigil persists through the cast** — ADR-0015: the spell is
+  now fired *out of* a magic circle that is still there, instead of
+  consuming it. Formation emitters live until `ppEnd` (the whole cast)
+  rather than dying at `castStart`, and the synthesized convergence curve
+  is gone — the sigil holds the position it was drawn at. Two numbers and
+  one `Maybe` in the compiler: `firstBirth` reads `envDelay` and
+  `envLifetime` and never `envDuration`, so extending the spawn window
+  leaves the drawing pace bit-for-bit intact and costs the sampler
+  nothing (not a line of it changed, no new state, no new mechanism).
+  `emCount` is untouched, so the budget and `ParticleBudget` are
+  identical; `Magic.Codec`, the schema and the C ABI are untouched too.
+  Because formation emitters stay `emPhase = Drawing`, ADR-0010 D6's
+  "only casting particles feel the fields" turns from a vacuous promise
+  into a real law — a gravity well bends the spell and leaves the circle
+  exactly where it was drawn — and is now tested as one. The bit-for-bit
+  boundary narrows to `t < min(phDraw, castStart - formLife)`, measured
+  and matched frame for frame; the second term caught a pre-existing bug
+  where a circle with `phConverge < formLife` (bare-sigil) started fading
+  before it had finished being drawn. (delivered)
