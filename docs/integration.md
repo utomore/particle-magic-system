@@ -12,7 +12,7 @@
 
 你給它一張魔法陣（JSON 文字）、施法者的位置與面向、一個亂數種子，然後每幀給它一個 `dt`；它回你一批粒子的 **SoA（Structure of Arrays）**——六條等長陣列（x、y、z、size、life、color），外加「哪一段屬於哪個批次、該用什麼混合模式」的描述。
 
-把那六條陣列餵進你自己的頂點緩衝、用你自己的材質畫出來——那部分是你的引擎的工作，不是這個庫的。這不是偷懶，是[架構決策](adr/0008-dimension-agnostic-3d-first.md)：庫的輸出不含任何渲染後端的假設，所以換引擎、換維度、換語言都不需要改核心。
+把那六條陣列餵進你自己的頂點緩衝、用你自己的材質畫出來——那部分是你的引擎的工作，不是這個庫的。這不是偷懶，是[架構決策](adr/adr-0008-dimension-agnostic-3d-first.md)：庫的輸出不含任何渲染後端的假設，所以換引擎、換維度、換語言都不需要改核心。
 
 **確定性保證**：同一組 `(JSON, 位置, 面向, seed, dt 序列)` 永遠產生逐位元相同的輸出——同一台機器、不同平台、Haskell 路徑或 C ABI 路徑都一樣。這讓法術可回放、可存檔（只要存那五樣東西）、可用純函數測試。
 
@@ -382,7 +382,7 @@ Unity 走的就是 §4 的 C ABI，只是隔著 P/Invoke。
 | [`examples/unity/PmSmoke.cs`](../examples/unity/PmSmoke.cs) | 一行指令跑完整個 smoke（`unity run … -executeMethod PmSmoke.Run`），驗 marshaller、投影、排序與 Mesh |
 | [`examples/unity/README.md`](../examples/unity/README.md) | 放置步驟、材質設定、預期畫面、smoke 指令與人眼 checklist |
 
-`test/BindingContractSpec.hs` 斷言那份 `.cs` 的進入點與常數集合**雙向等於** header——header 加了東西而綁定沒跟上，`cabal test` 就紅。整套在 Unity 6000.5.7f1 實測通過（27 PASS／0 FAIL，見 [0011 §9.3](func-spec/0011-host-integration-surface.md)）。下面幾節解釋的是「為什麼那樣寫」。
+`test/BindingContractSpec.hs` 斷言那份 `.cs` 的進入點與常數集合**雙向等於** header——header 加了東西而綁定沒跟上，`cabal test` 就紅。整套在 Unity 6000.5.7f1 實測通過（27 PASS／0 FAIL，見 [0011 §9.3](spec/func-0011-host-integration-surface.md)）。下面幾節解釋的是「為什麼那樣寫」。
 
 ### 5.1 放置 DLL
 
@@ -481,7 +481,7 @@ void Update()
 ### 5.7 建 Mesh 的兩條路
 
 - **簡單版**：CPU 端把每顆粒子展開成兩個三角形（4 頂點），寫進一個重複使用的 `Mesh`，`mesh.SetVertices` / `SetColors` / `SetIndices`。4096 顆＝16384 頂點，Unity 完全吃得下。
-- **快版**：把六條陣列丟進 `ComputeBuffer`，用 `Graphics.DrawProcedural` 在 vertex shader 裡展開 billboard。省掉 CPU 端的展開與上傳量。這也是 demo 在 raylib 端走的路數（[ADR-0009](adr/0009-dynamic-quad-mesh-rendering.md)：整批一次 draw call，draw call 數＝批次數而非粒子數）。
+- **快版**：把六條陣列丟進 `ComputeBuffer`，用 `Graphics.DrawProcedural` 在 vertex shader 裡展開 billboard。省掉 CPU 端的展開與上傳量。這也是 demo 在 raylib 端走的路數（[ADR-0009](adr/adr-0009-dynamic-quad-mesh-rendering.md)：整批一次 draw call，draw call 數＝批次數而非粒子數）。
 
 ---
 
@@ -512,7 +512,7 @@ void Update()
 | 3D 的深度排序 | 見 §5.6 |
 | 多個法術同時存在時的管理與總量配額 | 宿主持有多個 handle 即可；全域配額策略屬遊戲層（[architecture §8.4](architecture.md#8-未來可能遇到的問題)），[記帳在候選 spec C](roadmap.md#45-cde-的位置) |
 | 魔法陣 JSON 從哪來（檔案？資料庫？玩家編輯器？） | 庫只認得字串 |
-| 熱重載 | 政策是「重載＝重施法」：重新 `pm_cast` 就好，庫不提供遷移中狀態的 API（[ADR-0010 D8](adr/0010-force-field-composition.md)） |
+| 熱重載 | 政策是「重載＝重施法」：重新 `pm_cast` 就好，庫不提供遷移中狀態的 API（[ADR-0010 D8](adr/adr-0010-force-field-composition.md)） |
 | 音效、傷害判定、命中框 | 這個庫只管粒子；魔法的**遊戲**語意是你的 |
 
 ---
@@ -531,7 +531,7 @@ void Update()
 | **DLL 約 46 MB** | `standalone` 內嵌整個 GHC RTS 的代價；換來的是宿主端零 Haskell 依賴 |
 | **只有 win64 被完整實測** | `.so` / `.dylib` 由 cabal stanza 天然涵蓋，但沒有列入驗收 |
 | **billboard 形狀是無參數列舉** | func-spec 0015 起有四種形狀碼（square／soft-dot／ring／spark），但形狀**永遠不帶參數**（拉伸、旋轉需另開查詢，ADR-0013）；怎麼畫每種形狀由宿主自行決定（demo 用 64×64 程序生成 alpha 貼圖，RGB 全白、顏色仍來自頂點色） |
-| **只有 Unity 被實測過** | C# 綁定在 Unity 6000.5.7f1 batchmode 實測通過（[0011 §9.3](func-spec/0011-host-integration-surface.md)，可用 `examples/unity/PmSmoke.cs` 一鍵複驗）；Godot／Unreal／其他 .NET 宿主只有合約保證，沒有實測 |
+| **只有 Unity 被實測過** | C# 綁定在 Unity 6000.5.7f1 batchmode 實測通過（[0011 §9.3](spec/func-0011-host-integration-surface.md)，可用 `examples/unity/PmSmoke.cs` 一鍵複驗）；Godot／Unreal／其他 .NET 宿主只有合約保證，沒有實測 |
 
 ---
 
