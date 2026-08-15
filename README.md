@@ -135,15 +135,28 @@ functions.
   pitfalls, current limits
 - `docs/roadmap.md` — completeness assessment and the ordered candidate list
   for the next function specs
+- `docs/spell-schema.md` — the spell-file format for the people who write
+  them: every key, its range, the formula syntax and the shipped examples
+  (Traditional Chinese; kept honest by `test/SchemaDocSpec.hs`)
 - `docs/adr/` — architecture decision records
 - `docs/func-spec/` — per-iteration function specs (design-before-code, each
   todo paired 1-to-1 with a test module)
 - `assets/spells/*.json` — example spells
 - `include/particle_magic.h` — the frozen C ABI contract; `cbits/`, `src/ffi/`
   and `examples/c/` are its implementation and reference host
+- `tools/` — `magic-validate`, the authoring CLI: it loads and casts every
+  spell file you point it at and reports what broke, or (with `--stats`) the
+  budget, lifetime, phases, fields and spatial extent of the ones that work.
+  Third consumer of the boundary layer, and the one that opens no window:
+
+      cabal run magic-validate -- --stats assets/spells
+
+  One `OK <path>` / `FAIL <path>` line per file, details indented; the exit
+  code is the number of failures, so it drops straight into CI.
 - `cabal build all && cabal test` — build and run the full test suite;
   `cabal run particle-magic` — the raylib demo (first build compiles raylib's
-  C sources); `cabal bench` — pure-core baselines
+  C sources; it rescans `assets/spells` as it runs, so files can be added and
+  removed without restarting it); `cabal bench` — pure-core baselines
 
 ## License
 

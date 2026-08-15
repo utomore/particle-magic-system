@@ -23,11 +23,15 @@ module App.Loop
   , flatViewFor
   , orbitDegreesPerPixel
   , depthTintStrength
+  , mergeSpellList
+  , spellDirOf
   , runLoop
   ) where
 
 import qualified Data.ByteString as BS
+import Data.List (elemIndex)
 import Effectful (Eff, (:>))
+import System.FilePath (takeDirectory)
 import Magic.Codec (loadCircle, renderLoadError)
 import Magic.Interface
   ( ActiveSpell
@@ -69,6 +73,7 @@ import App.Effects
   , now
   , pollInput
   , readBytes
+  , scanDir
   , shouldClose
   , windowSize
   , withFrame
@@ -83,8 +88,11 @@ data LoopConfig = LoopConfig
   , lcMaxStepsPerFrame :: !Int
   -- ^ Spiral-of-death clamp (8).
   , lcSpellPaths :: ![FilePath]
-  -- ^ Spell files the demo cycles through; scanned once at startup and
-  -- non-empty (Main's job). Rescanning the directory is out of scope.
+  -- ^ Spell files the demo cycles through: the STARTING list, scanned
+  -- once by Main and non-empty (Main's job). From func-spec 0014 on the
+  -- loop keeps rescanning the directory these live in, so this is the
+  -- initial value of loop state rather than a constant of the run — the
+  -- meaning of the field itself is unchanged.
   , lcSpellIndex :: !Int
   -- ^ Index into 'lcSpellPaths' to start from.
   , lcCamera :: !Camera
@@ -257,10 +265,16 @@ data LoopState = LoopState
   , stFrames :: !Int
   , stSimSteps :: !Int
   , stCasts :: !Int
+  , stSpellPaths :: ![FilePath]
+  -- ^ The spell list as it stands (func-spec 0014 S3). Starts at
+  -- 'lcSpellPaths' and follows the directory from there: a file created
+  -- while the demo runs joins it, a deleted one leaves it.
   , stIndex :: !Int
-  -- ^ Position in 'lcSpellPaths'.
+  -- ^ Position in 'stSpellPaths'.
   , stPath :: !FilePath
-  -- ^ The file currently loaded and watched.
+  -- ^ The file currently loaded and watched. This, not the index, is the
+  -- selection's identity — an index means nothing across a list that can
+  -- grow and shrink underneath it.
   , stReload :: !ReloadStatus
   , stFpsEma :: !Double
   , stView :: !ViewMode
@@ -283,8 +297,9 @@ runLoop
 runLoop cfg =
   withWindow (fst (lcWindowSize cfg)) (snd (lcWindowSize cfg)) (lcWindowTitle cfg) $ do
     t0 <- now
-    let index0 = normalizeIndex cfg (lcSpellIndex cfg)
-        path0 = pathAt cfg index0
+    let paths0 = lcSpellPaths cfg
+        index0 = normalizeIndex paths0 (lcSpellIndex cfg)
+        path0 = pathAt paths0 index0
     loaded <- loadAndCast cfg path0
     frameLoop
       cfg
@@ -296,6 +311,7 @@ runLoop cfg =
         , stFrames = 0
         , stSimSteps = 0
         , stCasts = either (const 0) (const 1) loaded
+        , stSpellPaths = paths0
         , stIndex = index0
         , stPath = path0
         , -- A failing initial load is reported like any other failure, so
@@ -334,7 +350,26 @@ frameLoop cfg st = do
       -- Polled every frame rather than taken from the config: the window
       -- is resizable, so the 2D screen mapping is state, not a constant.
       size <- windowSize
-      let index' = shiftIndex cfg input (stIndex st)
+
+      -- The spell list is a directory listing, and a directory changes
+      -- while the demo runs (func-spec 0014 S3). Asked for every frame
+      -- and throttled on the IO side, exactly like the mtime check; an
+      -- unchanged (or unavailable) listing merges to the identity, so a
+      -- run in which nothing is created or deleted is bit for bit the
+      -- run func-spec 0013 delivered.
+      scanned <- maybe (pure []) scanDir (spellDirOf (stSpellPaths st))
+      let stScanned = case mergeSpellList scanned (stSpellPaths st) (stPath st) (stIndex st) of
+            Nothing -> st
+            Just (paths', index'') -> st {stSpellPaths = paths', stIndex = index''}
+
+      let paths = stSpellPaths stScanned
+          index' = shiftIndex paths input (stIndex stScanned)
+          -- Path, not index, decides whether we must load: after a
+          -- rescan the same index can mean a different file (something
+          -- was deleted) and a different index the same file (something
+          -- was inserted before it).
+          target = pathAt paths index'
+          st' = stScanned {stIndex = index'}
           -- Purely observational: the view never feeds back into the
           -- simulation, so switching it cannot disturb a running spell.
           view' =
@@ -348,20 +383,19 @@ frameLoop cfg st = do
                 }
 
       st1 <-
-        if index' /= stIndex st
+        if target /= stPath st'
           then do
             -- Switching spell: load the new file, re-cast, and let the
             -- watcher follow the new path from here on.
-            let path' = pathAt cfg index'
-            loaded <- loadAndCast cfg path'
-            pure (applyLoad tNow (st {stIndex = index', stPath = path'}) loaded)
+            loaded <- loadAndCast cfg target
+            pure (applyLoad tNow (st' {stPath = target}) loaded)
           else do
             -- Hot reload: mtime change => reload + re-cast (state reset,
             -- architecture §8.3 POC strategy).
-            changed <- checkChanged (stPath st)
+            changed <- checkChanged (stPath st')
             if changed
-              then applyLoad tNow st <$> loadAndCast cfg (stPath st)
-              else pure (recastOnRequest cfg input st)
+              then applyLoad tNow st' <$> loadAndCast cfg (stPath st')
+              else pure (recastOnRequest cfg input st')
 
       -- A finished spell restarts from the kept circle (walking-skeleton
       -- demo keeps the fountain alive).
@@ -425,24 +459,71 @@ advanceTimes cfg n spell0 = go n spell0
       | otherwise = go (k - 1) (advanceSpell dt s)
 
 -- | Where the arrow keys move us. Pressing both, or having nothing to
--- switch to, leaves the index alone — and an unchanged index means no
--- re-cast at all.
-shiftIndex :: LoopConfig -> DemoInput -> Int -> Int
-shiftIndex cfg input i = case lcSpellPaths cfg of
+-- switch to, leaves the index alone — and an index that still names the
+-- same file means no re-cast at all.
+shiftIndex :: [FilePath] -> DemoInput -> Int -> Int
+shiftIndex paths input i = case paths of
   [] -> i
   ps ->
     let delta = (if diNextSpell input then 1 else 0) - (if diPrevSpell input then 1 else 0)
      in (i + delta) `mod` length ps
 
-normalizeIndex :: LoopConfig -> Int -> Int
-normalizeIndex cfg i = case lcSpellPaths cfg of
+normalizeIndex :: [FilePath] -> Int -> Int
+normalizeIndex paths i = case paths of
   [] -> 0
   ps -> i `mod` length ps
 
-pathAt :: LoopConfig -> Int -> FilePath
-pathAt cfg i = case lcSpellPaths cfg of
+pathAt :: [FilePath] -> Int -> FilePath
+pathAt paths i = case paths of
   [] -> ""
   ps -> ps !! (i `mod` length ps)
+
+-- | The directory the spell list lives in, or 'Nothing' when there is no
+-- single such directory (an empty list, or paths from several places).
+--
+-- Derived rather than configured: the demo's list /is/ a directory
+-- listing, so asking the list where it came from keeps the one fact in
+-- one place — and a caller that hands 'runLoop' a hand-picked set of
+-- files from all over gets no rescan, which is the right answer for a
+-- list nobody is maintaining as a directory.
+spellDirOf :: [FilePath] -> Maybe FilePath
+spellDirOf paths = case map takeDirectory paths of
+  [] -> Nothing
+  (dir : dirs)
+    | all (== dir) dirs -> Just dir
+    | otherwise -> Nothing
+
+-- | Fold a fresh directory listing into the spell list (func-spec 0014
+-- S3). 'Nothing' means "nothing to do": no listing at all, or one equal
+-- to the list already in hand. That is not an optimization but the
+-- zero-ripple law (§1.5) — a demo where no file is created or deleted
+-- must not even rebuild an equal list, so nothing downstream can differ
+-- by so much as a bit.
+--
+-- Otherwise the selection is carried by PATH: the current file keeps the
+-- selection wherever it moved to, and only if it is gone does the index
+-- speak, clamped so a deletion at the end of the list falls back onto the
+-- new last entry instead of off it. The loop notices that the selected
+-- path changed and loads the neighbour, exactly as if the arrow key had
+-- been pressed.
+mergeSpellList
+  :: [FilePath]
+  -- ^ Fresh listing.
+  -> [FilePath]
+  -- ^ The list in use.
+  -> FilePath
+  -- ^ The file currently loaded.
+  -> Int
+  -- ^ The index currently selected.
+  -> Maybe ([FilePath], Int)
+mergeSpellList scanned current path index
+  | null scanned = Nothing
+  | scanned == current = Nothing
+  | otherwise = Just (scanned, index')
+  where
+    index' = case elemIndex path scanned of
+      Just i -> i
+      Nothing -> max 0 (min index (length scanned - 1))
 
 -- | @R@: re-cast the spell that is already loaded (age back to zero). It
 -- deliberately does not re-read the file — that is what hot reload is for.

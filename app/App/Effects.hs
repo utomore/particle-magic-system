@@ -31,6 +31,7 @@ module App.Effects
   , FileWatch (..)
   , checkChanged
   , readBytes
+  , scanDir
   , runFileWatchIO
 
     -- * Observation / input vocabulary (renderer-agnostic)
@@ -60,7 +61,7 @@ import Magic.Interface (RenderBatch, V3)
 import Magic.Projection (ViewPlane)
 import System.IO.Error (catchIOError)
 
-import App.HotReload (WatchState, checkStampIO, newWatchState)
+import App.HotReload (checkStampIO, newWatchState, scanDirIO)
 
 -- | Renderer-agnostic camera description; the raylib backend converts it.
 data Camera = Camera
@@ -120,6 +121,12 @@ runClockIO = interpret $ \_ -> \case
 data FileWatch :: Effect where
   CheckChanged :: FilePath -> FileWatch m Bool
   ReadBytes :: FilePath -> FileWatch m (Either String BS.ByteString)
+  -- | Every @*.json@ under a directory, sorted (func-spec 0014 S3).
+  -- 'CheckChanged' asks whether one file moved; this asks which files
+  -- there are, so the demo's spell list can grow and shrink while it
+  -- runs. Added the additive way every effect operation has been added
+  -- since 0005: a new constructor, no existing signature touched.
+  ScanDir :: FilePath -> FileWatch m [FilePath]
 
 type instance DispatchOf FileWatch = Dynamic
 
@@ -129,16 +136,22 @@ checkChanged = send . CheckChanged
 readBytes :: (FileWatch :> es) => FilePath -> Eff es (Either String BS.ByteString)
 readBytes = send . ReadBytes
 
+scanDir :: (FileWatch :> es) => FilePath -> Eff es [FilePath]
+scanDir = send . ScanDir
+
 -- | mtime polling interpreter (ADR-0005 hot reload; fsnotify deliberately
 -- avoided for the skeleton). @pollInterval@ throttles filesystem stats —
--- calls arriving earlier than that since the last stat report 'False'.
-runFileWatchIO :: (IOE :> es) => Double -> Eff (FileWatch : es) a -> Eff es a
-runFileWatchIO pollInterval action = do
-  st <- liftIO (newWatchState pollInterval)
+-- calls arriving earlier than that since the last stat report 'False' —
+-- and @scanInterval@ does the same for directory listings, on its own
+-- (slower) clock.
+runFileWatchIO :: (IOE :> es) => Double -> Double -> Eff (FileWatch : es) a -> Eff es a
+runFileWatchIO pollInterval scanInterval action = do
+  st <- liftIO (newWatchState pollInterval scanInterval)
   interpret
     ( \_ -> \case
         CheckChanged path -> liftIO (checkStampIO st path)
         ReadBytes path -> liftIO (readBytesIO path)
+        ScanDir dir -> liftIO (scanDirIO st dir)
     )
     action
   where

@@ -94,3 +94,19 @@ delivered function spec (details in `docs/func-spec/`).
   `pm_max_particles()` answers the new value, exactly as func-spec 0011
   designed it. All ten example spells stay bit-identical across the raise.
   (delivered)
+- **0014 authoring tools** — the feedback loop for whoever writes the spell
+  files. `magic-validate` is the boundary layer's third consumer and the one
+  that opens no window: point it at files or directories, it loads and casts
+  each one and prints `OK <path>` / `FAIL <path>` with the details indented,
+  exiting with the number of failures so it drops straight into CI; `--stats`
+  adds the budget, emitter split, lifetime, declared phases, field count and
+  world-space extent of every spell that works. `docs/spell-schema.md` is the
+  same format written for authors rather than for the compiler — every key,
+  its range, the formula syntax, the error messages and a guided tour of the
+  shipped examples — and `SchemaDocSpec` fails the build the day an example
+  uses a key the document does not mention. The demo now rescans its spell
+  directory as it runs (a throttled `ScanDir` op, no fsnotify), so files can
+  be added and removed without restarting: the selection follows its path,
+  a deleted current file falls to its neighbour, and an unchanged directory
+  is the identity — no reload, no recast. Core, boundary and FFI untouched.
+  (delivered)
