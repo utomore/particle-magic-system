@@ -1,6 +1,6 @@
 # Func-Spec 0012：多陣合成與場景層
 
-> 狀態：**設計定案，待實作**
+> 狀態：**已完成**（2026-08-15 驗收，見 §9）
 > 性質：一般 —— 交付後凍結 `Semigroup`/`Monoid CompiledSpell` 律、`Magic.Scene` 匯出面、提升後的上限值。
 > 前置依賴：**spec 0010（需已完成）＋ spec 0011（需已完成）**——全域配額以 0010 的 `ParticleBudget` 表達且與其同碰 `Compile.hs`/`Interface.hs`；上限提升（S1）需要 0011 改寫後的契約測試（查詢鏡射律取代 4096 三方釘選）。**與 spec 0014 平行**（本 spec 觸 core/boundary/ffi 常數＋demo 上限行，0014 觸新 exe／`app/*` 熱掃描／docs——檔案零交集，§0.2 附證明；0014 另有 0013 動工門檻，見其頭部）。
 > 依據：architecture §6 對照表「多個效果疊」列（**唯一未落地列**——完整度維度 A 剩下的 15%）、§8.1（預算閘門）、§8.4（多法術並行的緩衝管理）；ADR-0004（dataflow——場景層仍是純 fold）；[roadmap.md](../roadmap.md) §3.2／§4.5。合併律與配額政策屬架構級語意 → **本輪同步交付 ADR-0012**（先例：0007↔ADR-0010、0009↔ADR-0011）。
@@ -140,4 +140,94 @@ flowchart LR
 
 ## 9. 驗收紀錄
 
-（實作時回填：日期、`cabal test` 結果、S1 選定的新上限值與依據量測、ADR-0012 連結；凍結清單：`Semigroup`/`Monoid` 實體律、`compileMany`、`Magic.Scene` 匯出面、新 `budgetCap` 值。）
+> 驗收日：2026-08-15。環境：GHC 9.14.1／cabal 3.16.1.0／Windows 11 x86_64，全套件 `-O2`。
+> `cabal build all` 綠（含 exe、bench、foreign-library），零新增警告（既有兩則 `-Wunused-imports` 為 0013 遺留，未觸碰）；`cabal test` **969 examples, 0 failures**（動工前 903 → 本輪 +66）。
+> 決策文件：[ADR-0012](../adr/0012-multi-circle-scene.md)（合併律、配額政策、場作用域、上限選值）。
+
+### 9.1 Todo 逐項
+
+| # | 結果 | 測試 |
+|---|---|---|
+| S1 | ✅ `budgetCap` 4096 → **16384**、`pmMaxParticles` 跟改（FFI 端一行）、`gpuCapacity` 與上限脫鉤＋分塊繪製（新 `App.Render.Chunk`）、`Acceptance10Spec` 哨兵行更新 | `CapacitySpec`（12 examples） |
+| S2 | ✅ `Semigroup`/`Monoid CompiledSpell`；index-0 慣例查證見下 | `ComposeSpec`（10 examples） |
+| S3 | ✅ `compileMany`＋合成總量對同一 cap 檢查、沿用 `BudgetExceeded` | `ComposeBudgetSpec`（7 examples） |
+| S4 | ✅ `Magic.Scene` 全 API（含合成入口 `castManyInto`） | `SceneSpec`（12 examples） |
+| S5 | ✅ 端到端驗收＋ADR-0012 定稿 | `Acceptance12Spec`（25 examples） |
+
+**S2 的 index-0 查證結果**：全 repo 對 `spellEmitters` 的讀取只有四處（`Magic.Interface` 的 `emptyFieldState`／`fieldInputs`／`emittersOf`、`Magic.Compile.spellBlend`、`Magic.Particle.Analytic` 的四個走訪）。唯一以索引 0 取值的是 `spellBlend`（取第一個發射器的混合模式），而它是 architecture §10「一個法術一種混合模式」的實作、不是「索引 0 是 casting」的假設；力場層如設計所述以 `emPhase == Casting` **過濾**。合成後第二張陣的 casting 發射器落在向量中間，`ComposeSpec` 以「兩個 Casting 發射器、第二個索引 > 0」＋「重力井的場確實位移了火環的粒子」兩條見證釘住。`spellBlend` 的可觀察後果寫入 ADR-0012 D5 並記帳。
+
+### 9.2 S1 選值量測（本輪新增 bench 組 `frame CPU (sample + buildQuads)`）
+
+`cabal bench`，全套 `-O2`，同機、與 0010 §9.2 同一組 fixture（合成單發射器法術，t = 2.5s 全數存活）。選值規則：**單幀純 CPU ≤ 2 ms 的最大 2 的冪**。
+
+| 粒子數 | 取樣＋quad 展開（單幀純 CPU） | 佔 60 fps 預算 | 規則 |
+|---|---|---|---|
+| 4096（舊上限） | 0.328 ms ± 21 µs | 2.0% | 通過 |
+| 8192 | 0.720 ms ± 69 µs | 4.3% | 通過 |
+| **16384** | **1.45 ms ± 111 µs** | **8.7%** | **通過——選定值** |
+| 32768 | 2.87 ms ± 168 µs | 17.2% | 超出 |
+
+0010 §9.2 建議的 32768–65536 是**只算取樣**的推估；把 quad 展開一起量進來後，32768 就跨過了 2 ms 的自制線。差異的來源與量級都合理（quad 展開約 18 ns/粒，取樣約 65 ns/粒），故本輪取直接量測值而非推估區間，理由寫進 ADR-0012 D7 的被否決方案。
+
+### 9.3 S1 手動 smoke（分塊繪製的 GPU 側）
+
+分塊的純函數律由 `CapacitySpec` 守護（切塊聯集 ≡ 整塊，逐位元，含 property）；GPU 路徑照 spec 走手動 smoke。做法：臨時投入一份 `power = 24.0`（6144 粒）的 spell 檔到 `assets/spells/`，以 `Start-Process`＋`SetForegroundWindow`＋`SendKeys` 驅動真實視窗、截圖客戶區，驗畢刪檔（不入版控）。結果：
+
+- **3D 透視**：HUD `particles: 6144`、`fps: 60.0`，粒子柱完整（若仍為 0012 前的夾擠行為，最後 2048 顆——即最晚出生、位於噴泉根部的那批——會整片消失；截圖中根部是全圖最亮最密處）；
+- **2D 側視（Tab 後）**：同一份 6144 粒 batch 走 `drawFlatIO` 的分塊路徑，HUD 同樣 `particles: 6144`、`fps: 60.0`，畫面完整；
+- 兩條路徑皆為 ⌈6144/4096⌉ = 2 次 `uploadAndDraw`，`CloseMainWindow` 後 exit code 0。
+
+### 9.4 凍結清單（下游 spec 可直接引用）
+
+`Magic.Compile`：
+
+```haskell
+instance Semigroup CompiledSpell   -- 發射器/場/預算串接；PhasePlan 逐界標 max
+instance Monoid    CompiledSpell   -- mempty = 零發射器、零場、全零 PhasePlan
+compileMany :: [Circle] -> Either CompileError CompiledSpell
+budgetCap   :: Int                 -- == 16384
+```
+
+律（`ComposeSpec`／`ComposeBudgetSpec` 守護）：結合律逐位元；`mempty` 左右恆等（對所有滿足 `PhasePlan` 不變量者，即 `compile` 能產出的全部值）；`compileMany [] == Right mempty`；`compileMany [c] == compile c`；合成保持 `PhasePlan` 不變量、`spellLifetime == ppEnd`、`ParticleBudget` 的對齊與求和不變量。
+
+`Magic.Interface` 加法匯出（既有簽名一個都沒改）：
+
+```haskell
+castSpells        :: [Circle] -> CastContext -> Either CompileError ActiveSpell
+maxSpellParticles :: Int      -- 值 4096 → 16384（常數本身即匯出面，未新增第二個）
+```
+
+`Magic.Scene`（新 boundary 模組，交付後凍結）：
+
+```haskell
+newtype SpellId    = SpellId Int              deriving (Eq, Ord, Show)
+newtype SceneConfig = SceneConfig { scGlobalCap :: Int } deriving (Eq, Show)
+data    Scene                                  -- 不透明
+data    CastRefusal = QuotaExceeded !Int !Int  -- 需求、剩餘
+                    | CompileFailed !CompileError
+  deriving (Eq, Show)
+
+newScene     :: SceneConfig -> Scene
+sceneSpells  :: Scene -> [SpellId]
+sceneBudget  :: Scene -> (Int, Int)            -- (已用, 上限)
+castInto     :: CastRequest -> Scene -> Either CastRefusal (SpellId, Scene)
+castManyInto :: [Circle] -> CastContext -> Scene -> Either CastRefusal (SpellId, Scene)
+dismiss      :: SpellId -> Scene -> Scene
+advanceScene :: FrameInput -> Scene -> Scene
+observeScene :: Scene -> FrameOutput
+```
+
+C ABI：**零變更**。`include/particle_magic.h` 一字未動，`PM_MAX_PARTICLES` 仍為 4096（永釘），`pm_max_particles()` 現答 16384。11 個 C 進入點、`.def`、C# 綁定全部原樣。
+
+`App.Render.Chunk`（殼層，非對外面）：`chunkBatch :: Int -> QuadBatch -> [QuadBatch]`。
+
+### 9.5 與設計書的偏差（逐條說明）
+
+1. **`CastRefusal` 多一個建構子 `CompileFailed !CompileError`**（§3 只列了 `QuotaExceeded`）。`castInto` 吃的是 `CastRequest`，而編譯是它必經的一步——一張編不過的陣必須有地方回報。包起來而非合併，仍然守住 §2「不污染 `CompileError`」的意圖：Scene 有自己的錯誤型別，編譯器的錯誤是它的一個 case。
+2. **`Magic.Interface` 轉匯出的是 `castSpells` 而非 `compileMany`**（§0.2 已預留「或等價的多陣 `castSpell` 便利入口」）。理由：`Magic.Interface` 刻意不匯出 `CompiledSpell`，轉匯出 `compileMany` 會逼它變成抽象型別再補一個「編譯產物 → `ActiveSpell`」的函數，等於為了轉匯出而擴張詞彙。`castSpells :: [Circle] -> CastContext -> Either CompileError ActiveSpell` 一個函數就夠，且與 `castSpell` 同形。`compileMany` 本身仍在 `Magic.Compile` 匯出（core 消費者與測試用）。
+3. **`Magic.Scene` 多一個 `castManyInto` 與一個 `sceneSpells`**（§3 未列）。前者是場景層與合成層的交會點——少了它，兩個本輪交付的東西無法一起用；後者是觀察面（宿主要知道自己手上有哪些 handle 還活著，測試要能斷言「完成者已移除」），無它則 `Scene` 只能經 `sceneBudget` 的數字間接觀察。
+4. **分塊繪製放進新模組 `app/App/Render/Chunk.hs`，而非改 `Quads.hs`**。§0.2 明文不碰 `Quads.hs`／`Flat.hs`（0013 的穩定面），而 `Raylib3D.hs` 不在測試套件內（h-raylib-free 規則），純函數律無處可測。新模組同時解決兩件事：律可測，且 3D 與 2D 兩條繪製路徑共用同一份切塊邏輯。與 0014 仍零交集。
+5. **另外五個測試檔更新了寫死的 4096**（§0.2 只列了 `FFIContractSpec`，而它因 0011 改寫成鏡射律後**實際零修改**）：`BudgetPlanSpec`（「at the cap」fixture 改為由 `budgetCap` 導出的 `atCapCircle`，斷言改述為 `maxSpellParticles == budgetCap` 的律）、`CompileFoldSpec`（power 20 → 80）、`FormationSpec`（power 15 → 63，維持「casting 單獨不超、加上陣形才超」的案例意圖）、`FFIErrorSpec`（over-budget fixture power 40 → 80，訊息比對改用 `show budgetCap`）、`Acceptance10Spec`（哨兵值）。五個檔案與 0014 的清單皆無交集。改法一律往「述律而非釘值」靠，值的哨兵集中在 `CapacitySpec` 一處。
+6. **`bench/Bench.hs` 新增一個量測組**（§0.2 未列 bench）。§1 的完成定義要求上限值「依量測選定」，而既有 bench 只量到取樣、量不到整幀。新增組 `frame CPU (sample + buildQuads)` 於四個候選值直接量（§9.2）。bench stanza 本就在 `BoundarySpec` 白名單之外，且 0014 不觸 bench。
+7. **`compile emptyCircle ≠ mempty`，如 §2 所預期**——空陣仍施放素放（architecture §3.3），單位律只對 `mempty` 自身斷言。實作上 `mconcat` 走 base 的預設 `foldr (<>) mempty`，故 `mconcat [x] = x <> mempty`；對所有滿足 `PhasePlan` 不變量的值這與 `x` 相等（`max 0 x = x`），`ComposeSpec` 的單位律與 `ComposeBudgetSpec` 的 `compileMany [c] == compile c` 兩條合起來守護這件事。
+8. **未新增任何 golden，也未重新產生任何 golden**。0010 §9.5 預期「提升 cap 時範例陣輸出理應不變，故預期不需要重新產生」——事實如此：`test/golden/perf-0010/*.txt` 十檔一位元未動，`PerfGoldenSpec` 與 `Acceptance10Spec` 全綠。

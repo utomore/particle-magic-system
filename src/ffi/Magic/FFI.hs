@@ -132,8 +132,11 @@ pmAbiVersion = 1
 -- first generation's 4096 forever — it is frozen — so when the core cap
 -- rises it is this constant that follows, and hosts that size their
 -- buffers from the query keep working with no recompile of the header.
+-- Func-spec 0012 S1 is the first exercise of that design: the core cap
+-- went 4096 → 16384 and this line is the entire FFI-side change. The
+-- header was not touched.
 pmMaxParticles :: CInt
-pmMaxParticles = 4096
+pmMaxParticles = 16384
 
 pmOk, pmErrJson, pmErrBudget, pmErrCapacity, pmErrArgs :: CInt
 pmOk = 0

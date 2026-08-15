@@ -64,6 +64,7 @@ import App.Effects
   , Raylib (..)
   )
 import App.Hud (formatHud)
+import App.Render.Chunk (chunkBatch)
 import App.Render.Flat (buildFlatQuads)
 import App.Render.Order (orderedQuads)
 import App.Render.Quads (QuadBatch (..), quadIndices)
@@ -73,11 +74,15 @@ import Magic.Interface
   , V3 (..)
   )
 
--- | Vertex capacity of the shared mesh, in particles. Mirrors the core's
--- @Magic.Compile.budgetCap@ (4096), which the shell cannot import across
--- the package boundary; batches larger than this are clamped rather than
--- reallocating mid-frame. 4096*4 = 16384 vertices keeps the index buffer
--- inside 'Word16'.
+-- | Vertex capacity of the shared mesh, in particles — an upload
+-- granularity, not a particle limit.
+--
+-- It used to mirror the core's @Magic.Compile.budgetCap@; func-spec 0012
+-- raised that cap past what a 'Word16' index buffer can address
+-- (4096*4 = 16384 vertices is already half of 65536), so the two numbers
+-- part ways here. The mesh stays this size and a larger batch is drawn as
+-- several consecutive chunks ('App.Render.Chunk.chunkBatch') instead of
+-- being clamped or reallocated mid-frame.
 gpuCapacity :: Int
 gpuCapacity = 4096
 
@@ -220,7 +225,7 @@ drawSceneIO gpu cam batches =
               when additive RLGL.rlEnableDepthMask
               RL.endBlendMode
           )
-          (uploadAndDraw gpu quads)
+          (uploadAndDrawChunked gpu quads)
 
 -- | The 2D path (func-spec 0008 §4.5). No @BeginMode3D@: raylib's default
 -- state is already a screen-pixel orthographic projection with depth
@@ -247,7 +252,7 @@ drawFlatIO gpu fv batches = do
             RLGL.rlEnableBackfaceCulling
             RL.endBlendMode
         )
-        (uploadAndDraw gpu quads)
+        (uploadAndDrawChunked gpu quads)
 
 -- | A faint cross through the world origin: the 2D views have no ground
 -- grid, and without it the caster's position is guesswork.
@@ -260,6 +265,13 @@ drawFlatAxes fv = do
     (fx, fy) = fvOrigin fv
     (ox, oy) = (round fx, round fy)
     axisColor = Color 60 70 90 255
+
+-- | Draw a whole batch, in as many mesh-sized pieces as it takes
+-- (func-spec 0012 S1). A batch within 'gpuCapacity' — every spell the
+-- demo shipped with before the cap rose — is one piece, so this is the
+-- old single upload plus a list of length one.
+uploadAndDrawChunked :: QuadGpu -> QuadBatch -> IO ()
+uploadAndDrawChunked gpu = mapM_ (uploadAndDraw gpu) . chunkBatch gpuCapacity
 
 -- | The per-frame hot path: two zero-copy buffer updates, one poke to set
 -- the draw length, one draw call.

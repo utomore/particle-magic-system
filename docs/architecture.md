@@ -50,6 +50,7 @@ flowchart TD
         Interface["Magic.Interface<br/>系統唯一入口：<br/>CastRequest / FrameInput / FrameOutput"]
         Codec["Magic.Codec<br/>Aeson 編解碼、schema 版本、<br/>數學式文字剖析"]
         Projection["Magic.Projection<br/>投影面再匯出（外殼取用投影的唯一通道）"]
+        Scene["Magic.Scene<br/>場景層：多法術＋全域配額（純值，spec 0012）"]
     end
 
     subgraph Core["純核心 Magic.* （零 IO）"]
@@ -71,6 +72,7 @@ flowchart TD
     FFIShell -.-> Interface
     FFIShell -.-> Codec
 
+    Scene --> Interface
     Interface --> Compile
     Interface --> Analytic
     Interface --> Field
@@ -460,7 +462,7 @@ void     pm_free(PmSpell*);
 | 顏色（屬性） | `EssenceRune.essElement → Appearance` |
 | 依形狀輻射 | `RadiateRune RadiationMode` |
 | 收束強度 | `BridgeRune ConvergeRune`（解析曲線）；需粒子互動時用 `ForceField` |
-| 多個效果疊 | `CompiledSpell` 為 `Semigroup`：多張魔法陣的編譯結果可合併（發射器集合串接、預算相加）——**未落地**：合併律（尤其 `PhasePlan` 界標）與預算超額的錯誤表達待「多陣合成 spec」設計（0006 §9） |
+| 多個效果疊 | `CompiledSpell` 為 `Semigroup`／`Monoid`：多張魔法陣的編譯結果合併＝發射器與力場串接、預算相加、`PhasePlan` **逐界標取 max**——**已落地**（spec 0012；`compileMany`／`Magic.Interface.castSpells`）。合成總量對同一個 `budgetCap` 檢查、沿用 `BudgetExceeded`；合併律與場作用域（完全融合）的裁決見 [ADR-0012](adr/0012-multi-circle-scene.md)。多法術共存另有場景層 `Magic.Scene`（全域配額，先到先得） |
 | 強度 | `EssenceRune.essPower` |
 | 數學式 | `FormulaRune ExprV3` |
 
@@ -468,7 +470,7 @@ void     pm_free(PmSpell*);
 
 ## 7. 效能設計（目標：1 萬～10 萬粒子）
 
-> 現況註記（spec 0010 交付後更新）：本節的手段已由 **func-spec 0010** 落地並實測，逐項狀態見下表「現況」欄。**實測結果**：4096 粒每幀純 CPU 0.73 ms → **0.27 ms**；取樣常數因子 161 → **65 ns/粒**；合成 10 萬粒取樣 **6.5 ms**（60 fps 預算的 39%）——1 萬～10 萬的目標在單執行緒下成立。**護欄 `budgetCap` 仍是 4096**（spec 0002 的骨架渲染護欄）：值的提升是一個 ABI 演進問題，排在 func-spec 0012，選值建議見 0010 §9.2。
+> 現況註記（spec 0010 交付後更新）：本節的手段已由 **func-spec 0010** 落地並實測，逐項狀態見下表「現況」欄。**實測結果**：4096 粒每幀純 CPU 0.73 ms → **0.27 ms**；取樣常數因子 161 → **65 ns/粒**；合成 10 萬粒取樣 **6.5 ms**（60 fps 預算的 39%）——1 萬～10 萬的目標在單執行緒下成立。**護欄 `budgetCap` 已由 func-spec 0012 提升為 16384**（原為 spec 0002 的骨架渲染護欄 4096）：選值規則＝「單幀純 CPU（取樣＋quad 展開）≤ 2 ms 的最大 2 的冪」，同機實測 16384 → **1.45 ms**、32768 → 2.87 ms（0012 §9.2；ADR-0012 D7）。提升未動到任何對外合約——`PM_MAX_PARTICLES` 永釘 4096，宿主改用 `pm_max_particles()`／`maxSpellParticles` 查詢。
 
 | 手段 | 說明 | 現況 |
 |---|---|---|
@@ -491,7 +493,7 @@ void     pm_free(PmSpell*);
 1. **符文組合爆炸與平衡性**：固定職責限制了語意發散，但外圈×夾層×內圈×核心的組合數仍隨符文種類多項式成長。編譯期的 `ParticleBudget` 與能量預算（`essPower` 封頂）是第一道閘門；長期需要「魔法代價」系統在遊戲層約束。
 2. **Expr 求值效能**：AST 直譯在十萬粒子 × 每粒子多個式子時可能成為熱點。緩解路徑（依序）：求值器對常見形狀 SPECIALIZE → 編譯期常數摺疊/共同子式消去 → 將 `Expr` 編成扁平的 bytecode 陣列以緊密迴圈求值。AST 介面不變，只換求值器。——**第一階已由 spec 0010 S6 交付**：`foldConstants` 在 `compile` 時預求值所有無變數子樹（律：`evalExpr . foldConstants ≡ evalExpr`，逐位元），求值入口加 `INLINE`/`INLINABLE`；AST 與剖析器一字未動。bytecode 與共同子式消去仍未做，且 0010 §9.2 的量測顯示目前的熱點不在 Expr，而在解析模型本身的 `sin`/`cos`/`sqrt` 與 `hashChan`。
 3. **熱重載下的狀態遷移**：魔法陣 JSON 改變時，進行中的 `ActiveSpell` 怎麼辦？POC 策略：重載＝重新施法（狀態歸零）——spec 0007 交付力場層後這條由預告變成實際政策（ADR-0010 D8：`castSpell` 一律以全靜止的 `FieldState` 起步，不遷移）。未來若要「編輯中即時 morphing」，解析式模型天然支援（同一個 `t` 用新 spell 取樣即可），但 `FieldState` 無法對應遷移，需定義淡出/淡入規則。
-4. **多魔法並行的緩衝管理**：多個 `ActiveSpell` 各持有預算緩衝，總量需要全域上限與配額策略（先到先得？按 power 分配？）——目前介面已預留 `ParticleBudget`，策略留待遊戲層。
+4. **多魔法並行的緩衝管理**：多個 `ActiveSpell` 各持有預算緩衝，總量需要全域上限與配額策略（先到先得？按 power 分配？）——**已由 spec 0012 落地**：`Magic.Scene` 是 `Magic.Interface` 之上的純值組合層，以 `SceneConfig.scGlobalCap` 表達全域上限、以 `ParticleBudget` 記帳，v1 策略取**先到先得**（拒收回 `QuotaExceeded 需求 剩餘`，場景不變；已用量由現存法術即時求和，法術結束即釋放）。按 power 加權與優先權搶佔明文否決並記在 [ADR-0012](adr/0012-multi-circle-scene.md) D6——它們需要「重要性」這個遊戲層詞彙，庫給的是拒收與剩餘量。**尚未上 C ABI**（同 ADR D8）。
 5. **h-raylib 的 FFI 邊界開銷**：每幀把 SoA 緩衝交給 raylib instanced 繪製，若 h-raylib 的綁定強制逐元素 marshalling 會抵銷 SoA 的優勢；需要確保走 `unsafeWith`/指標直傳路徑（見 §9）。
 6. **2D 後端實際落地時的投影語意**：正交投影丟一軸在數學上簡單，但「沿法線擴充立體」的魔法在 2D 下的可讀性（深度重疊）需要視覺設計介入，可能要在 `Magic.Project` 加深度排序/壓平策略。——**已由 spec 0008 落地**：`Magic.Project` 加了 `ViewPlane`/`orthographic`/`depthOrder`（painter 穩定置換），demo 可即時切 3D／2D 側視／2D 俯視。深度排序這一半已兌現；**可讀性的視覺設計解仍未做**——俯視就是把重疊問題暴露出來的實驗台，壓平比例、輪廓強調等留給後續視覺 spec。
 

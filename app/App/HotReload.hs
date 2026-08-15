@@ -14,13 +14,15 @@ module App.HotReload
   , WatchState
   , newWatchState
   , checkStampIO
+  , scanDirIO
   ) where
 
 import qualified Data.Map.Strict as Map
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
+import Data.List (isSuffixOf, sort)
 import Data.Time.Clock (UTCTime)
 import GHC.Clock (getMonotonicTime)
-import System.Directory (getModificationTime)
+import System.Directory (getModificationTime, listDirectory)
 import System.IO.Error (catchIOError)
 
 -- | @stampChanged lastSeen current@: has the file changed?
@@ -38,14 +40,22 @@ reloadPoints stamps =
   ]
 
 -- | Per-path polling state: last poll instant (for throttling) and last
--- observed mtime (the baseline for 'stampChanged').
+-- observed mtime (the baseline for 'stampChanged'). Func-spec 0014 adds
+-- the directory half next to it: same idea, coarser subject and a slower
+-- clock, because a spell file is saved far more often than one is created
+-- or deleted.
 data WatchState = WatchState
   { wsPollInterval :: !Double
+  , wsScanInterval :: !Double
   , wsEntries :: !(IORef (Map.Map FilePath (Double, Maybe UTCTime)))
+  , wsDirs :: !(IORef (Map.Map FilePath (Double, [FilePath])))
   }
 
-newWatchState :: Double -> IO WatchState
-newWatchState pollInterval = WatchState pollInterval <$> newIORef Map.empty
+-- | @newWatchState pollInterval scanInterval@ — how often a watched file
+-- may be stat'ed, and how often a watched directory may be listed.
+newWatchState :: Double -> Double -> IO WatchState
+newWatchState pollInterval scanInterval =
+  WatchState pollInterval scanInterval <$> newIORef Map.empty <*> newIORef Map.empty
 
 -- | Throttled mtime check. Stats the file at most once per poll interval;
 -- in between (and on stat errors, e.g. mid-save on Windows) it reports
@@ -69,3 +79,41 @@ checkStampIO st path = do
     fetchStamp =
       fmap Just (getModificationTime path)
         `catchIOError` \_ -> pure Nothing
+
+-- | Throttled directory listing: every @*.json@ under @dir@, sorted, at
+-- most once per scan interval. Between scans — and when the listing
+-- fails, e.g. the directory is being moved under us — the previous answer
+-- is repeated, which is the same "a failed observation is not a change"
+-- rule 'checkStampIO' follows.
+--
+-- The entries are joined back onto @dir@ exactly the way @Main@ built the
+-- startup list — a forward slash, and nothing at all when the directory
+-- is @\".\"@ (which is 'System.FilePath.takeDirectory'\'s answer for a
+-- bare file name). Not @System.FilePath.\<\/\>@: on Windows that joins
+-- with a backslash, and a listing that differs from the list already in
+-- hand by one character is a /different/ list — the loop would swap it
+-- in and re-cast on the very first frame. That the two spellings mean the
+-- same file to the OS is exactly why the bug is invisible until you read
+-- the HUD.
+--
+-- So: a listing of an unchanged directory is EQUAL to the list in hand,
+-- and the loop skips the whole merge on equality (the zero-ripple law).
+scanDirIO :: WatchState -> FilePath -> IO [FilePath]
+scanDirIO st dir = do
+  tNow <- getMonotonicTime
+  dirs <- readIORef (wsDirs st)
+  let entry = Map.lookup dir dirs
+  case entry of
+    Just (lastScan, listed)
+      | tNow - lastScan < wsScanInterval st -> pure listed
+    _ -> do
+      listed <- fetchListing (maybe [] snd entry)
+      atomicModifyIORef' (wsDirs st) $ \ds ->
+        (Map.insert dir (tNow, listed) ds, listed)
+  where
+    fetchListing fallback =
+      fmap (sort . map under . filter isSpellFile) (listDirectory dir)
+        `catchIOError` \_ -> pure fallback
+
+    isSpellFile = isSuffixOf ".json"
+    under name = if dir == "." then name else dir ++ "/" ++ name
