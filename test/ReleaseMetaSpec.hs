@@ -36,7 +36,14 @@ workflowPath :: FilePath
 workflowPath = ".github/workflows/ci.yml"
 
 readUtf8 :: FilePath -> IO String
-readUtf8 path = T.unpack . TE.decodeUtf8 <$> BS.readFile path
+readUtf8 path = dropCR . T.unpack . TE.decodeUtf8 <$> BS.readFile path
+  where
+    -- A Windows checkout with core.autocrlf=true hands these documents
+    -- back CRLF-terminated, which leaves a trailing carriage return on
+    -- every 'lines' result and breaks the line-exact assertions below.
+    -- These files are prose and YAML: no carriage return in them is ever
+    -- significant.
+    dropCR = filter (/= '\r')
 
 -- | Value of a top-level @field: value@ line.
 fieldValue :: String -> String -> Maybe String

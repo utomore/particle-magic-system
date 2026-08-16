@@ -40,7 +40,14 @@ cabalPath :: FilePath
 cabalPath = "particle-magic.cabal"
 
 readUtf8 :: FilePath -> IO String
-readUtf8 path = T.unpack . TE.decodeUtf8 <$> BS.readFile path
+readUtf8 path = dropCR . T.unpack . TE.decodeUtf8 <$> BS.readFile path
+  where
+    -- A Windows checkout with core.autocrlf=true hands these documents
+    -- back CRLF-terminated, which leaves a trailing carriage return on
+    -- every 'lines' result and breaks the line-exact assertions below.
+    -- These files are prose and YAML: no carriage return in them is ever
+    -- significant.
+    dropCR = filter (/= '\r')
 
 -- | Every GitHub runner label (@\<something\>-latest@) named anywhere in
 -- a document, deduplicated and sorted.
