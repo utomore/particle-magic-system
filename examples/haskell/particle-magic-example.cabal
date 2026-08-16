@@ -10,7 +10,8 @@ description:
     whole point: a stanza in the parent cabal file would build, but it
     would never have walked the path an external consumer walks
     (enhance-0001 §2.1).
-license:            MIT
+-- The repository's licence, not MIT; the text is ../../LICENSE.
+license:            LicenseRef-ParticleMagic
 build-type:         Simple
 
 executable pm-haskell-host

@@ -224,4 +224,21 @@ are in [docs/release.md](docs/release.md); the reasoning is in
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+See [LICENSE](LICENSE). It is the MIT License plus two conditions, so it
+is **not** MIT and should not be described as such — the project is
+source-available rather than open source in the OSI sense.
+
+Use, modification, commercial use and redistribution are all permitted,
+free of charge. The two conditions are:
+
+1. **Credit, and no claim of authorship.** You may not present this
+   software, or a substantial portion of it, as your own original work.
+   Anything you distribute that is built on it must credit the author and
+   name this project as its origin — documentation, an about screen or a
+   credits list is enough. What you wrote yourself is still yours.
+2. **Tell the author.** Before you publicly release, publish, distribute
+   or sell something built on it, open an issue or email
+   `utomore@outlook.com` saying what it is and where to find it. Private
+   use, internal use, study and unreleased modification need no notice.
+   It is a notification, not a request for permission: no reply is
+   needed.
