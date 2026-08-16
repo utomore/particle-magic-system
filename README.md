@@ -177,7 +177,7 @@ libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev` on Debian and
 Ubuntu. Nothing in CI opens a window: the demo executable is built, never
 run, and its logic half is covered headless by the test suite.
 
-Every push and pull request runs three steps on both Tier 1 platforms,
+Pull requests into `main` run three steps on both Tier 1 platforms,
 ordered most-expensive-first because a red build makes the other two
 meaningless:
 
@@ -193,12 +193,19 @@ test fails if the two drift apart — see
 
 | Tier | What it means | Platforms |
 |---|---|---|
-| **Tier 1** | Verified by CI on every push: build, test, validate. A regression is a defect. | `windows-latest` (x86_64), `ubuntu-latest` (x86_64) |
+| **Tier 1** | Verified by CI before merging: build, test, validate. A regression is a defect. | `windows-latest` (x86_64), `ubuntu-latest` (x86_64) |
 | **Tier 2** | Expected to work, not covered by CI. Breakage gets fixed but does not block a release. | macOS, other Linux distributions |
 | Unsupported | Nobody has tried. | ARM, WASM, mobile |
 
 The first build on a cold cache is slow — h-raylib compiles raylib's C
 sources — and warm builds are not.
+
+CI does **not** run on ordinary branch pushes: this repository is private,
+so runner minutes are billed (and Windows runners cost double), and the
+gate belongs where the decision is. Day to day, run `cabal test` yourself;
+CI runs on a pull request into `main`, on a `v*` tag, and whenever you
+trigger it by hand. The reasoning and the numbers are in
+[ADR-0016](docs/adr/adr-0016-release-compatibility-policy.md) D5.
 
 ## Releases
 

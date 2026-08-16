@@ -1,5 +1,5 @@
-# func-spec 0019 S1: "this commit is good" stops depending on one developer's
-# Windows machine. Three steps, ordered by cost -- build all (the expensive
+# func-spec 0019 S1: "this branch is good to merge" stops depending on one
+# developer's Windows machine. Three steps, ordered by cost -- build all (the expensive
 # one: h-raylib compiles raylib's C sources), then the test suite, then
 # magic-validate on the shipped assets (milliseconds). Failure probability
 # runs the other way, which is the point: if the build is red the other two
@@ -16,10 +16,28 @@
 # tested-with, so this workflow and the package metadata cannot drift apart.
 name: CI
 
+# Trigger policy (ADR-0016 D5): this repository is private, so runner
+# minutes are billed, and GitHub charges Windows runners at 2x the Linux
+# rate. Running the matrix on every push to every branch would spend the
+# whole monthly allowance on work-in-progress commits -- and combining a
+# branch-push trigger with pull_request would run the same job twice for
+# every push on a PR branch, which buys nothing at all.
+#
+# So the gate sits where the decision is: merging into main. Day-to-day
+# pushes cost nothing and are covered by the developer's own local test
+# run; a version tag re-verifies before a release (docs/release.md §4
+# step 3); workflow_dispatch is there for when you want a run without a
+# PR.
+#
+# test/CIWorkflowSpec.hs asserts this shape, including the absence of a
+# branch-push trigger -- re-adding one should be a decision, not an
+# accident.
 on:
-  push:
-    branches: ['**']
   pull_request:
+    branches: [main]
+  push:
+    tags: ['v*']
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}

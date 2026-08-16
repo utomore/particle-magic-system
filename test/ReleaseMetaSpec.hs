@@ -35,15 +35,10 @@ changelogPath = "CHANGELOG.md"
 workflowPath :: FilePath
 workflowPath = ".github/workflows/ci.yml"
 
+-- | UTF-8 bytes, carriage returns dropped — see "CIWorkflowSpec" for why
+-- (a Windows checkout is CRLF, a Linux one is LF, and both run in CI).
 readUtf8 :: FilePath -> IO String
-readUtf8 path = dropCR . T.unpack . TE.decodeUtf8 <$> BS.readFile path
-  where
-    -- A Windows checkout with core.autocrlf=true hands these documents
-    -- back CRLF-terminated, which leaves a trailing carriage return on
-    -- every 'lines' result and breaks the line-exact assertions below.
-    -- These files are prose and YAML: no carriage return in them is ever
-    -- significant.
-    dropCR = filter (/= '\r')
+readUtf8 path = filter (/= '\r') . T.unpack . TE.decodeUtf8 <$> BS.readFile path
 
 -- | Value of a top-level @field: value@ line.
 fieldValue :: String -> String -> Maybe String

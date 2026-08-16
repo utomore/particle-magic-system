@@ -10,6 +10,10 @@
 -- unrelated failure, and nothing says so until an asset rots or a
 -- platform quietly stops being Tier 1. Here it fails in @cabal test@.
 --
+-- The trigger policy is asserted here too, and for a different kind of
+-- reason: on a private repository runner minutes cost money, so "when
+-- does this run" is a budget decision, not a detail (ADR-0016 D5).
+--
 -- Parsed by line scanning rather than with a YAML library: the test
 -- suite's dependency list is part of the architecture's discipline, and
 -- the handful of facts asserted below do not need a parser.
@@ -29,16 +33,17 @@ cabalPath :: FilePath
 cabalPath = "particle-magic.cabal"
 
 -- | Read as UTF-8 bytes rather than through 'readFile', whose decoding
--- follows the machine's locale (the same reason SchemaDocSpec does it).
+-- follows the machine's locale (the same reason SchemaDocSpec does it),
+-- with the carriage returns dropped.
+--
+-- That second half is not tidiness. This repository is cloned with
+-- @core.autocrlf=true@ on Windows and untranslated on Linux, so the very
+-- same committed file arrives as CRLF on one CI runner and LF on the
+-- other — and a spec that compares whole lines would then pass on one
+-- platform and fail on the other, which is precisely the class of bug
+-- the two-platform matrix exists to catch.
 readUtf8 :: FilePath -> IO String
-readUtf8 path = dropCR . T.unpack . TE.decodeUtf8 <$> BS.readFile path
-  where
-    -- A Windows checkout with core.autocrlf=true hands these documents
-    -- back CRLF-terminated, which leaves a trailing carriage return on
-    -- every 'lines' result and breaks the line-exact assertions below.
-    -- These files are prose and YAML: no carriage return in them is ever
-    -- significant.
-    dropCR = filter (/= '\r')
+readUtf8 path = filter (/= '\r') . T.unpack . TE.decodeUtf8 <$> BS.readFile path
 
 -- | The three commands, in the order CI must run them: most expensive
 -- first, because a red build makes the other two meaningless.
@@ -62,6 +67,21 @@ fieldValue key contents =
       ('"' : rest) -> takeWhile (/= '"') rest
       _ -> s
 
+-- | The body of the top-level @on:@ block — every line indented under it.
+--
+-- Scoped rather than scanning the whole file, because the words @push@
+-- and @tags@ appear in this workflow's prose too, and a trigger policy
+-- that is asserted by grepping comments is not asserted at all.
+triggerBlock :: String -> [String]
+triggerBlock contents =
+  case dropWhile ((/= "on:") . trim) (lines contents) of
+    [] -> []
+    (_ : rest) -> takeWhile indentedOrBlank rest
+  where
+    indentedOrBlank l = case l of
+      (c : _) -> isSpace c
+      [] -> True
+
 -- | The runner labels of the @os:@ matrix line, e.g. @[windows-latest,
 -- ubuntu-latest]@.
 matrixOses :: String -> [String]
@@ -79,20 +99,64 @@ testedWithGhc contents = do
     ["GHC", ver] -> Just (dropWhile (== '=') ver)
     _ -> Nothing
 
--- | Line index of the first line containing a needle.
+-- | The file's lines with comments blanked out, indices preserved.
+--
+-- Everything asserted about what CI /does/ is asserted against these
+-- rather than the raw text: a step that somebody comments out must fail
+-- this spec, which is the whole reason it exists — and this file's own
+-- prose mentions the commands it documents, so matching anywhere would
+-- make the assertions unfalsifiable.
+effectiveLines :: String -> [String]
+effectiveLines = map blankComment . lines
+  where
+    blankComment l = if "#" `isPrefixOf` trim l then "" else l
+
+-- | Line index of the first effective (non-comment) line containing a
+-- needle.
 lineOf :: String -> String -> Maybe Int
 lineOf needle contents =
-  case [i | (i, l) <- zip [0 ..] (lines contents), needle `isInfixOf` l] of
+  case [i | (i, l) <- zip [0 ..] (effectiveLines contents), needle `isInfixOf` l] of
     (i : _) -> Just i
     [] -> Nothing
 
 spec :: Spec
 spec = describe "the CI workflow says what it is supposed to say (func-spec 0019 §6 S1)" $ do
-  it "runs on push and on pull requests" $ do
+  it "gates pull requests into main, and can be run on demand" $ do
     yml <- readUtf8 workflowPath
     yml `shouldSatisfy` ("\non:" `isInfixOf`)
-    yml `shouldSatisfy` ("push:" `isInfixOf`)
-    yml `shouldSatisfy` ("pull_request:" `isInfixOf`)
+    triggerBlock yml `shouldSatisfy` any ("pull_request:" `isInfixOf`)
+    triggerBlock yml `shouldSatisfy` any ("branches: [main]" `isInfixOf`)
+    triggerBlock yml `shouldSatisfy` any ("workflow_dispatch:" `isInfixOf`)
+
+  it "re-verifies on a release tag" $ do
+    yml <- readUtf8 workflowPath
+    -- docs/release.md §4 step 3: "CI green on both Tier 1 platforms" is a
+    -- step of the release procedure, so cutting the tag runs it rather
+    -- than trusting that somebody remembered to.
+    triggerBlock yml `shouldSatisfy` any ("tags:" `isInfixOf`)
+    triggerBlock yml `shouldSatisfy` any ("'v*'" `isInfixOf`)
+
+  -- ADR-0016 D5. Runner minutes are billed on a private repository and
+  -- Windows costs double, so a branch-push trigger would spend the
+  -- monthly allowance on work in progress -- and alongside
+  -- @pull_request@ it would run every job twice for nothing. Re-adding
+  -- one has to be a decision, so it fails here first.
+  it "does not fire on every branch push" $ do
+    yml <- readUtf8 workflowPath
+    let pushBranches =
+          [ l
+          | l <- triggerBlock yml
+          , "branches:" `isInfixOf` l
+          , not ("[main]" `isInfixOf` l)
+          ]
+    pushBranches `shouldBe` []
+    -- The tag trigger is the only 'push:' this workflow may carry, and a
+    -- 'push:' with no 'tags:' under it would be a branch trigger.
+    let pushLines = [i | (i, l) <- zip [0 :: Int ..] (triggerBlock yml), "push:" `isInfixOf` l]
+    length pushLines `shouldSatisfy` (<= 1)
+    case pushLines of
+      [] -> pure ()
+      (i : _) -> drop (i + 1) (triggerBlock yml) `shouldSatisfy` any ("tags:" `isInfixOf`)
 
   it "covers both Tier 1 platforms in its matrix" $ do
     yml <- readUtf8 workflowPath
@@ -100,13 +164,15 @@ spec = describe "the CI workflow says what it is supposed to say (func-spec 0019
 
   it "runs build, then test, then validate -- all three, in that order" $ do
     yml <- readUtf8 workflowPath
-    mapM_ (\cmd -> (cmd, cmd `isInfixOf` yml) `shouldBe` (cmd, True)) ciCommands
+    -- A commented-out step is not a step: 'lineOf' reads past comments,
+    -- so deleting the validate line by hashing it out fails here.
+    mapM_ (\cmd -> (cmd, lineOf cmd yml /= Nothing) `shouldBe` (cmd, True)) ciCommands
     let positions = map (`lineOf` yml) ciCommands
     positions `shouldBe` sort positions
 
   it "points magic-validate at the shipped spells" $ do
     yml <- readUtf8 workflowPath
-    let validateLines = [l | l <- lines yml, "cabal run magic-validate" `isInfixOf` l]
+    let validateLines = [l | l <- effectiveLines yml, "cabal run magic-validate" `isInfixOf` l]
     validateLines `shouldSatisfy` any ("assets/spells" `isInfixOf`)
 
   -- h-raylib compiles raylib's C sources and links against the system
@@ -115,7 +181,7 @@ spec = describe "the CI workflow says what it is supposed to say (func-spec 0019
   it "installs the Linux system dependencies h-raylib needs" $ do
     yml <- readUtf8 workflowPath
     mapM_
-      (\pkg -> (pkg, pkg `isInfixOf` yml) `shouldBe` (pkg, True))
+      (\pkg -> (pkg, lineOf pkg yml /= Nothing) `shouldBe` (pkg, True))
       ["libx11-dev", "libxrandr-dev", "libxinerama-dev", "libxcursor-dev", "libxi-dev", "libgl1-mesa-dev"]
 
   -- A cold cache means recompiling raylib and the whole dependency
@@ -123,9 +189,9 @@ spec = describe "the CI workflow says what it is supposed to say (func-spec 0019
   -- and CI being ignored.
   it "caches the cabal store and the build tree" $ do
     yml <- readUtf8 workflowPath
-    yml `shouldSatisfy` ("actions/cache" `isInfixOf`)
-    yml `shouldSatisfy` ("cabal-store" `isInfixOf`)
-    yml `shouldSatisfy` ("dist-newstyle" `isInfixOf`)
+    mapM_
+      (\needle -> (needle, lineOf needle yml /= Nothing) `shouldBe` (needle, True))
+      ["actions/cache", "cabal-store", "dist-newstyle"]
 
   -- The two halves of this equality are asserted from both ends: here,
   -- and from the package side in ReleaseMetaSpec. A workflow that

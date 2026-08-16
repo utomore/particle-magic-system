@@ -39,15 +39,12 @@ adrPath = "docs/adr/adr-0016-release-compatibility-policy.md"
 cabalPath :: FilePath
 cabalPath = "particle-magic.cabal"
 
+-- | UTF-8 bytes, carriage returns dropped: with @core.autocrlf=true@ a
+-- Windows checkout of these files is CRLF and a Linux one is LF, so a
+-- line-comparing spec would otherwise disagree with itself across the
+-- two CI runners. See "CIWorkflowSpec" for the same note at length.
 readUtf8 :: FilePath -> IO String
-readUtf8 path = dropCR . T.unpack . TE.decodeUtf8 <$> BS.readFile path
-  where
-    -- A Windows checkout with core.autocrlf=true hands these documents
-    -- back CRLF-terminated, which leaves a trailing carriage return on
-    -- every 'lines' result and breaks the line-exact assertions below.
-    -- These files are prose and YAML: no carriage return in them is ever
-    -- significant.
-    dropCR = filter (/= '\r')
+readUtf8 path = filter (/= '\r') . T.unpack . TE.decodeUtf8 <$> BS.readFile path
 
 -- | Every GitHub runner label (@\<something\>-latest@) named anywhere in
 -- a document, deduplicated and sorted.

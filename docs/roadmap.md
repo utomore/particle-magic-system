@@ -177,7 +177,7 @@ architecture 回答「系統長什麼樣、為什麼」，func-spec 回答「這
 | fsnotify（仍以輪詢代替） | 0005 §9、ADR-0005 既定延後；0014 §8-2 明文再次不做（10 檔規模輪詢零成本） |
 | 視覺化編輯器／即時預覽 UI | 0014 §8-1：等有非工程作者為止 |
 | JSON Schema（draft-07 等機器格式）輸出 | 0014 §8-3：等外部工具鏈需求 |
-| ~~CI（目前全靠本機 `cabal test`）~~ | ✅ **0019 S1 交付**：`.github/workflows/ci.yml`，push／PR 上 build → test → validate，矩陣 `{windows-latest, ubuntu-latest}`；設定檔本身由 `CIWorkflowSpec` 守護（文字合約第五次使用）。**首次 push 後應回填 run 連結**（0019 §8.3） |
+| ~~CI（目前全靠本機 `cabal test`）~~ | ✅ **0019 S1 交付**：`.github/workflows/ci.yml`，**PR 到 main ＋ `v*` tag ＋ 手動**觸發 build → test → validate，矩陣 `{windows-latest, ubuntu-latest}`；設定檔本身由 `CIWorkflowSpec` 守護（文字合約第五次使用）。**日常分支 push 不觸發**——private repo 計費、Windows runner 2×，閘門設在併入 main（ADR-0016 D5）。**首次 PR 之後應回填 run 連結**（0019 §8.3） |
 | ~~release tag／版本發布流程~~ | ✅ **0019 S3／S4 交付**：`docs/release.md` ＋ ADR-0016——平台分級、PVP 上界（補齊 43 個條目）、`tested-with:`、`v<version>` tag 格式、`PM_ABI_VERSION` 與套件版本獨立遞增。不上 Hackage（ADR-0016 §被否決） |
 | ~~只有 win64 實測過~~ | ✅ **0019 S2 結清**：Debian 13 / GHC 9.14.1 / x86_64 上 build＋test＋validate 全綠（1174 examples，9 pending），且此後由 CI 矩陣持續守護。**代價已知並記帳**：跨平台逐位元不成立，範圍收窄見 ADR-0016 D4 |
 | 手動 smoke 的必要性 | 0014 §9.2：腳本化的 headless 測試依定義看不到 IO 解譯器產生的字串本身（Windows 路徑分隔符使「重掃 ≡ 啟動清單」的等式失效，程式照跑、只有 HUD 看得出來）。凡是「IO 端產生、純端比較相等」的地方，都要有一條打真檔案系統的守護測試 |

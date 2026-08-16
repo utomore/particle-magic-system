@@ -21,13 +21,25 @@ related-spec: [func-0019]
 
 | 級別 | 意義 | 成員 |
 |---|---|---|
-| **Tier 1** | CI 每次 push 驗證 build＋test＋validate；回歸視為缺陷 | `windows-latest`（x86_64）、`ubuntu-latest`（x86_64） |
+| **Tier 1** | 進 main 之前由 CI 驗證 build＋test＋validate（觸發時機見 §1.1）；回歸視為缺陷 | `windows-latest`（x86_64）、`ubuntu-latest`（x86_64） |
 | **Tier 2** | 預期可用但無 CI；壞了修，但不擋發布 | macOS、其他 Linux 發行版 |
 | **未支援** | 沒有人試過 | ARM、WASM、行動平台 |
 
 Tier 1 的清單**就是** `.github/workflows/ci.yml` 的 `matrix.os`。一個平台想進 Tier 1，唯一的方式是把它加進矩陣——分級是承諾，不是願望。
 
 兩個 Tier 1 平台走的不是同一條連結路徑：Windows 的 foreign-library 靠 `particle-magic-ffi.def` 明列匯出，Linux 的 `.so` 靠 GHC 預設匯出。這是矩陣的第二個價值（第一個見 §5）。
+
+### 1.1 CI 什麼時候跑（以及為什麼不是每次 push）
+
+| 觸發 | 時機 | 頻率 |
+|---|---|---|
+| `pull_request` → `main` | 開 PR、以及 PR 分支每次更新 | 每輪 spec 幾次 |
+| `push` tag `v*` | 打版本 tag（＝ §4 第 3 步的機器保證） | 一年幾次 |
+| `workflow_dispatch` | 你想跑就跑 | 隨意 |
+
+**沒有分支 push 觸發。** 本 repo 是 private，Actions 分鐘數計費，且 **Windows runner 以 2× 計費**（Linux 1×）：熱快取一次矩陣約 15 計費分鐘，冷快取約 60。設在每次 push 會把月額度花在半成品 commit 上，而且與 `pull_request` 併用時同一份工作會跑兩遍。
+
+**所以日常的驗證仍然是你自己的 `cabal test`**——CI 是併入 main 前的閘門，不是編輯器的即時回饋。完整理由與被否決的方案見 [ADR-0016](adr/adr-0016-release-compatibility-policy.md) D5。
 
 ## 2. 版本號
 
@@ -70,8 +82,10 @@ cabal 的 `version:` 必須在 CHANGELOG 找得到同名段落標題（`ReleaseM
    ```
 
    `magic-validate` 的 exit code ＝ 載入或施放失敗的檔數，所以第三步不需要任何額外判讀。
+
+   併入 main 的那個 PR 已經跑過這三步（§1.1）；若距離上次 PR 有新的 commit，用 `workflow_dispatch` 手動跑一次。
 4. `git tag v<version>`，例如本版是 `v0.1.0.0`——**`v` 加上 cabal 版本字串，一字不差、四段不省**。
-5. `git push --tags`。
+5. `git push --tags`。**push tag 會再觸發一次 CI**（§1.1），所以第 3 步在打版當下由機器再確認一遍——這是這條 tag 觸發存在的唯一理由。
 
 **tag 是目前唯一的發布動作。** 不上 Hackage、不做自動 release（ADR-0016 §被否決）。tag 的用途是讓 `source-repository-package` 的使用者有東西可以釘：
 
