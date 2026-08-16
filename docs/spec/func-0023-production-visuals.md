@@ -3,7 +3,7 @@ id: func-0023
 type: spec
 title: production-visuals
 description: 產品級視覺：拖尾、bloom、軟粒子與深度交錯
-status: open
+status: done
 created: 2026-08-15
 updated: 2026-08-16
 depends-on: [func-0022, func-0018]
@@ -12,7 +12,7 @@ related-adr: [adr-0006, adr-0007, adr-0009, adr-0011, adr-0013, adr-0018]
 
 # Func-Spec 0023：產品級視覺（拖尾、軟粒子、後處理）
 
-> 狀態：**設計定案，待實作**
+> 狀態：**已完成**（2026-08-16 驗收，見 §9）
 > 性質：**重大基建功能** —— 本 spec **取代 ADR-0009 的「不自訂 shader」前提**並**鬆綁 ADR-0006 的六欄硬點**，交付後 `ParticleBuffer` 的九欄佈局、`pm_observe_ex` 的 C 合約、shader 資產的所在位置即凍結。同輪交付 **ADR-0018**。依 SKILL.md，本 spec 完成驗收前依賴它的 spec 不得動工。
 > 前置依賴：**spec 0022（需已完成）＋ spec 0018（需已完成）**。前者：本 spec 加寬 `ParticleBuffer` 並改 `Analytic.hs` 的取樣路徑，與 0022 的平行取樣同檔且語意相依（速度欄必須納入平行等價律）；後者：本 spec 加 `pm_observe_ex` 與 `PM_SHAPE_TRAIL`，觸及 `src/ffi`＋`include`＋`.def`＋`bindings`——恰為 0018 鎖住的檔案集合。**與 spec 0019／0024 平行**（§0.2）。
 > 依據：**[ADR-0009](../adr/adr-0009-dynamic-quad-mesh-rendering.md)**（其繪製路徑**保留**，其「不自訂 shader」前提**被取代**——使用者裁決 2026-08-15）、**[ADR-0006](../adr/adr-0006-soa-unboxed-buffer.md)**（六欄佈局的硬點——本輪以「加欄＋新查詢」而非「改既有簽名」的方式鬆綁）、[ADR-0013](../adr/adr-0013-billboard-vocabulary.md) **D1**（帶參數的拉伸 billboard 因 `PM_BATCH_INFO_STRIDE` 凍結而被否決——**本輪以速度欄解決同一個問題，且不動 stride**，見 §2.1）；ADR-0011 D7（header only-add）、ADR-0007（核心零 IO——shader 全部住殼層）；architecture §7「明確不做」清單、§11 第 3 列（SoA 欄位佈局硬點）、§5.2（輸出零 raylib 依賴）；[roadmap.md](../roadmap.md) §2（維度 C 產品級特效系統 50%）、§3.4（拖尾／軟粒子／後處理、跨 batch 深度交錯）；spec 0013 §8-3、0015 §8-1／§8-2／§8-3。
@@ -127,7 +127,7 @@ int pm_observe_ex(PmSpell* spell,
 
 解析式模型下，粒子位置是年齡的閉式函數，但**不是所有軌跡都有便宜的符號導數**（`FormulaRune` 是玩家寫的 `Expr`，符號微分要新增一整個 `Expr` 遍歷）。因此速度以**有限差分**定義並凍結：
 
-```
+```text
 vel(i) = (renderedPos(age) − renderedPos(age − h)) / h,   h = 1/240 秒（固定）
 ```
 
@@ -250,20 +250,20 @@ flowchart LR
 
 | # | Todo | 測試 |
 |---|---|---|
-| S1 | `ParticleBuffer` +`pbVelX/Y/Z`＋`bufferInvariant` 的 opt-in 條款＋`Magic.Interface` 唯讀匯出 | `test/BufferVelocitySpec.hs`（不變量：速度欄長度 ∈ {0, `pbCount`} 且三欄同步（property）；六欄建構路徑產生的 buffer 速度欄為空；**既有 `BufferSpec` 全綠不改**——既有六欄語意零變更的見證） |
-| S2 | 有限差分速度（`velocityStep = 1/240` 凍結）＋opt-in 偵測（無 `BillboardTrail` ⇒ 跳過整段） | `test/VelocitySampleSpec.hs`（差分定義的決定論；`age < h` 的單邊差分；帶場魔法的速度含場位移貢獻（見證）；**opt-in 律**：無拖尾魔法的九欄取樣輸出與六欄路徑逐位元相同且速度欄為空；**與 0022 律 2 相容**：平行 ≡ 單執行緒，九欄逐位元） |
-| S3 | `BillboardShape` +`BillboardTrail`＋`"trail"` 樣式名＋`Compile` 接線 | `test/TrailVocabSpec.hs`（`fromEnum BillboardTrail == 4`；既有四個 wire code 不動；`"trail"` 的 JSON round-trip；`StyleRune "trail"` ⇒ 該發射器的 `appShape` 為 `BillboardTrail` ⇒ `compile` 開啟速度計算（見證）；`SchemaDocSpec` 連帶全綠） |
-| S4 | `pm_observe_ex`＋`PM_SHAPE_TRAIL 4`＋header／`.def`／C# 綁定＋`fromColumnsWithVelocity` | `test/FFIObserveExSpec.hs`（`pm_observe_ex` 的速度指標為 NULL 時 ≡ `pm_observe` 逐位元；九欄 ≡ `observeSpell` 的九欄逐位元；無拖尾魔法 + 非 NULL 速度指標 ⇒ 填零；容量不足零寫出；**`FFIContractSpec`／`BindingContractSpec` 連帶更新後全綠**：進入點 21→22、`PM_SHAPE_*` 5 個） |
-| S5 | 自訂 shader 管線：`App.Render.Shader`（載入／繫結／釋放的 bracket）、RenderTexture、五份 GLSL 資產。**含前置 spike**（h-raylib 的 shader／RenderTexture／深度紋理路徑實機確證） | `test/ShaderPipelineSpec.hs`（headless 解譯器可觀測：shader 載入與釋放成對出現（bracket 律，比照 0005）；RenderTexture 的建立／重建隨視窗 resize；shader 資產路徑存在且可讀；**零輸入零漣漪律**：全部特效關閉時的繪製指令序列 ≡ 0015 交付的既有序列） |
-| S6 | 拖尾 quad 展開（沿速度方向拉伸，長度由 \|v\| 與凍結係數導出） | `test/TrailQuadSpec.hs`（速度為零 ⇒ 退化為既有正方 quad 逐位元；拉伸方向 ≡ 速度方向的投影；四頂點仍共面且順序不變（既有 quad 不變量）；拉伸長度有上界（避免高速粒子拉成整個畫面）） |
-| S7 | bloom 後處理：bright-pass → 分離高斯 → composite | `test/BloomSpec.hs`（headless：三個 pass 的順序與 RenderTexture 繫結序列正確；強度為 0 時 composite ≡ 原圖（零漣漪）；解析度縮放的 pass 尺寸正確；開關切換不洩漏 RenderTexture（bracket 律）） |
-| S8 | 軟粒子（深度緩衝取樣淡出）＋`App.Scene` 測試場景幾何（地面＋方塊，可開關） | `test/SoftParticleSpec.hs`（headless：深度紋理被繫結到粒子 shader；軟化距離為 0 時 ≡ 硬邊逐位元（零漣漪）；測試場景的幾何指令在粒子之前送出（深度必須先寫入）；場景關閉時軟粒子自動退化為硬邊而非黑畫面） |
-| S9 | 跨 batch alpha 深度交錯（併排 → `viewOrder` 一次排序 → 拆回） | `test/CrossBatchOrderSpec.hs`（合併後的繪製順序為全體 alpha 粒子的深度非遞增序（property）；additive batch 不參與且順序不變；單一 alpha batch 時 ≡ 0013 的既有 `viewOrder` 逐位元；拆回後每個 batch 的粒子集合不變（置換律）） |
-| S10 | 端到端＋`assets/spells/comet-trail.json`＋ADR-0018 | `test/Acceptance23Spec.hs`（**既有宿主零受擾律**：13 個既有範例陣的**六欄**輸出 240 幀逐位元不變；`comet-trail` 的九欄 240 幀決定論；`pm_observe` 路徑 ≡ `pm_observe_ex(NULL)` 路徑逐位元）＋**手動 smoke**：開窗目視拖尾／bloom／軟粒子三者各自開關的效果，截圖描述入 §9 |
+| ✅ S1 | `ParticleBuffer` +`pbVelX/Y/Z`＋`bufferInvariant` 的 opt-in 條款＋`Magic.Interface` 唯讀匯出 | `test/BufferVelocitySpec.hs`（不變量：速度欄長度 ∈ {0, `pbCount`} 且三欄同步（property）；六欄建構路徑產生的 buffer 速度欄為空；**既有 `BufferSpec` 全綠不改**——既有六欄語意零變更的見證） |
+| ✅ S2 | 有限差分速度（`velocityStep = 1/240` 凍結）＋opt-in 偵測（無 `BillboardTrail` ⇒ 跳過整段） | `test/VelocitySampleSpec.hs`（差分定義的決定論；`age < h` 的單邊差分；帶場魔法的速度含場位移貢獻（見證）；**opt-in 律**：無拖尾魔法的九欄取樣輸出與六欄路徑逐位元相同且速度欄為空；**與 0022 律 2 相容**：平行 ≡ 單執行緒，九欄逐位元） |
+| ✅ S3 | `BillboardShape` +`BillboardTrail`＋`"trail"` 樣式名＋`Compile` 接線 | `test/TrailVocabSpec.hs`（`fromEnum BillboardTrail == 4`；既有四個 wire code 不動；`"trail"` 的 JSON round-trip；`StyleRune "trail"` ⇒ 該發射器的 `appShape` 為 `BillboardTrail` ⇒ `compile` 開啟速度計算（見證）；`SchemaDocSpec` 連帶全綠） |
+| ✅ S4 | `pm_observe_ex`＋`PM_SHAPE_TRAIL 4`＋header／`.def`／C# 綁定＋`fromColumnsWithVelocity` | `test/FFIObserveExSpec.hs`（`pm_observe_ex` 的速度指標為 NULL 時 ≡ `pm_observe` 逐位元；九欄 ≡ `observeSpell` 的九欄逐位元；無拖尾魔法 + 非 NULL 速度指標 ⇒ 填零；容量不足零寫出；**`FFIContractSpec`／`BindingContractSpec` 連帶更新後全綠**：進入點 21→22、`PM_SHAPE_*` 5 個） |
+| ✅ S5 | 自訂 shader 管線：`App.Render.Shader`（載入／繫結／釋放的 bracket）、RenderTexture、五份 GLSL 資產。**含前置 spike**（h-raylib 的 shader／RenderTexture／深度紋理路徑實機確證） | `test/ShaderPipelineSpec.hs`（headless 解譯器可觀測：shader 載入與釋放成對出現（bracket 律，比照 0005）；RenderTexture 的建立／重建隨視窗 resize；shader 資產路徑存在且可讀；**零輸入零漣漪律**：全部特效關閉時的繪製指令序列 ≡ 0015 交付的既有序列） |
+| ✅ S6 | 拖尾 quad 展開（沿速度方向拉伸，長度由 \|v\| 與凍結係數導出） | `test/TrailQuadSpec.hs`（速度為零 ⇒ 退化為既有正方 quad 逐位元；拉伸方向 ≡ 速度方向的投影；四頂點仍共面且順序不變（既有 quad 不變量）；拉伸長度有上界（避免高速粒子拉成整個畫面）） |
+| ✅ S7 | bloom 後處理：bright-pass → 分離高斯 → composite | `test/BloomSpec.hs`（headless：三個 pass 的順序與 RenderTexture 繫結序列正確；強度為 0 時 composite ≡ 原圖（零漣漪）；解析度縮放的 pass 尺寸正確；開關切換不洩漏 RenderTexture（bracket 律）） |
+| ✅ S8 | 軟粒子（深度緩衝取樣淡出）＋`App.Scene` 測試場景幾何（地面＋方塊，可開關） | `test/SoftParticleSpec.hs`（headless：深度紋理被繫結到粒子 shader；軟化距離為 0 時 ≡ 硬邊逐位元（零漣漪）；測試場景的幾何指令在粒子之前送出（深度必須先寫入）；場景關閉時軟粒子自動退化為硬邊而非黑畫面） |
+| ✅ S9 | 跨 batch alpha 深度交錯（併排 → `viewOrder` 一次排序 → 拆回） | `test/CrossBatchOrderSpec.hs`（合併後的繪製順序為全體 alpha 粒子的深度非遞增序（property）；additive batch 不參與且順序不變；單一 alpha batch 時 ≡ 0013 的既有 `viewOrder` 逐位元；拆回後每個 batch 的粒子集合不變（置換律）） |
+| ✅ S10 | 端到端＋`assets/spells/comet-trail.json`＋ADR-0018 | `test/Acceptance23Spec.hs`（**既有宿主零受擾律**：13 個既有範例陣的**六欄**輸出 240 幀逐位元不變；`comet-trail` 的九欄 240 幀決定論；`pm_observe` 路徑 ≡ `pm_observe_ex(NULL)` 路徑逐位元）＋**手動 smoke**：開窗目視拖尾／bloom／軟粒子三者各自開關的效果，截圖描述入 §9 |
 
 ## 7. 收尾：architecture.md 與 ADR 的修訂
 
-本輪是唯一需要動既有決策的一輪，收尾必須明文完成（列差異給開發者確認後才改）：
+本輪是唯一需要動既有決策的一輪，收尾必須明文完成（列差異給開發者確認後才改）。**五處已於 2026-08-16 列差異、經使用者確認後全部套用**：
 
 1. **ADR-0009**：狀態改為部分被 ADR-0018 取代——**繪製路徑（動態 quad mesh、draw call 數＝batch 數）保留**，「不自訂 shader」前提被取代。原文不刪，加註取代關係與日期（SKILL.md 的 ADR 修訂規則）。
 2. **ADR-0006**：六欄硬點鬆綁為九欄，並記錄鬆綁的**方式**（加欄＋新查詢函數，而非改既有簽名）——這是日後再加欄時的範本。
@@ -285,4 +285,139 @@ flowchart LR
 
 ## 9. 驗收紀錄
 
-（實作時回填：日期、環境；S5 spike 的結果與是否啟用退場方案；`cabal test` 結果；加欄的實測代價（有拖尾／無拖尾兩種魔法的每幀成本對照，證明 opt-in 確實免費）；拖尾／bloom／軟粒子的手動 smoke 截圖描述；凍結清單：九欄佈局、`velocityStep`、`pm_observe_ex` 簽名、`PM_SHAPE_TRAIL`、shader 資產位置；ADR-0009／ADR-0006 的修訂實際措辭；與計畫的差異。）
+**日期／環境**：2026-08-16；Windows 11 x86_64、GHC 9.14.1、cabal 3.16.1.0、h-raylib 5.6.0.0、AMD Ryzen 7 9800X3D（8 核 16 緒）。
+
+### 9.1 S5 spike：通過，退場方案未啟用
+
+h-raylib 5.6.0.0 讀原始碼確認四項全部可用，隨後實機確證：
+
+| 需要的東西 | h-raylib 的對應 | 結果 |
+|---|---|---|
+| 載入／釋放 shader | `loadShader :: Maybe String -> Maybe String -> IO Shader`、`c'unloadShader` | ✅ |
+| RenderTexture | `loadRenderTexture`、`c'unloadRenderTexture`、`beginTextureMode`／`endTextureMode` | ✅ |
+| **深度紋理** | `RenderTexture` 的 `renderTexture'depth :: Texture` 欄位 | ✅ |
+| 把自訂 program 掛上材質 | `p'material'shader :: Ptr Material -> Ptr Shader`（一次 poke，同 0015 的 diffuse 槽手法） | ✅ |
+
+**§8-9 的退場方案沒有啟用**，S1–S10 全部交付。
+
+### 9.2 測試
+
+`cabal test spec`：**1701 examples, 0 failures**。全部 stanza（`magic-core`／`magic-boundary`／`particle-magic`／`magic-validate`／`particle-magic-ffi`／`bench`／`spec`）建置無錯誤、無新增警告。
+
+本輪新增 10 個測試模組：`BufferVelocitySpec`、`VelocitySampleSpec`、`TrailVocabSpec`、`FFIObserveExSpec`、`ShaderPipelineSpec`、`TrailQuadSpec`、`BloomSpec`、`SoftParticleSpec`、`CrossBatchOrderSpec`、`Acceptance23Spec`。
+
+### 9.3 opt-in 的實測代價
+
+同機、同一次 session、`bench` 的 `observeSpell` 群組（4096 粒緩衝），**與交付前的程式碼（commit `7bc6091`）逐一對照**——不是與文件裡記的舊數字比，是當場開一個 worktree 各跑兩次：
+
+| age | 交付前 | 交付後（無拖尾） | |
+|---|---|---|---|
+| 30 frames（1024 粒） | 115／118／111 µs | 70.4／72.5 µs | |
+| 120 frames（4096 粒） | 470／457／508 µs | 283／302 µs | |
+| 240 frames（4096 粒） | 490／480／478 µs | 266／290 µs | |
+
+**無拖尾的取樣沒有變慢——實測反而快了約 1.6×。** 這不是本輪的目標，成因可辨識：`fillEmitter` 拆成帶 `INLINE` 的 `fillEmitterWith` ＋ 一個無操作的速度 hook 之後，GHC 在兩個呼叫點各自特化整段迴圈，而交付前 `fillEmitter` 是一個被兩處呼叫、沒有 `INLINE` 的頂層函數。輸出逐位元不變（`PerfGoldenSpec` 對交付前錄的 golden 全綠），所以這是純粹的編譯結果差異。
+
+有拖尾的代價（獨立量測程式，強制求值全部九欄，200 次取樣取平均）：
+
+| 規模 | 無拖尾 | 有拖尾 | 倍率 |
+|---|---|---|---|
+| 3073 粒 | 0.28 ms | 0.63 ms | 2.26× |
+| 12292 粒 | 1.10 ms | 2.52 ms | 2.30× |
+| 49156 粒 | 4.43 ms | 10.4 ms | 2.35× |
+
+**2.3× 是有限差分的定義代價**：每顆粒子多跑一次完整的位置公式（`age − h` 那次），再多寫三欄。opt-in 的價值就是這 2.3× 只有真的要拖尾的法術才付。
+
+### 9.4 手動 smoke
+
+`assets/spells/comet-trail.json` 複製為 `aaa-smoke.json`（前綴讓它成為開機顯示的法術），開窗後以 `keybd_event` 送 `1`／`4`／`3`／`2` 逐一開關，每步截圖讀 HUD。（`SendKeys` 送數字鍵**不會被 raylib 收到**——與既有紀錄中方向鍵、`v` 的情況相同；`keybd_event` ＋ `MapVirtualKey` 的掃描碼可靠。）
+
+| 步驟 | HUD `fx:` | 畫面 |
+|---|---|---|
+| 開機 | `trail- bloom- soft- scene-` | 圓點粒子、無場景幾何——與 0015 的畫面相同，60.0 fps |
+| `1` | `trail+ bloom- soft- scene-` | 上升的粒子由圓點變成**沿運動方向拉長的短線**，陣形粒子仍是方塊 |
+| `4` | `trail+ bloom- soft- scene+` | 地面與三個方塊出現，粒子在其間穿插 |
+| `3` | `trail+ bloom- soft+ scene+` | 靠近右側高方塊的陣形粒子**淡出**，硬邊消失 |
+| `2` | `trail+ bloom+ soft+ scene+` | 亮粒子帶上輝光，60.0 fps（1309 粒） |
+| `1` | `trail- bloom+ soft+ scene+` | 拉長的線**變回圓點**，其餘三項不受影響——四個開關互相獨立 |
+
+**smoke 抓到兩個測試抓不到的實機錯誤**（見 §10-2、§10-3），修正後重跑全綠。
+
+### 9.5 凍結清單
+
+| 凍結物 | 值 |
+|---|---|
+| `ParticleBuffer` 佈局 | 九欄：`pbPosX/Y/Z`、`pbSize`、`pbLife`、`pbColor`、`pbVelX/Y/Z`、`pbCount` |
+| `bufferInvariant` 的速度條款 | 每個速度欄長度 ∈ {0, `pbCount`}，且三欄同步 |
+| `velocityStep` | `1/240` 秒 |
+| 速度定義 | `analyticVel = (particlePosition(age) − particlePosition(max 0 (age−h))) / 實際區間`；`age = 0` 為零；帶場再加該槽位的 `ssVel` |
+| `pm_observe_ex` 簽名 | 13 參數，三個速度指標可為 NULL（`include/particle_magic.h`） |
+| `PM_SHAPE_TRAIL` | `4`；`PM_BATCH_INFO_STRIDE` 仍為 `4` |
+| shader 資產位置 | `assets/shaders/{particle.vs,particle.fs,bright.fs,blur.fs,composite.fs}` |
+| 拖尾係數 | `trailStretchPerUnit = 0.35`、`trailMaxStretch = 6` |
+| 貼圖 atlas 佈局 | 橫向 strip，一形態一格 64×64，UV 內縮半個 texel |
+
+### 9.6 與計畫的差異
+
+四處，全部記在 §10。最大的一處是 **§2.7 的跨批交錯機制達不到 §6 自己指定的驗收律**，改用貼圖 atlas ＋ 單次繪製（使用者裁決 2026-08-16）。
+
+---
+
+## 10. 實作備註（與規格的偏差）
+
+### 10-1 速度的力場那一半：`ssVel` 而非 `renderedPos` 的差分
+
+**規格 §2.4 寫的**：`vel(i) = (renderedPos(age) − renderedPos(age − h)) / h`，並明說差分作用在「解析位置＋力場位移」的和上。
+
+**行不通的原因**：力場位移只以**積分歷史**存在，不是年齡的函數。`renderedPos(age − h)` 沒有閉式可以求值，而唯一的跨幀狀態就是正在讀的那個 `FieldState`——沒有 `disp(age − h)` 可拿。
+
+**改用**：
+
+```text
+renderedVel(i) = (analyticPos(age) − analyticPos(max 0 (age−h))) / 實際區間  +  該槽位的 ssVel
+```
+
+**為什麼這是同一件事而不是近似**：`Field.stepSlot` 積分的是 `disp' = disp + dt·vel'`，所以 `(disp' − disp) / dt == vel'` **恆等**——力場那一半本來就是位移的差分商，只是差分區間是模擬的 `dt` 而不是 `h`（`dt` 是位移唯一被定義的區間）。連續極限下兩者就是 `d/dt(analyticPos + disp)`，也就是規格要的東西。
+
+**連帶改動**：`src/core/Magic/Particle/Field.hs` 加一個 add-only 匯出 `velocityColumns`（`displacementColumns` 的速度對應）。該檔不在 §0.2 的盤點裡；它與 0019／0024 的檔案集合交集仍為 ∅，平行性論證不受影響。
+
+規格要的見證（「帶場魔法的速度含場位移貢獻」）由 `VelocitySampleSpec` 的兩條測試守住。
+
+### 10-2 §2.7 的跨批交錯機制達不到它自己的驗收律 ⇒ 改用貼圖 atlas
+
+**規格 §2.7 寫的**：併排 → 一次排序 → 依 `(batch, 原索引)` 拆回**各 batch 的繪製順序**，並宣稱繪製結構不變。
+
+**問題**：拆回成「每個 batch 一個 permutation」之後，batch 仍然是**連續繪製**的，所以畫面依舊是「batch 0 全部、然後 batch 1 全部」，不管每個 batch 內部怎麼排。§6 指定的 property（「合併後的繪製順序為全體 alpha 粒子的深度非遞增序」）在實作時直接把這點抓出來——這是 property 測試證明機制不足、而不是實作寫錯的一次。
+
+**裁決**（使用者，2026-08-16）：改用**貼圖 atlas**。四種程序生成貼圖併成一張，形態改由每個 quad 的 texcoord 攜帶；於是沒有 per-batch 的貼圖綁定，全體 alpha 粒子可以排進**同一次 draw**。
+
+**後果**：
+
+- 順序完全正確，**含跨 shape**（規格舉的「alpha 拖尾蓋住 alpha 光點」正是跨 shape 的例子）；
+- **draw call 反而變少**：一幀最多兩次（alpha 一次、additive 一次），不論幾個 batch。ADR-0009 的承諾更寬裕而非被打破；
+- 代價：`quadTexcoords` 由「開機寫一次」變成每幀上傳（`QuadBatch` 加 `qbTexcoords` 欄）。0015 的「texcoord 從不更新，所以每幀上傳成本未動」那句不再成立。
+
+被否決的兩個替代方案（run 切段繪製、同 shape 合批）記在 ADR-0018 D5。
+
+### 10-3 軟粒子需要獨立的深度 pre-pass（手動 smoke 抓到）
+
+規格假設粒子 shader 可以取樣「場景那一遍寫進去的深度」。實機兩個問題：
+
+1. **不能取樣正在寫入的那張 render texture 的深度附件**——結果未定義，實測是**所有粒子消失**（bloom 開啟時）。
+2. **視窗自己的深度緩衝不可取樣**——所以 bloom 關閉時軟粒子根本沒有深度來源，實測是**靜默無效果**（走了 §8 設計的「退化為硬邊」路徑，行為安全但效果沒發生）。
+
+**改用**：場景幾何多畫一遍，畫進一張專屬的深度來源 target（`ScenePass` 兩次），粒子那一遍取樣它。`Pass` 的 `ParticlePass` 因此帶第三個欄位（深度來源）。四個方塊畫兩次，代價可接受；真實場景就不是了，這一點記在 ADR-0018 的負面後果。
+
+### 10-4 深度紋理走材質 map 槽，不走 `SetShaderValueTexture`（手動 smoke 抓到）
+
+raylib 的 `DrawMesh` **只綁材質的 map 槽**；用 `SetShaderValueTexture` 註冊的 sampler 是給 rlgl 的 immediate-mode batch 用的，mesh 繪製時根本沒被綁上。結果：uniform 指向一個沒有東西的 texture unit，`texture(...).r` 讀到 0，淡出係數恆為 0，**每顆粒子完全透明**。
+
+**改用**：深度紋理寫進材質的第二個 map 槽（`maps[1]`，raylib 的 specular），GLSL 的 uniform 名改為 `texture1`——這是 raylib 自己對該槽的命名。用完寫回 id 為 0 的空 `Texture` 解綁。
+
+這一條**沒有任何測試抓得到**（它在 h-raylib／raylib 的行為裡，不在本專案的純函數裡），是手動 smoke 抓到的。`ShaderPipelineSpec` 能守住的是「每個 pass 設的 uniform 都要在 GLSL 裡宣告」，擋得住名字，擋不住綁定機制。
+
+### 10-5 其他小偏差
+
+- `spellNeedsVelocity` 是從 `spellEmitters` **導出**的函數，不是 `CompiledSpell` 的新欄位。理由：存起來的旗標可能在 `compileMany` 串接兩個法術之後與發射器不一致，而導出的走訪是每幀一次、成本可忽略；`Semigroup` 實例因此不必加條款（`any` 對串接就是各部分的 disjunction）。
+- `buildFlatQuads` 保留原簽名（送整張貼圖的 UV），2D 路徑改用新增的 `buildFlatQuadsIn`。既有 `FlatQuadSpec`／`DepthTintSpec`／`FlatReadabilitySpec` 因此一字未改。
+- `App.Render.Shader` 是**純宣告**（程式清單、資產路徑、uniform 名），實際的 `loadShader`／`unloadShader` bracket 留在 `App.Render.Raylib3D`——因為測試套件是 headless 且不連結 h-raylib。bracket 律改以解析 `Raylib3D.hs` 原始碼的方式斷言，沿用 `FFIContractSpec`／`BoundarySpec` 既有手法。

@@ -348,3 +348,51 @@ Format rules (the authority is [docs/release.md](docs/release.md) §3, and
   intermediate `V3`s the sampler allocates per particle. `budgetCap` is
   deliberately unchanged: this round delivers the measurements ADR-0012's
   consequences asked for, not the raise. (delivered)
+- **0023 production visuals** — ADR-0018. The half of roadmap dimension C
+  that 0013 ("legible") and 0015 ("recognisable") left open: *good-looking*.
+  Two long-standing decisions had to move, and both moved by addition
+  rather than by rewriting. ADR-0009's "no custom shaders" premise is
+  superseded — but only the premise: the dynamic quad mesh, the `c'`
+  pointer path and "draw calls scale with batches, never particles" all
+  stand, and what that decision was really protecting (rendering detail
+  stays out of the library) is untouched — `FrameOutput` still has zero
+  raylib types. And ADR-0006's six-column layout, listed in architecture
+  §11 as a hard point, widens to nine: `pbVelX/Y/Z` join it, `pm_observe`
+  is not altered by one character, and the new `pm_observe_ex` carries the
+  velocity for hosts that want it (three NULL-able pointers; pass NULL and
+  it *is* `pm_observe`, byte for byte). Velocity is **opt-in and
+  structurally so**: a spell with no `"trail"` style leaves the columns
+  empty, `sample` picks a different builder once rather than branching per
+  particle, and `bufferInvariant` gains the clause that makes "empty or
+  complete, never half" a property of the type. Measured against the
+  pre-round build on the same machine, a trail-free sample did not get
+  slower — it got ~1.6× faster, an unintended consequence of the `INLINE`
+  refactor the opt-in hook needed; a trailing spell pays 2.3×, which is
+  what a finite difference costs (one extra position evaluation per
+  particle). Velocity is that difference over a frozen 1/240 s step, never
+  the frame's `dt`, so a spell trails identically at 30 and 240 fps, plus
+  the force-field layer's own integrated velocity — which is why a trail
+  bends with the field it is flying through. `BillboardTrail` (wire code 4)
+  needs no parameters at all, which is how it slips past the
+  `PM_BATCH_INFO_STRIDE` freeze that defeated 0015: a trail's direction and
+  length were never a per-batch property, they belong to the particle.
+  On the shell side: five GLSL programs, a bloom chain (bright pass,
+  separable Gaussian, composite), soft particles fading against a depth
+  pre-pass, and a minimal test scene to fade against — the demo drew no
+  solid geometry at all, so the effect had nothing to intersect and no way
+  to be verified, a gap this round found rather than inherited. Every
+  effect is on its own key and off by default, so an untouched demo renders
+  exactly the frame 0015 delivered and the whole apparatus costs one
+  comparison. Cross-batch depth interleaving forced the round's one real
+  redesign: the spec's own mechanism (sort the pooled particles, split back
+  into per-batch permutations) cannot deliver the ordering it asks for,
+  because a batch still draws contiguously — the property test caught it.
+  The fix is a sprite atlas: with the shape carried in each quad's texture
+  coordinates there is no per-batch texture bind left to force a draw-call
+  boundary, so every alpha particle in the frame sorts and draws together.
+  A frame is now at most two draw calls whatever the batch count, which is
+  fewer than before. Two more bugs were found by the manual smoke and by
+  nothing else: `DrawMesh` binds only material map slots, so a sampler set
+  with `SetShaderValueTexture` never arrives and every particle came out
+  transparent; and a pass may not sample the depth attachment it is
+  writing. (delivered)
