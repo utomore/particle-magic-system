@@ -67,8 +67,12 @@ spellDir :: FilePath
 spellDir = "assets/spells"
 
 -- | This round's own two examples.
+-- | Everything the compatibility law is /not/ stated over: this round's
+-- own two examples, plus twin-lance, which arrived on the parallel
+-- func-spec 0025 line and was merged in afterwards. Neither existed
+-- before 0021, so neither can witness anything about it.
 newSpells :: [String]
-newSpells = ["wuxing-seal", "yin-yang"]
+newSpells = ["wuxing-seal", "yin-yang", "twin-lance"]
 
 -- | Everything that existed before this round — the population the
 -- compatibility law is stated over.

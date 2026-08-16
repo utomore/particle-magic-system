@@ -149,6 +149,14 @@ spec = describe "fitted oriented boxes (func-spec 0025 S1)" $ do
       -- twin-lance.json is this round's own example, so it has no
       -- pre-0025 value to be frozen against; every file that existed
       -- before does.
+      --
+      -- wuxing-seal.json and yin-yang.json arrived on the parallel
+      -- func-spec 0021 line and their rows were appended when the two
+      -- rounds were integrated. That is still a pre-0025 witness: 0025's
+      -- only behavioural edit to 'compile' is the anchors branch, and a
+      -- circle without "anchors" takes the same single-emitter path it
+      -- always did — the 172 rows recorded before the merge are
+      -- bit-identical after it, which is what these two rows lean on.
       spells <- filter ((/= "twin-lance.json") . fst) <$> exampleSpells
       let produced =
             [ unwords

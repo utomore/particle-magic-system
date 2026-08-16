@@ -52,6 +52,7 @@ import Magic.Compile
   , IntervalEnv (..)
   , Motion (..)
   , SpawnPattern (..)
+  , emitterBounds
   , evalInterval
   , ivSub
   , maxMagnitude
@@ -187,6 +188,26 @@ emitterBox ctx (Seconds horizon) em =
         ( maxMagnitude (evalInterval z ageEnv)
         , maxMagnitude (evalInterval x ageEnv) + maxMagnitude (evalInterval y ageEnv)
         )
+      -- Func-spec 0021's four. Each bound is the closed form's own
+      -- supremum over @age ∈ [0, maxAge]@, not a sample of it — the same
+      -- standard the four above are held to.
+      --
+      -- 'Wave' and 'Zigzag' travel like 'Forward'; their lateral term is a
+      -- sine and a triangle wave, both of which live in @[−1, 1]@, so the
+      -- amplitude is the exact lateral bound.
+      Wave speed amplitude _ -> (abs (realToFrac speed) * maxAge, abs (realToFrac amplitude))
+      Zigzag speed amplitude _ -> (abs (realToFrac speed) * maxAge, abs (realToFrac amplitude))
+      -- The parabola @speed·a − ½·g·a²@ turns around inside the window
+      -- whenever the apex falls in it, so the endpoint is not the maximum.
+      -- Bounding the two terms separately is loose by at most the apex
+      -- term and never wrong.
+      Ballistic speed gravity ->
+        (abs (realToFrac speed) * maxAge + 0.5 * abs (realToFrac gravity) * maxAge * maxAge, 0)
+      -- 'Pulse' integrates @mean·(1 − cos)@, an integrand in @[0, 2·mean]@,
+      -- so the displacement cannot exceed @2·|mean|·maxAge@. Bounding the
+      -- integrand rather than the closed form is what keeps this finite as
+      -- the frequency approaches zero.
+      Pulse meanSpeed _ -> (2 * abs (realToFrac meanSpeed) * maxAge, 0)
 
     -- The per-particle drift spread draws its two coefficients from
     -- 'Magic.Types.hashChan' shifted to [-0.5, 0.5], on the two in-plane
@@ -200,8 +221,16 @@ emitterBox ctx (Seconds horizon) em =
       AlongNormal -> (lateralRadius, lateralRadius, travelRadius)
       -- The axis is some in-plane direction and its lateral pair is that
       -- axis' own basis: neither is aligned with (u, w, n), so every term
-      -- is charged to every axis.
-      RadialOutward -> let m = travelRadius + lateralRadius in (m, m, m)
+      -- is charged to every axis. Func-spec 0021's two additions travel
+      -- along a per-particle axis for the same reason ('RadialInward' is
+      -- 'RadialOutward' reversed, 'TangentialSwirl' is its perpendicular),
+      -- so they take the same conservative split rather than a tighter one
+      -- that would have to know the spawn direction.
+      RadialOutward -> radial
+      RadialInward -> radial
+      TangentialSwirl -> radial
+
+    radial = let m = travelRadius + lateralRadius in (m, m, m)
 
     rawU = spawnRadius + trajU + maxAge * (spreadRadius + abs driftU)
     rawV = spawnRadius + trajV + maxAge * (spreadRadius + abs driftV)
@@ -212,14 +241,37 @@ emitterBox ctx (Seconds horizon) em =
       Nothing -> 0
       Just e -> maxMagnitude (ivSub (Interval 1 1) (evalInterval e frameEnv))
 
-    (halfU, halfV, halfN) = case (convergeSlack, effectiveRadiation) of
+    -- The fitted box is only ever an improvement on the frozen cube, never
+    -- a regression — so each half-extent is capped by the frozen radius.
+    --
+    -- This is always valid: 'emitterBounds' bounds @|offset|@ itself, and
+    -- a bound on a vector's length bounds its component along every unit
+    -- direction, this box's axes included. It is not decoration either.
+    -- The convergence term above charges @slack@ against the sum of the
+    -- three half-extents whenever the travel axis is per-particle, which
+    -- can exceed the cube that charges it against the length once — a
+    -- combination no example spell had until func-spec 0021 shipped a
+    -- 'RadialInward' circle with a converge curve (yin-yang). Capping
+    -- makes "fitted never larger than frozen" true by construction rather
+    -- than true of the examples that happen to exist.
+    (loFrozen, hiFrozen) = emitterBounds ctx (Seconds horizon) em
+    frozenRadius = case (loFrozen, hiFrozen) of
+      (V3 lx _ _, V3 hx _ _) -> 0.5 * (hx - lx)
+
+    halfU = min frozenRadius fittedU
+    halfV = min frozenRadius fittedV
+    halfN = min frozenRadius fittedN
+
+    (fittedU, fittedV, fittedN) = case (convergeSlack, effectiveRadiation) of
       (0, _) -> (rawU, rawV, rawN)
       -- Travel axis = the normal ⇒ the transverse part is exactly the
       -- in-plane offset, component for component.
       (slack, AlongNormal) -> (rawU * (1 + slack), rawV * (1 + slack), rawN)
       -- Unknown in-plane axis ⇒ |transverse| ≤ |offset|, which only the
-      -- sum of the three half-extents bounds.
-      (slack, RadialOutward) ->
+      -- sum of the three half-extents bounds. All three per-particle
+      -- radiation modes (func-spec 0021 added the latter two) land here
+      -- for the same reason: the travel axis is not known at compile time.
+      (slack, _) ->
         let total = slack * (rawU + rawV + rawN)
          in (rawU + total, rawV + total, rawN + total)
 

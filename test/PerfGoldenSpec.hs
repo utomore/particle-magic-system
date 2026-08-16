@@ -70,11 +70,15 @@ examples =
   , "soft-bloom"
   , "spiral-spark"
   , "square-burst"
-  , -- Func-spec 0021's own two. Their baselines are necessarily recorded
-    -- on the post-0021 build (they did not exist before it), so they are
-    -- the net a later round inherits, not evidence about this one — the
-    -- twelve above are that.
-    "wuxing-seal"
+  , -- The three below are func-spec 0021's own two and func-spec 0025's
+    -- one, the latter joining the net when the two parallel rounds were
+    -- integrated. Their baselines are necessarily recorded on the build
+    -- that introduced them, so they are the net a later round inherits,
+    -- not evidence about this one — the twelve above are that. Order
+    -- matters: this list is compared against the asset directory's own
+    -- sorted listing.
+    "twin-lance"
+  , "wuxing-seal"
   , "yin-yang"
   ]
 
