@@ -1,0 +1,42 @@
+cabal-version:      3.4
+name:               particle-magic-example
+version:            0.1.0.0
+synopsis:           Minimal Haskell host for the particle magic library
+description:
+    A standalone cabal package -- deliberately NOT a stanza of
+    particle-magic.cabal -- that consumes particle-magic the way an
+    outside game does: through the public sublibrary
+    'particle-magic:magic-boundary'. Being a separate package is the
+    whole point: a stanza in the parent cabal file would build, but it
+    would never have walked the path an external consumer walks
+    (enhance-0001 §2.1).
+license:            MIT
+build-type:         Simple
+
+executable pm-haskell-host
+    main-is:          Main.hs
+    hs-source-dirs:   .
+
+    -- The dependency surface of a Haskell host, in full. Three things
+    -- are worth noticing:
+    --
+    --   * 'magic-boundary', never 'magic-core'. The core is a public
+    --     sublibrary too, but reaching past the boundary means importing
+    --     types that no func-spec has frozen.
+    --   * 'bytestring', because 'Magic.Codec.loadCircle' takes the spell
+    --     file's raw bytes (encoding is the host's business, not the
+    --     library's).
+    --   * 'vector', because 'ParticleBuffer' is SoA over
+    --     'Data.Vector.Unboxed' (ADR-0006). Any host that reads the six
+    --     columns needs it; integration.md §3 says so since
+    --     enhance-0001.
+    --
+    -- No renderer, and no effect system: this host draws nothing, which
+    -- is what makes it evidence that the library is complete without a
+    -- window (the same standard examples/c/main.c is held to).
+    build-depends:    base                          ^>=4.22
+                    , particle-magic:magic-boundary
+                    , bytestring                    ^>=0.12
+                    , vector                        ^>=0.13
+    default-language: GHC2021
+    ghc-options:      -Wall -O2
