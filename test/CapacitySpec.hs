@@ -162,6 +162,8 @@ syntheticBatch n =
   QuadBatch
     { qbPositions = S.generate (n * 12) fromIntegral
     , qbColors = S.generate (n * 16) fromIntegral
+    , -- Func-spec 0023 S9: eight floats a quad, sliced by the same rule.
+      qbTexcoords = S.generate (n * 8) fromIntegral
     , qbCount = n
     }
 

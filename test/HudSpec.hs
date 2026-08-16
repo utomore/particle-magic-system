@@ -8,6 +8,7 @@ import Data.List (isInfixOf)
 import App.Effects (FlatView (..), HudView (..), ReloadStatus (..), ViewMode (..))
 import App.Hud (formatHud, fpsEma)
 import App.Loop (defaultCamera, flatViewFor)
+import App.Render.Post (noEffects)
 import Magic.Projection (ViewPlane (..))
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
@@ -24,6 +25,7 @@ baseView =
     , hvView = View3D
     , hvCamera = defaultCamera
     , hvFlat = flatViewFor (1280, 720) SideXY
+    , hvVisual = noEffects
     }
 
 hudText :: HudView -> String

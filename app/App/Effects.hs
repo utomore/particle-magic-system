@@ -46,6 +46,7 @@ module App.Effects
   , withFrame
   , drawBatch
   , drawScene
+  , drawFrame
   , drawFlat
   , drawHud
   , pollInput
@@ -62,6 +63,7 @@ import Magic.Projection (ViewPlane)
 import System.IO.Error (catchIOError)
 
 import App.HotReload (checkStampIO, newWatchState, scanDirIO)
+import App.Render.Post (VisualSettings)
 
 -- | Renderer-agnostic camera description; the raylib backend converts it.
 data Camera = Camera
@@ -193,6 +195,10 @@ data HudView = HudView
   -- ^ The live 2D view: scale, pan and depth tint. Only meaningful while
   -- 'hvView' is 'View2D', but always carried, for the same reason
   -- 'hvView' carries the plane in 3D — the state exists either way.
+  , hvVisual :: !VisualSettings
+  -- ^ Which of func-spec 0023's effects are on. Carried here for the
+  -- reason 'hvView' and 'hvCamera' are: the HUD is where a headless test
+  -- reads observation-side state off without a window.
   }
   deriving (Eq, Show)
 
@@ -224,6 +230,19 @@ data DemoInput = DemoInput
   -- ^ G: switch the 2D depth flattening and outline floor on and off
   -- (func-spec 0021 S6) — the second-tier top-view cues, kept on their
   -- own key so the first-tier tint can still be judged alone.
+  , diToggleTrails :: !Bool
+  -- ^ 1: velocity-stretched trails (func-spec 0023 S6).
+  , diToggleBloom :: !Bool
+  -- ^ 2: the bloom chain (S7).
+  , diToggleSoft :: !Bool
+  -- ^ 3: soft particles (S8).
+  , diToggleScene :: !Bool
+  -- ^ 4: the test scene geometry (§2.6).
+  --
+  -- Four keys rather than one, because the completion definition asks for
+  -- each effect to be switchable /independently/: judging whether bloom
+  -- helps means seeing the same frame with and without it and nothing
+  -- else changed.
   , diOrbitDrag :: !(Maybe (Float, Float))
   -- ^ Mouse drag while the left button is held, in pixels, or 'Nothing'
   -- when nothing is being dragged. Drives the 3D orbit; the pixels are
@@ -251,6 +270,10 @@ noInput =
     , diTogglePlane = False
     , diToggleTint = False
     , diToggleReadability = False
+    , diToggleTrails = False
+    , diToggleBloom = False
+    , diToggleSoft = False
+    , diToggleScene = False
     , diOrbitDrag = Nothing
     , diPanDrag = Nothing
     , diWheel = 0
@@ -280,6 +303,18 @@ data Raylib :: Effect where
   -- window means the 2D view's screen mapping is no longer a constant,
   -- and the loop is where that mapping is decided.
   WindowSize :: Raylib m (Int, Int)
+  -- | The 3D path with func-spec 0023's effects (S5–S9), added the same
+  -- additive way 'DrawScene' and 'DrawFlat' were.
+  --
+  -- It supersedes 'DrawScene' in the loop and carries one thing more: the
+  -- 'VisualSettings' that decide the frame's render plan
+  -- ('App.Render.Post.framePlan') — scene geometry, offscreen targets,
+  -- the bloom chain, the soft-particle fade distance and whether trail
+  -- batches are stretched. With every effect off the plan is a single
+  -- pass straight to the screen, so this draws exactly what 'DrawScene'
+  -- draws and the zero-ripple law is the default rather than a special
+  -- case.
+  DrawFrame :: Camera -> VisualSettings -> [RenderBatch] -> Raylib m ()
 
 type instance DispatchOf Raylib = Dynamic
 
@@ -294,6 +329,9 @@ drawBatch cam = send . DrawBatch cam
 
 drawScene :: (Raylib :> es) => Camera -> [RenderBatch] -> Eff es ()
 drawScene cam = send . DrawScene cam
+
+drawFrame :: (Raylib :> es) => Camera -> VisualSettings -> [RenderBatch] -> Eff es ()
+drawFrame cam settings = send . DrawFrame cam settings
 
 drawFlat :: (Raylib :> es) => FlatView -> [RenderBatch] -> Eff es ()
 drawFlat fv = send . DrawFlat fv

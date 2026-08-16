@@ -79,6 +79,11 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
         , "pm_is_finished"
         , "pm_age"
         , "pm_observe"
+        , -- func-spec 0023: the nine-column observation. Add-only again,
+          -- and the sharpest example of why the rule is worth keeping —
+          -- the six-column entry point above could not carry velocity, so
+          -- it did not have to try.
+          "pm_observe_ex"
         , "pm_free"
         , "pm_max_particles"
         , "pm_project"
@@ -258,6 +263,7 @@ shapeMacro shape = case shape of
   BillboardSoftDot -> "PM_SHAPE_SOFT_DOT"
   BillboardRing -> "PM_SHAPE_RING"
   BillboardSpark -> "PM_SHAPE_SPARK"
+  BillboardTrail -> "PM_SHAPE_TRAIL"
 
 -- Parsers --------------------------------------------------------------------
 

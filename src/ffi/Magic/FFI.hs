@@ -41,6 +41,7 @@ module Magic.FFI
   , pm_is_finished
   , pm_age
   , pm_observe
+  , pm_observe_ex
   , pm_free
   , pm_max_particles
   , pm_project
@@ -131,7 +132,18 @@ import Magic.Interface
   , FrameOutput (batches)
   , OccupancyGrid (..)
   , OrientedBox (..)
-  , ParticleBuffer (pbColor, pbCount, pbLife, pbPosX, pbPosY, pbPosZ, pbSize)
+  , ParticleBuffer
+      ( pbColor
+      , pbCount
+      , pbLife
+      , pbPosX
+      , pbPosY
+      , pbPosZ
+      , pbSize
+      , pbVelX
+      , pbVelY
+      , pbVelZ
+      )
   , RenderBatch (..)
   , Seed (..)
   , Time (..)
@@ -490,9 +502,99 @@ pm_observe
   -- ^ capacity of @batch_info@, in batches
   -> IO CInt
 pm_observe h px py pz psize plife pcolor capacity infoPtr maxBatches =
+  pm_observe_ex
+    h
+    px
+    py
+    pz
+    psize
+    plife
+    pcolor
+    nullPtr
+    nullPtr
+    nullPtr
+    capacity
+    infoPtr
+    maxBatches
+
+foreign export ccall pm_observe_ex
+  :: StablePtr SpellCell
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Ptr Word32
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> CInt
+  -> Ptr CInt
+  -> CInt
+  -> IO CInt
+
+-- | 'pm_observe' with the three velocity columns func-spec 0023 added to
+-- 'Magic.Interface.ParticleBuffer' — nine columns out instead of six.
+--
+-- Everything else is 'pm_observe', to the letter: the same batch
+-- semantics, the same @batch_info@ layout and stride, the same
+-- all-or-nothing capacity rule. The two share one 'copyOut', so that is
+-- one implementation rather than two that agree (func-spec 0018 S3
+-- extracted it, and this is the second time that paid).
+--
+-- The velocity pointers are optional and independent. Pass @NULL@ for all
+-- three and this /is/ @pm_observe@, bit for bit — which is what lets a
+-- host adopt the new entry point without deciding about trails first.
+--
+-- A spell with no 'Magic.Rune.BillboardTrail' computes no velocity. Asked
+-- for it anyway, this writes zeros rather than reporting an error: whether
+-- a particular spell happens to trail is the spell's business, and a host
+-- should not have to change the shape of its call — or size a different
+-- set of arrays — because the player loaded a different circle.
+pm_observe_ex
+  :: StablePtr SpellCell
+  -> Ptr CFloat
+  -- ^ out: position x
+  -> Ptr CFloat
+  -- ^ out: position y
+  -> Ptr CFloat
+  -- ^ out: position z
+  -> Ptr CFloat
+  -- ^ out: size
+  -> Ptr CFloat
+  -- ^ out: life fraction
+  -> Ptr Word32
+  -- ^ out: packed RGBA colour
+  -> Ptr CFloat
+  -- ^ out: velocity x, or @NULL@
+  -> Ptr CFloat
+  -- ^ out: velocity y, or @NULL@
+  -> Ptr CFloat
+  -- ^ out: velocity z, or @NULL@
+  -> CInt
+  -- ^ capacity of each column, in elements
+  -> Ptr CInt
+  -- ^ out: batch descriptors, 4 ints per batch
+  -> CInt
+  -- ^ capacity of @batch_info@, in batches
+  -> IO CInt
+pm_observe_ex h px py pz psize plife pcolor pvx pvy pvz capacity infoPtr maxBatches =
   withCell h 0 $ \ref -> do
     spell <- readIORef ref
-    copyOut (batches (observeSpell spell)) px py pz psize plife pcolor capacity infoPtr maxBatches
+    copyOut
+      (batches (observeSpell spell))
+      px
+      py
+      pz
+      psize
+      plife
+      pcolor
+      pvx
+      pvy
+      pvz
+      capacity
+      infoPtr
+      maxBatches
 
 -- | The copy-out shared by 'pm_observe' and 'pm_scene_observe' (func-spec
 -- 0018 §3.3): a batch list into the host's six columns plus one
@@ -502,6 +604,13 @@ pm_observe h px py pz psize plife pcolor capacity infoPtr maxBatches =
 --
 -- Lifted out of 'pm_observe' unchanged; @test\/FFIObserveSpec.hs@ and
 -- @test\/Acceptance9Spec.hs@ are the regression net for that move.
+--
+-- Func-spec 0023 widens it to nine columns. The three velocity pointers
+-- are optional — @NULL@ means "this host does not want it", independently
+-- per axis — and they are deliberately /not/ part of the
+-- @columnsMissing@ check: a missing required column is a host bug, a
+-- missing optional one is a host choice, and conflating them would make
+-- @pm_observe@ (which passes @NULL@ for all three) fail.
 copyOut
   :: [RenderBatch]
   -> Ptr CFloat
@@ -510,11 +619,14 @@ copyOut
   -> Ptr CFloat
   -> Ptr CFloat
   -> Ptr Word32
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Ptr CFloat
   -> CInt
   -> Ptr CInt
   -> CInt
   -> IO CInt
-copyOut bs px py pz psize plife pcolor capacity infoPtr maxBatches = do
+copyOut bs px py pz psize plife pcolor pvx pvy pvz capacity infoPtr maxBatches = do
   let buffers = map rbParticles bs
       total = sum (map pbCount buffers)
       nBatches = length bs
@@ -536,6 +648,9 @@ copyOut bs px py pz psize plife pcolor capacity infoPtr maxBatches = do
             copyFloats psize offset (pbSize pb)
             copyFloats plife offset (pbLife pb)
             copyWords pcolor offset (pbColor pb)
+            copyVelocity pvx offset n (pbVelX pb)
+            copyVelocity pvy offset n (pbVelY pb)
+            copyVelocity pvz offset n (pbVelZ pb)
             pokeElemOff infoPtr (4 * i) (fromIntegral offset)
             pokeElemOff infoPtr (4 * i + 1) (fromIntegral n)
             pokeElemOff infoPtr (4 * i + 2) (blendCode (rbBlend batch))
@@ -788,7 +903,24 @@ pm_scene_observe
 pm_scene_observe h px py pz psize plife pcolor capacity infoPtr maxBatches =
   withScene h 0 $ \ref -> do
     scene <- readIORef ref
-    copyOut (batches (observeScene scene)) px py pz psize plife pcolor capacity infoPtr maxBatches
+    -- No velocity out of the scene entry point this round: func-spec 0023
+    -- widens the single-spell path only, so this passes the three @NULL@s
+    -- that make 'copyOut' behave exactly as it did before (the scene
+    -- counterpart is booked, not delivered — func-spec 0023 §10).
+    copyOut
+      (batches (observeScene scene))
+      px
+      py
+      pz
+      psize
+      plife
+      pcolor
+      nullPtr
+      nullPtr
+      nullPtr
+      capacity
+      infoPtr
+      maxBatches
 
 foreign export ccall pm_scene_budget
   :: StablePtr SceneCell -> Ptr CInt -> Ptr CInt -> IO CInt
@@ -1114,6 +1246,20 @@ withColumns plane count ptrs k =
 -- infinities included (@realToFrac@ is not).
 copyFloats :: Ptr CFloat -> Int -> U.Vector Float -> IO ()
 copyFloats ptr offset = U.imapM_ (\i x -> pokeElemOff (castPtr ptr) (offset + i) x)
+
+-- | One optional velocity column of one batch (func-spec 0023 S4).
+--
+-- Three cases, and the third is the one worth naming: a @NULL@ pointer
+-- writes nothing, a present column copies, and an /absent/ column with a
+-- present pointer writes @n@ zeros. That last one is why the host's
+-- arrays are always fully defined over @[0, total)@ after a successful
+-- call — a host that reads velocity for a batch of a trail-free spell
+-- gets zero, not whatever was in its buffer last frame.
+copyVelocity :: Ptr CFloat -> Int -> Int -> U.Vector Float -> IO ()
+copyVelocity ptr offset n column
+  | ptr == nullPtr = pure ()
+  | U.null column = mapM_ (\i -> pokeElemOff (castPtr ptr) (offset + i) (0 :: Float)) [0 .. n - 1]
+  | otherwise = copyFloats ptr offset column
 
 copyWords :: Ptr Word32 -> Int -> U.Vector Word32 -> IO ()
 copyWords ptr offset = U.imapM_ (\i x -> pokeElemOff ptr (offset + i) x)

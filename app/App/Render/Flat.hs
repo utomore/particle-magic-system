@@ -16,6 +16,7 @@
 -- would do with our output.
 module App.Render.Flat
   ( buildFlatQuads
+  , buildFlatQuadsIn
   , screenOf
   , panBy
   , zoomAt
@@ -148,10 +149,43 @@ zoomPerNotch = 1.15
 -- edge. Same discipline as the tint — at their defaults the geometry
 -- stream is bit-identical to the pre-0021 one.
 buildFlatQuads :: FlatView -> ParticleBuffer -> QuadBatch
-buildFlatQuads fv pb =
-  QuadBatch {qbPositions = positions, qbColors = colors, qbCount = n}
+buildFlatQuads fv = buildFlatQuadsIn fv (0, 0, 1, 1)
+
+-- | 'buildFlatQuads' sampling a given rectangle of the texture rather
+-- than the whole of it (func-spec 0023 S9).
+--
+-- The 2D path needs this for the same reason the 3D one does: since the
+-- sprites moved into one atlas, "which shape is this" is carried by the
+-- UVs. 'buildFlatQuads' keeps its own signature and passes the whole
+-- texture, so every assertion written against it since func-spec 0008
+-- still means what it meant.
+buildFlatQuadsIn
+  :: FlatView -> (Float, Float, Float, Float) -> ParticleBuffer -> QuadBatch
+buildFlatQuadsIn fv (u0, v0, u1, v1) pb =
+  QuadBatch
+    { qbPositions = positions
+    , qbColors = colors
+    , qbTexcoords = texcoords
+    , qbCount = n
+    }
   where
     n = pbCount pb
+
+    -- Same corner order as the 3D expansion, so one index buffer serves
+    -- both paths.
+    texcoords = S.create $ do
+      mv <- SM.new (n * 8)
+      forM_ [0 .. n - 1] $ \j -> do
+        let !base = j * 8
+        SM.write mv base u0
+        SM.write mv (base + 1) v0
+        SM.write mv (base + 2) u1
+        SM.write mv (base + 3) v0
+        SM.write mv (base + 4) u1
+        SM.write mv (base + 5) v1
+        SM.write mv (base + 6) u0
+        SM.write mv (base + 7) v1
+      pure mv
     order = depthOrder (fvPlane fv) pb
     ppu = fvPixelsPerUnit fv
 

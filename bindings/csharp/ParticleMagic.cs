@@ -47,6 +47,11 @@ namespace ParticleMagic
         public const int ShapeSoftDot = 1;      // PM_SHAPE_SOFT_DOT
         public const int ShapeRing = 2;         // PM_SHAPE_RING
         public const int ShapeSpark = 3;        // PM_SHAPE_SPARK
+        // PM_SHAPE_TRAIL: stretch the quad along the particle's own
+        // velocity. The stretch is per PARTICLE, not per batch -- read it
+        // from the velocity columns of pm_observe_ex, not from batchInfo,
+        // which has no room for it and never will.
+        public const int ShapeTrail = 4;        // PM_SHAPE_TRAIL
 
         public const int PlaneSideXY = 0;       // PM_PLANE_SIDE_XY: (x, y), depth = -z
         public const int PlaneTopXZ = 1;        // PM_PLANE_TOP_XZ:  (x, z), depth = -y
@@ -105,6 +110,28 @@ namespace ParticleMagic
                                             float[] posX, float[] posY, float[] posZ,
                                             float[] size, float[] life, uint[] color,
                                             int capacity, int[] batchInfo, int maxBatches);
+
+        /// <summary>
+        /// pm_observe plus three velocity columns, in units per second.
+        ///
+        /// Identical in every other respect -- same batches, same
+        /// batchInfo layout, same all-or-nothing capacity rule -- because
+        /// pm_observe is literally this call with the three velocity
+        /// arrays null. Pass null for any velocity column you do not
+        /// want; a spell with no "trail" style fills the ones you do pass
+        /// with zeros rather than failing.
+        ///
+        /// This is what a ShapeTrail batch needs: stretch each quad along
+        /// (velX, velY, velZ) by a length that grows with the velocity's
+        /// magnitude, and clamp it, or a fast particle streaks across the
+        /// whole screen.
+        /// </summary>
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int pm_observe_ex(IntPtr spell,
+                                               float[] posX, float[] posY, float[] posZ,
+                                               float[] size, float[] life, uint[] color,
+                                               float[] velX, float[] velY, float[] velZ,
+                                               int capacity, int[] batchInfo, int maxBatches);
 
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
         public static extern void pm_free(IntPtr spell);

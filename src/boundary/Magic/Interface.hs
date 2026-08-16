@@ -18,7 +18,25 @@ module Magic.Interface
   , CompileError (..)
 
     -- * Particle buffer (read-only view)
-  , ParticleBuffer (pbPosX, pbPosY, pbPosZ, pbSize, pbLife, pbColor, pbCount)
+    --
+    -- Nine columns since func-spec 0023; the six that were here before it
+    -- are unchanged in name, type, order and meaning. 'pbVelX' \/ 'pbVelY'
+    -- \/ 'pbVelZ' are /opt-in/: empty unless the spell asked for a trail,
+    -- and 'hasVelocity' is the one question a consumer has to ask before
+    -- reading them (func-spec 0023 S1).
+  , ParticleBuffer
+      ( pbPosX
+      , pbPosY
+      , pbPosZ
+      , pbSize
+      , pbLife
+      , pbColor
+      , pbVelX
+      , pbVelY
+      , pbVelZ
+      , pbCount
+      )
+  , hasVelocity
 
     -- * System input
   , CastRequest (..)
@@ -90,7 +108,7 @@ import Magic.Particle.Analytic
   , particlePosition
   , sample
   )
-import Magic.Particle.Buffer (ParticleBuffer (..))
+import Magic.Particle.Buffer (ParticleBuffer (..), hasVelocity)
 import qualified Magic.Particle.Field as Field
 import Magic.Particle.Field (FieldState)
 import Magic.Space
@@ -297,7 +315,46 @@ sampledBuffer spell =
         _ ->
           let slots = aliveSlotIndices (asSpell spell) t
               (dx, dy, dz) = Field.displacementColumns (asField spell) slots
-           in displaceBuffer sampled dx dy dz
+              displaced = displaceBuffer sampled dx dy dz
+           in if hasVelocity sampled
+                then
+                  let (vx, vy, vz) = Field.velocityColumns (asField spell) slots
+                   in addVelocity displaced vx vy vz
+                else displaced
+
+-- | Add the force-field layer's integrated velocity onto the analytic one
+-- (func-spec 0023 S2), column by column and row for row — the velocity
+-- counterpart of 'displaceBuffer', aligned through the same
+-- 'aliveSlotIndices' enumeration.
+--
+-- __Why this is the right sum, and not an approximation of one.__ The
+-- rendered position is @analyticPos + disp@ (ADR-0010 D1), so its rate of
+-- change is the sum of the two rates. The analytic rate is differenced
+-- over 'Magic.Particle.Analytic.velocityStep'. The field rate is
+-- 'Magic.Particle.Field.velocityColumns', which /is/ the difference
+-- quotient of the displacement: 'Magic.Particle.Field.stepSlot'
+-- integrates @disp' = disp + dt·vel'@, so @(disp' − disp) \/ dt == vel'@
+-- exactly, for every field and every step.
+--
+-- A closed-form @renderedPos (age − h)@ does not exist to be differenced
+-- instead: a displacement is an integration history, not a function of
+-- age, and the system's only cross-frame state is the one being read here
+-- (func-spec 0023 §10 records the deviation from the spec's single-formula
+-- wording).
+--
+-- Only reached when the buffer has velocity at all, so a fieldless or
+-- trail-free spell never pays for it.
+addVelocity
+  :: ParticleBuffer -> U.Vector Float -> U.Vector Float -> U.Vector Float -> ParticleBuffer
+addVelocity buffer vx vy vz =
+  buffer
+    { pbVelX = add (pbVelX buffer) vx
+    , pbVelY = add (pbVelY buffer) vy
+    , pbVelZ = add (pbVelZ buffer) vz
+    }
+  where
+    add col d =
+      U.imap (\i v -> v + (if i < U.length d then U.unsafeIndex d i else 0)) col
 
 -- | Cut the sampled buffer into render batches: adjacent emitters with
 -- the same @(appBlend, appShape)@ merge into one batch, in emitter order
@@ -339,8 +396,13 @@ splitBatches compiled t buffer =
         grouped
         (scanl (+) 0 (map snd grouped))
 
--- | One contiguous row window of the buffer, as a buffer: each of the six
--- columns sliced in place (no copy), the count the window's length.
+-- | One contiguous row window of the buffer, as a buffer: each column
+-- sliced in place (no copy), the count the window's length.
+--
+-- The velocity columns (func-spec 0023) are sliced only when they exist:
+-- an absent one stays absent, so a batch of a velocity-free spell is
+-- still a six-column buffer and 'Magic.Particle.Buffer.bufferInvariant'
+-- holds on every slice as it does on the whole.
 sliceBuffer :: Int -> Int -> ParticleBuffer -> ParticleBuffer
 sliceBuffer offset len pb =
   ParticleBuffer
@@ -350,11 +412,18 @@ sliceBuffer offset len pb =
     , pbSize = cut (pbSize pb)
     , pbLife = cut (pbLife pb)
     , pbColor = cut (pbColor pb)
+    , pbVelX = cutVel (pbVelX pb)
+    , pbVelY = cutVel (pbVelY pb)
+    , pbVelZ = cutVel (pbVelZ pb)
     , pbCount = len
     }
   where
     cut :: (U.Unbox a) => U.Vector a -> U.Vector a
     cut = U.slice offset len
+
+    cutVel v
+      | U.null v = v
+      | otherwise = cut v
 
 -- | Add one displacement column per position column. Row count, sizes,
 -- life fractions and colors are untouched, so the

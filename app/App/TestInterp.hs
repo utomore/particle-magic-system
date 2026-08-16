@@ -23,7 +23,9 @@ import qualified Data.Map.Strict as M
 import Effectful (Eff)
 import Effectful.Dispatch.Dynamic (localSeqUnlift, reinterpret)
 import Effectful.State.Static.Local (evalState, get, put, runState, state)
-import Magic.Interface (BlendMode, RenderBatch (..), pbCount)
+import Magic.Interface (BillboardShape, BlendMode, RenderBatch (..), pbCount)
+
+import App.Render.Post (FramePlan, VisualSettings, framePlan)
 
 import App.Effects
   ( Clock (..)
@@ -126,6 +128,14 @@ data HeadlessLog = HeadlessLog
   -- ^ @(plane, blend, particle count)@ summary of every batch handed to
   -- 'DrawFlat', in order. A run that never toggles the backend leaves
   -- this empty — a free regression sentinel for the 3D path.
+  , hlFrames3D :: ![(VisualSettings, FramePlan, [(BlendMode, BillboardShape, Int)])]
+  -- ^ Every 'DrawFrame': the settings it was given, the plan those
+  -- settings produce, and a summary of the batches (func-spec 0023 S5).
+  --
+  -- The plan is recomputed here rather than carried by the operation,
+  -- which is deliberate: the IO interpreter derives it from the settings
+  -- too, so what a headless test asserts about is the same function the
+  -- window runs, not a description that could drift from it.
   }
   deriving (Eq, Show)
 
@@ -175,6 +185,24 @@ runRaylibHeadlessWith inputs frameLimit =
             , hcFlats = reverse (map (summarizeFlat (fvPlane fv)) batches) ++ hcFlats h
             }
         )
+    DrawFrame _ settings batches ->
+      state $ \h ->
+        ( ()
+        , h
+            { hcDraws = hcDraws h + length batches
+            , -- 'DrawFrame' IS the 3D scene draw (func-spec 0023 S5): it
+              -- supersedes 'DrawScene' in the loop the way 'DrawScene'
+              -- superseded 'DrawBatch', so it feeds the same log. That is
+              -- not bookkeeping convenience — it is how the zero-ripple
+              -- law is stated. Every assertion written since func-spec
+              -- 0001 about what reaches the 3D path keeps holding
+              -- verbatim, and the effects show up as /extra/ detail in
+              -- 'hcFrames3D' rather than as a different draw.
+              hcScenes = reverse (map summarize batches) ++ hcScenes h
+            , hcFrames3D =
+                (settings, framePlan settings, map summarize3D batches) : hcFrames3D h
+            }
+        )
     DrawHud view ->
       state (\h -> ((), h {hcHuds = view : hcHuds h}))
     PollInput ->
@@ -184,6 +212,10 @@ runRaylibHeadlessWith inputs frameLimit =
   where
     summarize b = (rbBlend b, pbCount (rbParticles b))
     summarizeFlat plane b = (plane, rbBlend b, pbCount (rbParticles b))
+    -- The 3D summary carries the shape as well, because func-spec 0023
+    -- is the first round in which the shape changes what is /drawn/ and
+    -- not only which texture is bound.
+    summarize3D b = (rbBlend b, rbShape b, pbCount (rbParticles b))
     initial =
       HeadlessCount
         { hcFrames = 0
@@ -192,6 +224,7 @@ runRaylibHeadlessWith inputs frameLimit =
         , hcScenes = []
         , hcHuds = []
         , hcFlats = []
+        , hcFrames3D = []
         , hcInputs = inputs
         , hcWindow = (1280, 720)
         }
@@ -203,6 +236,7 @@ runRaylibHeadlessWith inputs frameLimit =
           , hlScenes = reverse (hcScenes h)
           , hlHuds = reverse (hcHuds h)
           , hlFlats = reverse (hcFlats h)
+          , hlFrames3D = reverse (hcFrames3D h)
           }
       )
 
@@ -214,6 +248,7 @@ data HeadlessCount = HeadlessCount
   , hcScenes :: ![(BlendMode, Int)]
   , hcHuds :: ![HudView]
   , hcFlats :: ![(ViewPlane, BlendMode, Int)]
+  , hcFrames3D :: ![(VisualSettings, FramePlan, [(BlendMode, BillboardShape, Int)])]
   , hcInputs :: ![DemoInput]
   , hcWindow :: !(Int, Int)
   -- ^ Size the loop opened its window at; what 'WindowSize' answers,

@@ -72,8 +72,9 @@ spec = describe "docs/spell-schema.md covers schema v1 (func-spec 0014 §1.3)" $
     names <- exampleNames
     -- 10 examples at func-spec 0014's delivery; soft-bloom.json joins in
     -- func-spec 0015, lattice-seal.json in 0016, wuxing-seal.json plus
-    -- yin-yang.json in 0021, and twin-lance.json in 0025.
-    length names `shouldBe` 15
+    -- yin-yang.json in 0021, twin-lance.json in 0025, and
+    -- comet-trail.json in 0023.
+    length names `shouldBe` 16
     [n | n <- names, not (n `isInfixOf` doc)] `shouldBe` []
 
   it "tells the author how to check a file" $ do

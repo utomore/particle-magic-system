@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "name": "comet-trail",
+  "circle": {
+    "fields": [
+      { "kind": "gravity", "accel": [0, -2.0, 0] },
+      { "kind": "vortex", "center": [0, 0, 0], "axis": [0, 0, 1], "strength": 3.0, "falloff": 0.4 }
+    ],
+    "outer": [
+      { "rune": "shape", "shape": { "kind": "ring", "rInner": 0.35, "rOuter": 0.7 } },
+      { "rune": "style", "billboard": "trail" }
+    ],
+    "inner": [
+      { "rune": "trajectory", "kind": "forward", "speed": 6.0 },
+      { "rune": "timing", "delay": 0.0, "duration": 4.0, "lifetime": 1.6 }
+    ],
+    "core": {
+      "center": { "element": "fire", "power": 1.8 },
+      "nodes": { "north": null, "south": null, "east": null, "west": null }
+    },
+    "phases": { "draw": 0.8, "converge": 0.4 }
+  }
+}

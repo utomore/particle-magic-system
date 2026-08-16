@@ -12,6 +12,7 @@ import Magic.Projection (ViewPlane (..))
 
 import App.Camera (Orbit (..), toOrbit)
 import App.Effects (FlatView (..), HudView (..), ReloadStatus (..), ViewMode (..))
+import App.Render.Post (VisualSettings (..))
 
 -- | One string per HUD line. A failed load contributes its full error
 -- text, expanded so embedded newlines (JSON path + parse position from
@@ -24,11 +25,31 @@ formatHud v =
   , printf "age: %.2fs" (hvSpellAge v)
   , "view: " ++ viewLabel (hvView v)
   , steerLine v
+  , effectsLine (hvVisual v)
   ]
     ++ reloadLines (hvReload v)
     ++ [ "[<-] [->] switch spell   [R] recast   [Tab] 2D/3D   [V] plane   [T] depth tint"
+       , "[1] trails   [2] bloom   [3] soft particles   [4] test scene"
        , "[drag] orbit / pan   [wheel] zoom"
        ]
+
+-- | Which of func-spec 0023's effects are on.
+--
+-- All four are always listed, on or off, rather than only the active
+-- ones: the line is what a viewer reads while judging whether an effect
+-- earns its cost, and a list that changes length as things are toggled is
+-- harder to compare between two screenshots than one that does not.
+effectsLine :: VisualSettings -> String
+effectsLine settings =
+  "fx: "
+    ++ unwords
+      [ label "trail" (vsTrails settings)
+      , label "bloom" (vsBloom settings)
+      , label "soft" (vsSoftParticles settings)
+      , label "scene" (vsScene settings)
+      ]
+  where
+    label name on = name ++ if on then "+" else "-"
 
 -- | How the current backend reads on screen (func-spec 0008 §4.4).
 viewLabel :: ViewMode -> String

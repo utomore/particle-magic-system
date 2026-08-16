@@ -13,7 +13,7 @@ related-spec: []
 
 # 粒子魔法系統 — 系統架構設計書
 
-> 版本：1.1（2026-08-13：對齊 spec 0001–0005 交付現實——§4.3/§5.1 Expr 合約更正、§5.3 函數清單、§7/§9.2 渲染路線改依 ADR-0009、型別落點註記；語意設計不變）
+> 版本：1.2（2026-08-16：spec 0023 的收尾修訂——§4.5 `ParticleBuffer` 更新為九欄並說明 opt-in 不變量、§5.2 的「輸出零 raylib 型別」保證加註被正面檢驗並維持、§7「明確不做」補上軟粒子／後處理的邊界修訂（三項永久非目標一字不動）、§11 第 3 列補上加欄的方式與實測代價、§12 補 ADR 0017／0018／0019 三列。語意設計不變）；1.1（2026-08-13：對齊 spec 0001–0005 交付現實——§4.3/§5.1 Expr 合約更正、§5.3 函數清單、§7/§9.2 渲染路線改依 ADR-0009、型別落點註記；語意設計不變）
 > 狀態：設計定案（POC 實作中）
 > 相關文件：[Init.md](../Init.md)（原始需求）、[ADR 索引](#12-adr-索引)
 
@@ -304,11 +304,15 @@ data ParticleBuffer = ParticleBuffer
   { pbPosX, pbPosY, pbPosZ :: !(U.Vector Float)   -- Structure of Arrays
   , pbSize, pbLife         :: !(U.Vector Float)
   , pbColor                :: !(U.Vector Word32)  -- RGBA packed
+  -- 速度（spec 0023／ADR-0018 D2）：opt-in，空向量 = 這個法術不需要
+  , pbVelX, pbVelY, pbVelZ :: !(U.Vector Float)
   , pbCount                :: !Int
   }
 ```
 
 SoA + `Data.Vector.Unboxed`：無指標追蹤、快取友善、GC 只見少數大型 pinned 區塊而非十萬個小物件；且 `pbPos*` 可直接以連續記憶體餵給 raylib 的 instanced rendering（§7）。
+
+**九欄，且第七至九欄是 opt-in**（spec 0023）：只有含 `BillboardTrail` 的魔法會算速度，其餘留空向量，`sample` 在進迴圈前選一次建構子而非逐粒子分支——成本與加寬前完全相同（實測見 0023 §9.3）。不變量因此多一條：每個速度欄的長度要嘛 0、要嘛 `pbCount`，且三欄同步；消費者問一次 `hasVelocity` 就夠，不必各自防禦。前六欄的名稱、型別、順序、語意自 spec 0001 起**逐位元未變**。
 
 ### 4.6 混合粒子模型的每幀函數
 
@@ -408,7 +412,11 @@ data RenderBatch = RenderBatch
 
 ### 5.2 輸出格式：RenderBatch 串流
 
-每幀輸出 `[RenderBatch]`：粒子位置為抽象 3D 座標的 SoA 緩衝＋混合模式＋billboard 形狀。**輸出不含任何 raylib 型別**——這是渲染後端可替換性的保證。宿主（遊戲）的責任：
+每幀輸出 `[RenderBatch]`：粒子位置為抽象 3D 座標的 SoA 緩衝＋混合模式＋billboard 形狀。**輸出不含任何 raylib 型別**——這是渲染後端可替換性的保證。
+
+> 這條保證在 spec 0023 被**正面檢驗過並且維持**：那一輪讓自訂 shader、RenderTexture、bloom 鏈與軟粒子全部進場，但**全部住在殼層 `app/*`**，`FrameOutput`／`RenderBatch`／`ParticleBuffer` 一個 raylib 型別都沒多。緩衝多了三欄浮點數（速度），**那是資料不是渲染**——C ABI 宿主拿到速度之後要不要做拖尾、用哪個圖形 API，完全是宿主的事，庫不提供 shader 也不假設。ADR-0018 取代的是 ADR-0009 的「不自訂 shader」前提，不是這條保證。
+
+宿主（遊戲）的責任：
 
 1. 把 `RenderBatch` 交給投影後端（3D 透視 / 2D 正交）。
 2. 依 `BlendMode` 設定管線狀態，整批繪製（渲染路徑見 ADR-0009：動態 quad mesh，draw call 數 = batch 數）。
@@ -500,7 +508,11 @@ void     pm_free(PmSpell*);
 | **平行取樣**（0022 追加） | 取樣工作按「發射器 × 索引區間」切成分片，以純 Strategies 平行求值後定序串接；決定論由切分方式結構性保證（律 2，ADR-0017 D2） | ✅ 0022 S4。粒子數 ≥ `parallelThreshold`（8192，實測選定）才走此路。同機（8 核 16 緒）實測 16384 粒 **1.4–1.5×**、100k 粒 **3.9×**；閾值以下平行較慢，故不走 |
 | **per-emitter 提升**（0010 追加） | 位置公式中不隨粒子改變的部分（施法者座標系、世界座標錨點、面法線與其平面基底、節點漂移）每發射器每幀算一次，而非每粒子算一次 | ✅ 0010 S2。**這一步就是本輪一半以上的加速**（`observeSpell@4096` 471 → 195 µs）——原本每顆粒子要重算 4 次 `normalize`＋2 次 `basisFromNormal` |
 
-**明確不做**（POC 範圍外）：GPU compute/transform feedback、粒子間碰撞、空間分割結構。力場層僅支援「場對粒子」（重力、吸引、渦流），不支援「粒子對粒子」。
+**明確不做**（POC 範圍外）：GPU compute/transform feedback、粒子間碰撞、空間分割結構。力場層僅支援「場對粒子」（重力、吸引、渦流），不支援「粒子對粒子」。**這三項在 spec 0023 之後仍是永久非目標**，一字未鬆動。
+
+> **spec 0023 的修訂（2026-08-16）**：軟粒子與後處理**從來不在上面那份清單裡**，但 ADR-0009 的「不自訂 shader」前提實質上禁止了它們——這是一條沒有被寫進 §7 卻真實存在的邊界。ADR-0018 取代該前提之後，兩者**已交付**（bloom 三 pass 鏈、深度取樣的軟粒子），連同速度驅動的拖尾與跨 batch 深度交錯。所有 shader 資產與後處理都住殼層，§5.2 的保證不受影響。
+>
+> 界線因此要說清楚：**「渲染細節不進庫」仍是永久原則**，變的只是「殼層能不能用 shader」。玩家在 JSON 裡寫 GLSL 是**永久非目標**（會把 GPU API 帶進輸入合約，破壞 ADR-0005 的可攜性）；HDR 管線與色調映射記帳於 0023 §8-5，屬另一輪而非非目標。
 
 **力場層的成本模型**（spec 0007 交付後）：帶場的魔法每個**固定步**（非每幀）要對存活的 Casting 槽位重算解析基準位置並積分，成本 O(存活 Casting 粒子)×每步；上限由 `Magic.Step.plan` 的 maxSteps clamp 保護。零場的魔法**結構性跳過**整層（ADR-0010 D9），成本與力場層不存在時完全相同——0010 §9.2 量到零場 `advanceSpell` 為 ~1.1 ns／步，這條快路徑實質免費。`FieldState` 已於 spec 0010 S4 改為攤平 unboxed 欄（**表徵仍不凍結**，spec 0007 §4.7 照舊）；帶場成本實測 ≈ 38 ns／槽·步，其中主成本是每步重算一次解析基準位置（`fieldInputs`），不是積分本身。
 
@@ -545,7 +557,7 @@ void     pm_free(PmSpell*);
 |---|---|---|
 | **槽位職責語意**（外圈=展現、內圈=行為…） | 這是 ADR-0003 的核心決策。改變某層的職責＝所有既存 JSON 魔法陣的**語意**改變，即使格式沒變。這是語意層的破壞，schema 版本號救不了 | 職責定義寫進本文件與 ADR 作為合約；真要改，視同重新設計符文系統 |
 | **環層數結構**（外2/夾1/內2/核心） | `Circle` 型別與 JSON schema、陣形幾何、解釋器 fold 順序都依賴此結構 | 若未來要可變層數，`TwoOf` 需換成帶長度約束的向量並遷移 schema——當作大版本處理 |
-| **SoA 緩衝欄位佈局** | `ParticleBuffer` 欄位被熱路徑、FFI 傳遞、渲染後端三方依賴；加欄位＝三處同步改 | 欄位增減集中在單一模組；用 pattern synonym/record 輔助函數隔離直接欄位存取 |
+| **SoA 緩衝欄位佈局** | `ParticleBuffer` 欄位被熱路徑、FFI 傳遞、渲染後端三方依賴；加欄位＝三處同步改 | 欄位增減集中在單一模組；用 pattern synonym/record 輔助函數隔離直接欄位存取。**spec 0023 第一次真的加了欄**（六 → 九，速度），走出一條可重複的路：熱路徑用 **opt-in ＋ 進迴圈前選建構子**（不是逐粒子分支）、把「空或滿、絕不半滿」寫進 `bufferInvariant`、FFI 與邊界層一律**加新函數不動舊簽名**（`pm_observe_ex`／`fromColumnsWithVelocity`）。**實測代價**：無新欄的取樣沒有變慢（同機對照交付前 build，實測反而快約 1.6×，是 opt-in hook 的 `INLINE` 重構帶來的，輸出逐位元不變）；真的要速度的魔法付 2.3×，那是有限差分的定義代價。**但書**：這不表示以後加欄變便宜——上述每一處都要重付，而 0023 有一半是運氣（速度欄同時結清了 ADR-0013 D1 那筆欠款）。詳見 ADR-0006 文末與 ADR-0018 D2 |
 | **Expr 的破壞性變更**（改變既有運算子語意、變數重新命名） | 玩家寫的式子存在 JSON 裡；語意變更會靜默改變舊魔法的行為 | 只加不改；真要改走 schema 版本＋`migrate` 重寫 AST |
 | **`hashCircle` 摘要函數**（ADR-0014 D3） | 摘要決定符文陣的長相，玩家以外觀辨識法術。改摘要＝**靜默改變每一個法術的長相**，與上一列同級；浮點必須以位元進入摘要，否則同一份 JSON 在不同平台畫出不同的陣 | 交付即凍結；`emptyCircle` 的摘要值在測試裡當哨兵。真要改視同重新設計視覺辨識，需盤點所有既存法術 |
 | **固定時步假設** | 力場層的確定性與重播依賴固定 `dt`；改成可變時步會破壞重播與測試基準 | 視為系統公理。渲染幀率與模擬時步以 accumulator 解耦，模擬永遠固定步 |
@@ -563,11 +575,14 @@ void     pm_free(PmSpell*);
 | [ADR-0006](adr/adr-0006-soa-unboxed-buffer.md) | SoA + Unboxed Vector 粒子緩衝 |
 | [ADR-0007](adr/adr-0007-effectful-boundary.md) | effectful 效果邊界，核心零 IO |
 | [ADR-0008](adr/adr-0008-dimension-agnostic-3d-first.md) | 維度無關核心，3D 優先投影 |
-| [ADR-0009](adr/adr-0009-dynamic-quad-mesh-rendering.md) | 渲染路徑採動態 quad mesh，不採 instancing |
+| [ADR-0009](adr/adr-0009-dynamic-quad-mesh-rendering.md) | 渲染路徑採動態 quad mesh，不採 instancing（其「不自訂 shader」前提已由 ADR-0018 取代；繪製路徑保留） |
 | [ADR-0010](adr/adr-0010-force-field-composition.md) | 力場層組合點語意：加法位移疊加、穩定槽位身分、熱重載歸零 |
 | [ADR-0011](adr/adr-0011-ffi-c-abi-boundary.md) | C ABI FFI 邊界：foreign-library、JSON 進、SoA copy-out、handle 生命週期 |
 | [ADR-0012](adr/adr-0012-multi-circle-scene.md) | 多陣合成與場景層配額 |
 | [ADR-0013](adr/adr-0013-billboard-vocabulary.md) | 告示板詞彙：無參數列舉、型別落點遷移、程序生成貼圖 |
 | [ADR-0014](adr/adr-0014-sigil-from-circle-hash.md) | 符文陣由魔法陣資料導出：摘要即合約、混合導出、逐位元豁免只到 Drawing／Converging（D5 已由 ADR-0015 取代） |
 | [ADR-0015](adr/adr-0015-sigil-persists-through-cast.md) | 陣駐留到法術結束：取消陣形收束、逐位元邊界收窄（D4 已由 ADR-0020 取代） |
+| [ADR-0017](adr/adr-0017-parallel-sampling-determinism.md) | 平行取樣的決定論：以純 Strategies 分片，切分方式結構性保證逐位元；核心依賴白名單 +`parallel` |
+| [ADR-0018](adr/adr-0018-custom-shader-and-columns.md) | 自訂 shader 進殼層（取代 ADR-0009 的「不自訂 shader」前提，繪製路徑保留）、SoA 六欄以「加欄＋新查詢」鬆綁為九欄、速度以固定步長有限差分定義、跨批交錯靠貼圖 atlas 的單次繪製 |
+| [ADR-0019](adr/adr-0019-spatial-summary-and-anchors.md) | 空間摘要是輸出不是模擬結構：貼合有向盒與佔用格網走查詢、格網框的可比較性律、多發動點的能量等分 |
 | [ADR-0020](adr/adr-0020-sigil-spin-bitexact-boundary.md) | 陣會自轉：逐位元邊界收窄至 `t = 0`、兩條零影響律（主效果／無 `phases`）、陣形 golden 改結構性斷言 |

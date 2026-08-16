@@ -27,9 +27,10 @@ import App.Render.Quads (QuadBatch (..))
 -- | Floats per quad in the position stream (4 vertices × xyz) and bytes
 -- per quad in the color stream (4 vertices × rgba) — the 'QuadBatch'
 -- invariants, named so the slicing arithmetic reads as what it is.
-posStride, colStride :: Int
+posStride, colStride, uvStride :: Int
 posStride = 12
 colStride = 16
+uvStride = 8
 
 -- | Split a batch into consecutive pieces of at most @cap@ quads each,
 -- in draw order.
@@ -50,6 +51,10 @@ chunkBatch cap batch
       QuadBatch
         { qbPositions = window posStride off k (qbPositions batch)
         , qbColors = window colStride off k (qbColors batch)
+        , -- Func-spec 0023 S9: two floats per vertex, so eight per quad —
+          -- sliced by the same window as the other two streams, since all
+          -- three are indexed by the quad.
+          qbTexcoords = window uvStride off k (qbTexcoords batch)
         , qbCount = k
         }
     -- take/drop rather than 'S.slice': a batch whose streams are shorter

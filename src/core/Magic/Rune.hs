@@ -73,6 +73,17 @@ data BillboardShape
     BillboardRing
   | -- | Four-pointed cross flare.
     BillboardSpark
+  | -- | Stretched along the particle's own velocity (func-spec 0023 S3).
+    --
+    -- Still parameterless, and that is the point. Func-spec 0015 wanted a
+    -- stretched billboard and could not have one: the stretch factor
+    -- looked like a per-batch parameter, and @batch_info@'s stride was
+    -- frozen at four ints with no room for a fifth (ADR-0013 D1). The
+    -- premise was wrong rather than the conclusion — a trail's direction
+    -- and length are properties of /one particle/, not of a batch — so
+    -- once the buffer carries velocity (func-spec 0023 S1) the shape needs
+    -- no parameter at all and @PM_BATCH_INFO_STRIDE@ never moves.
+    BillboardTrail
   deriving (Eq, Show, Enum, Bounded)
 
 -- | The drawn 2D face the spell is born on (face coordinates).

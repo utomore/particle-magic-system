@@ -125,6 +125,9 @@ executable particle-magic
                     , App.Render.Order
                     , App.Render.Chunk
                     , App.Render.Sprite
+                    , App.Render.Shader
+                    , App.Render.Post
+                    , App.Scene
                     , App.Hud
     build-depends:    base       ^>=4.22
                     , particle-magic:magic-boundary
@@ -339,6 +342,16 @@ test-suite spec
                     , ExprCodeWiringSpec
                     , ParallelSampleSpec
                     , ExampleHostSpec
+                    , BufferVelocitySpec
+                    , VelocitySampleSpec
+                    , TrailVocabSpec
+                    , FFIObserveExSpec
+                    , ShaderPipelineSpec
+                    , TrailQuadSpec
+                    , BloomSpec
+                    , SoftParticleSpec
+                    , CrossBatchOrderSpec
+                    , Acceptance23Spec
                     , App.Effects
                     , App.HotReload
                     , App.Loop
@@ -349,6 +362,9 @@ test-suite spec
                     , App.Render.Order
                     , App.Render.Chunk
                     , App.Render.Sprite
+                    , App.Render.Shader
+                    , App.Render.Post
+                    , App.Scene
                     , App.Hud
     build-depends:    base       ^>=4.22
                     , particle-magic:magic-core

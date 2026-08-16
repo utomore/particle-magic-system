@@ -65,6 +65,9 @@ module Magic.Compile
   , elementAppearance
   , spellBlend
 
+    -- * Trail opt-in (func-spec 0023 S2/S3)
+  , spellNeedsVelocity
+
     -- * Interval arithmetic over 'Expr' (internal; NOT part of the frozen
     -- surface). Exposed for "Magic.Space" alone, so the per-axis box of
     -- func-spec 0025 bounds a player formula with the /same/ code
@@ -516,6 +519,23 @@ spellBlend :: CompiledSpell -> BlendMode
 spellBlend spell = case V.toList (spellEmitters spell) of
   (em : _) -> appBlend (emAppearance em)
   [] -> BlendAlpha
+
+-- | Whether this spell's sampling has to produce velocity columns
+-- (func-spec 0023 S2): it does exactly when some emitter draws as a
+-- 'BillboardTrail', because that is the only shape whose geometry reads
+-- them.
+--
+-- Derived from 'spellEmitters' rather than stored as a field of
+-- 'CompiledSpell'. Two reasons, and both are about not adding a second
+-- source of truth: a stored flag could disagree with the emitters after
+-- 'compileMany' concatenates two spells, and the derivation is a walk
+-- over a handful of emitters once per frame, next to nothing beside the
+-- per-particle work it decides. The @Semigroup@ instance therefore needs
+-- no clause for it — @any@ over a concatenation is the disjunction of the
+-- parts, for free.
+spellNeedsVelocity :: CompiledSpell -> Bool
+spellNeedsVelocity =
+  V.any ((== BillboardTrail) . appShape . emAppearance) . spellEmitters
 
 -- Interpreter intermediate representations (internal, free to evolve) --------
 
