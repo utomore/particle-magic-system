@@ -2,9 +2,10 @@
 id: func-0012
 type: spec
 title: multi-circle-composition
+description: 多陣合成(Monoid CompiledSpell)與場景層全域配額,粒子上限依實測由 4096 提升到 16384。
 status: done
 created: 2026-08-14
-updated: 2026-08-15
+updated: 2026-08-16
 depends-on: [func-0010, func-0011]
 related-adr: [adr-0004, adr-0010, adr-0011, adr-0012]
 ---

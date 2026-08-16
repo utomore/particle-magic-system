@@ -2,9 +2,10 @@
 id: func-0016
 type: spec
 title: sigil-geometry
+description: 符文陣 —— 新核心模組 Magic.Sigil,陣形幾何由魔法陣的結構摘要導出,陣從霧變成被畫出來的線。
 status: done
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 depends-on: [func-0015]
 related-adr: [adr-0003, adr-0007, adr-0010, adr-0011, adr-0012, adr-0013, adr-0014]
 ---

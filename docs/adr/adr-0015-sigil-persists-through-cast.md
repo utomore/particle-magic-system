@@ -2,9 +2,10 @@
 id: adr-0015
 type: adr
 title: sigil-persists-through-cast
+description: 陣駐留到法術結束、取消陣形收束曲線,逐位元邊界隨之收窄。
 status: accepted
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 related-adr: [adr-0010, adr-0014]
 related-spec: [func-0017]
 ---

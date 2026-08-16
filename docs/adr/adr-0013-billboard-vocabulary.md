@@ -2,9 +2,10 @@
 id: adr-0013
 type: adr
 title: billboard-vocabulary
+description: 展現詞彙採無參數列舉、型別落點遷入核心,貼圖由 shell 程序生成。
 status: accepted
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 related-adr: [adr-0003, adr-0009, adr-0011]
 related-spec: [func-0015]
 ---

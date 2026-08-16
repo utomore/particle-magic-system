@@ -2,9 +2,10 @@
 id: func-0007
 type: spec
 title: force-field-layer
+description: 力場層落地 —— 系統第一個跨幀狀態,重力/吸引子/渦流三種場,零場的陣逐位元不變。
 status: done
 created: 2026-08-13
-updated: 2026-08-14
+updated: 2026-08-16
 depends-on: [func-0006]
 related-adr: [adr-0001, adr-0010]
 ---

@@ -2,9 +2,10 @@
 id: func-0021
 type: spec
 title: magic-vocabulary
+description: 魔法語彙擴張 —— 五行陰陽等四個 sum type 由 POC 值域擴到遊戲級,全部是加法。
 status: open
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 depends-on: [func-0020]
 related-adr: [adr-0003, adr-0005, adr-0010]
 ---

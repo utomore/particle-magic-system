@@ -2,9 +2,10 @@
 id: func-0002
 type: spec
 title: circle-interpreter
+description: 魔法陣從空殼變成真語意 —— Circle 結構、參數層符文、由內而外解釋器、完整槽位 JSON schema。
 status: done
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-16
 depends-on: [func-0001]
 related-adr: [adr-0002, adr-0003, adr-0005]
 ---

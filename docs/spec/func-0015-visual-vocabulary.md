@@ -2,9 +2,10 @@
 id: func-0015
 type: spec
 title: visual-vocabulary
+description: 展現詞彙與多批次輸出 —— 依 blend 與 shape 分批、四種 billboard 形態、外圈 StyleRune。
 status: done
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 depends-on: [func-0012]
 related-adr: [adr-0003, adr-0009, adr-0010, adr-0011, adr-0012, adr-0013]
 ---

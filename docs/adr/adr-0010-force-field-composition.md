@@ -2,9 +2,10 @@
 id: adr-0010
 type: adr
 title: force-field-composition
+description: 力場的組合點語意、跨幀粒子身分如何穩定,以及熱重載時場狀態的政策。
 status: accepted
 created: 2026-08-13
-updated: 2026-08-13
+updated: 2026-08-16
 related-adr: [adr-0001, adr-0003]
 related-spec: [func-0007]
 ---

@@ -2,9 +2,10 @@
 id: func-0024
 type: spec
 title: authoring-tools-2
+description: 作者工具第二輪 —— 機器可讀 JSON Schema、結構檢視器、demo 內即時參數面板。
 status: open
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 depends-on: [func-0023]
 related-adr: [adr-0005]
 ---

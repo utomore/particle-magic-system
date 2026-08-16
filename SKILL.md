@@ -25,6 +25,7 @@ spec／bugfix／enhance／adr／report 五類文件的**第一行必須**是 YAM
 id: func-0003            # func-NNNN | bug-NNNN | enhance-<date>-<slug> | adr-NNNN | report-<date>-<slug>
 type: spec               # spec | bug | enhance | adr | report
 title: expr-subsystem    # 檔名去掉編號前綴與副檔名的 slug
+description: Expr 數學式子系統本身 —— 封閉一階 AST、全函數求值器、megaparsec 文字語法、渲染器。
 status: open             # open | in-progress | done | closed；ADR 改用 proposed | accepted | superseded
 created: 2026-08-12
 updated: 2026-08-13
@@ -38,6 +39,7 @@ related-spec: []         # bug/enhance/adr 回鏈到 spec id
 
 - **檔名一律英文 kebab-case，內文一律繁體中文**；編號四位數遞增不重用（建檔前先掃該資料夾取最大編號 +1）；日期一律 `YYYY-MM-DD`。
 - 修改任何文檔內容時，同步更新 frontmatter 的 `updated`。
+- `description` 是**一行**繁中摘要：這份文件決定了什麼／交付了什麼，讓人不打開檔案就能從清單裡認出它。寫「做了什麼」而不是「屬於哪一類」。兩個機械限制來自掃描腳本——值裡**不得出現 `: `(冒號加空白)或 ` #`(空白加井號)**，前者不是合法的 YAML 純量、後者會被當成註解截掉；且 frontmatter 整段必須留在檔頭 2KB 內。
 - frontmatter 的 `status` 是**機器讀的真相**，文件開頭的中文狀態句（`設計中`／`設計定案，待實作`／`實作中`／`已完成`）是人讀的說明；兩者必須同時更新。對應關係：`設計中`／`設計定案，待實作` → `open`，`實作中` → `in-progress`，`已完成` → `done`，廢棄 → `closed`。
 - 狀態總覽：`node <dev-flow>/skills/code-audit/scripts/scan-status.mjs ./docs`（exit 0 = 全部 done/closed；exit 1 = 有未完成或缺 metadata）。
 

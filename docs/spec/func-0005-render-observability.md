@@ -2,9 +2,10 @@
 id: func-0005
 type: spec
 title: render-observability
+description: 渲染落實與觀測 —— 動態 quad mesh 單 draw call、blend 與 billboard 真正生效、HUD 與載入錯誤上屏。
 status: done
 created: 2026-08-13
-updated: 2026-08-13
+updated: 2026-08-16
 depends-on: [func-0001, func-0002, func-0003]
 related-adr: [adr-0005, adr-0007]
 ---

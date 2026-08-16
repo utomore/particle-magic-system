@@ -2,9 +2,10 @@
 id: func-0003
 type: spec
 title: expr-subsystem
+description: Expr 數學式子系統本身 —— 封閉一階 AST、全函數求值器、megaparsec 文字語法、渲染器。
 status: done
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-16
 depends-on: [func-0001]
 related-adr: [adr-0002, adr-0007]
 ---

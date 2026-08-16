@@ -2,9 +2,10 @@
 id: func-0022
 type: spec
 title: perf-second-tier
+description: 效能第二階梯 —— Expr bytecode、共同子式消去、平行取樣,以兩條逐位元等價律為驗收。
 status: open
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 depends-on: [func-0021]
 related-adr: [adr-0006, adr-0007, adr-0012, adr-0017]
 ---

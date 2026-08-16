@@ -2,9 +2,10 @@
 id: func-0009
 type: spec
 title: ffi-foreign-library
+description: C ABI 外殼 —— foreign-library 產 .dll/.so,pm_cast → pm_advance → pm_observe 的 handle 生命週期。
 status: done
 created: 2026-08-14
-updated: 2026-08-14
+updated: 2026-08-16
 depends-on: []
 related-adr: [adr-0005, adr-0006, adr-0007, adr-0011]
 ---

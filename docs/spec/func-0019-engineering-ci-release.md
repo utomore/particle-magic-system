@@ -2,6 +2,7 @@
 id: func-0019
 type: spec
 title: engineering-ci-release
+description: 工程化 —— GitHub Actions 兩平台矩陣、發布與相容性政策,以及 Linux 上的第一次實測。
 status: done
 created: 2026-08-15
 updated: 2026-08-16

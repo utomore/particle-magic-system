@@ -2,9 +2,10 @@
 id: adr-0011
 type: adr
 title: ffi-c-abi-boundary
+description: C ABI 邊界的形狀 —— foreign-library、JSON 進、SoA copy-out、handle 生命週期、跨界決定論。
 status: accepted
 created: 2026-08-14
-updated: 2026-08-14
+updated: 2026-08-16
 related-adr: [adr-0005, adr-0006, adr-0007, adr-0008]
 related-spec: [func-0009]
 ---
