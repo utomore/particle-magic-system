@@ -40,6 +40,7 @@ import Magic.Compile
   , Envelope (..)
   , Motion (..)
   , ParticleBudget (..)
+  , noEmitterCode
   , Phase (..)
   , PhasePlan (..)
   , SpawnPattern (..)
@@ -187,6 +188,10 @@ hugeSpell n =
               }
         , emAppearance = Appearance (ColorRamp 0xFFD966FF 0xE6390000) 0.05 BlendAdditive Nothing BillboardSquare
         , emPhase = Casting
+        -- func-spec 0022 S3: this fixture carries no formulas at all, so "no
+        -- bytecode compiled" is the accurate value rather than a shortcut --
+        -- there is nothing here for the sampler to run either way.
+        , emCode = noEmitterCode
         }
 
 allFinite :: ParticleBuffer -> Bool

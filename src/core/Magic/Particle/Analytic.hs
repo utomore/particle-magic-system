@@ -26,8 +26,28 @@
 -- force-field layer can compute base positions and align its
 -- displacements to buffer rows without ever copying either. @sample@
 -- itself is bit-for-bit unchanged (spec 0007 §4.4 proof obligation).
+--
+-- Func-spec 0022 adds two things, and neither of them moves a bit. The
+-- formula curves are evaluated from compiled bytecode
+-- ("Magic.Expr.Code") when 'Magic.Compile.compile' left some, and from the
+-- AST otherwise — law 1 says those are the same answer. And @sample@ grows
+-- a parallel path above 'parallelThreshold': the work is cut into 'Shard's
+-- and evaluated with "Control.Parallel.Strategies", a /pure/ API, so the
+-- module's signatures are untouched and ADR-0007 holds. Law 2 — the two
+-- paths agree bit for bit on any number of cores — follows from how
+-- 'shardsOf' cuts, not from luck; the argument is written out there.
 module Magic.Particle.Analytic
   ( sample
+
+    -- * Parallel sampling (func-spec 0022 S4, ADR-0017)
+  , sampleSequential
+  , sampleParallel
+  , parallelThreshold
+  , parallelChunk
+  , Shard (..)
+  , shardsOf
+  , spellShards
+  , sampleWindows
 
     -- * Single source of truth for the force-field layer (spec 0007 §4.4)
   , particlePosition
@@ -48,6 +68,7 @@ module Magic.Particle.Analytic
   ) where
 
 import Control.Monad.ST (ST)
+import Control.Parallel.Strategies (parMap, rdeepseq)
 import Data.Bits (shiftL, shiftR, (.&.), (.|.))
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
@@ -57,12 +78,19 @@ import Magic.Compile
   , Appearance (..)
   , ColorRamp (..)
   , CompiledSpell (..)
+  , EmitterCode (..)
   , EmitterSpec (..)
   , Envelope (..)
   , Motion (..)
   , SpawnPattern (..)
   )
-import Magic.Expr (ExprEnv (..), evalFinite, evalFiniteV3)
+import Magic.Expr (Expr, ExprEnv (..), ExprV3, evalFinite, evalFiniteV3)
+import Magic.Expr.Code
+  ( ExprCode
+  , ExprCodeV3
+  , evalCodeFinite
+  , evalCodeFiniteV3
+  )
 import Magic.Rune (FaceShape (..), RadiationMode (..), Trajectory (..))
 import Magic.Sigil (SigilStroke (..), sampleStroke, spinAngle)
 import Magic.Types
@@ -80,7 +108,7 @@ import Magic.Types
   , normalize
   , vscale
   )
-import Magic.Particle.Buffer (ParticleBuffer, WriteRow, buildBuffer, emptyBuffer)
+import Magic.Particle.Buffer (ParticleBuffer (..), WriteRow, buildBuffer, emptyBuffer)
 
 -- Envelope scheduling ---------------------------------------------------------
 
@@ -338,14 +366,49 @@ emitterOffsets spell =
 -- order are exactly what the pre-0010 @concatMap@ produced, and every
 -- floating-point operation per particle is the same one in the same
 -- order — the buffer is bit-for-bit what it always was.
+--
+-- Func-spec 0022 S4 adds a second path above 'parallelThreshold': the same
+-- work, cut into 'shardsOf' pieces and evaluated with
+-- "Control.Parallel.Strategies", then concatenated. __Law 2__ — the two
+-- paths agree bit for bit, on any number of cores — is not a hope but a
+-- consequence of how the cut is made; see 'shardsOf'.
 sample :: CompiledSpell -> CastContext -> Time -> ParticleBuffer
 sample spell ctx t@(Time seconds)
   | seconds < 0 = emptyBuffer
-  | otherwise = buildBuffer total fill
+  | windowRows windows < parallelThreshold = fillSequential spell ctx t windows
+  | otherwise = fillParallel spell ctx t windows
+  where
+    windows = sampleWindows spell t
+
+-- | The single-threaded path, forced. Exported so __law 2__ can be stated
+-- as an equation between the two paths at /any/ particle count, instead of
+-- only above 'parallelThreshold' where 'sample' would pick for itself.
+sampleSequential :: CompiledSpell -> CastContext -> Time -> ParticleBuffer
+sampleSequential spell ctx t@(Time seconds)
+  | seconds < 0 = emptyBuffer
+  | otherwise = fillSequential spell ctx t (sampleWindows spell t)
+
+-- | The sharded path, forced. See 'sampleSequential'.
+sampleParallel :: CompiledSpell -> CastContext -> Time -> ParticleBuffer
+sampleParallel spell ctx t@(Time seconds)
+  | seconds < 0 = emptyBuffer
+  | otherwise = fillParallel spell ctx t (sampleWindows spell t)
+
+-- | Each emitter's live index windows at @t@ (func-spec 0010 S3), computed
+-- once and shared by both paths — so "the two paths walk the same
+-- particles" is one computation rather than two agreeing ones.
+sampleWindows :: CompiledSpell -> Time -> V.Vector [(Int, Int)]
+sampleWindows spell t =
+  V.map (\em -> aliveRanges (emSpawn em) (emCount em) t) (spellEmitters spell)
+
+windowRows :: V.Vector [(Int, Int)] -> Int
+windowRows windows = sum [hi - lo | ws <- V.toList windows, (lo, hi) <- ws]
+
+fillSequential
+  :: CompiledSpell -> CastContext -> Time -> V.Vector [(Int, Int)] -> ParticleBuffer
+fillSequential spell ctx t windows = buildBuffer (windowRows windows) fill
   where
     ems = spellEmitters spell
-    windows = V.map (\em -> aliveRanges (emSpawn em) (emCount em) t) ems
-    total = sum [hi - lo | ws <- V.toList windows, (lo, hi) <- ws]
 
     fill :: WriteRow s -> ST s ()
     fill write = goEmitter 0 0
@@ -356,6 +419,120 @@ sample spell ctx t@(Time seconds)
               row' <- fillEmitter write ctx t (ems V.! e) (windows V.! e) row
               goEmitter row' (e + 1)
 
+fillParallel
+  :: CompiledSpell -> CastContext -> Time -> V.Vector [(Int, Int)] -> ParticleBuffer
+fillParallel spell ctx t windows =
+  concatBuffers (parMap rdeepseq shardBuffer (shardsFrom windows))
+  where
+    ems = spellEmitters spell
+    shardBuffer (Shard e ranges rows) =
+      buildBuffer rows $ \write -> () <$ fillEmitter write ctx t (ems V.! e) ranges 0
+
+-- | Every shard of a set of windows, in output order: emitter by emitter,
+-- and inside an emitter by ascending particle index.
+shardsFrom :: V.Vector [(Int, Int)] -> [Shard]
+shardsFrom windows = concat [shardsOf e (windows V.! e) | e <- [0 .. V.length windows - 1]]
+
+-- | The shards 'sample' would spread over cores for this spell at @t@.
+spellShards :: CompiledSpell -> Time -> [Shard]
+spellShards spell t = shardsFrom (sampleWindows spell t)
+
+-- | The minimum live-particle count that makes the parallel path worth its
+-- own overhead: below it 'sample' runs the func-spec 0010 single-pass fill,
+-- above it the sharded one.
+--
+-- This does /not/ affect law 2. Both paths produce the same bits; the
+-- threshold only chooses which one runs, and a spell that crosses it from
+-- one frame to the next does not flicker. Chosen by measurement, not by
+-- taste (func-spec 0022 §2.5, ADR-0017): the smallest power of two at which
+-- the sharded path is measurably faster on every core count measured, once
+-- it has paid for its concatenation pass and its sparks.
+--
+-- 8192 sits under 'Magic.Compile.budgetCap' (16384, func-spec 0012), so a
+-- spell at the cap does take this path and does get faster — measured at
+-- 1.4–1.5× on 2 to 16 cores, rising to 3.9× at the 100k the cap does not
+-- yet allow. Below 8192 the parallel path measured /slower/ on every core
+-- count, which is what the threshold is for.
+parallelThreshold :: Int
+parallelThreshold = 8192
+
+-- | Rows per shard. Small enough that a spell just past the threshold still
+-- has several shards to spread over cores, large enough that the per-shard
+-- buffer allocation and the final concatenation stay noise. Measured
+-- against 512 and 4096 at 8 cores; 4096 was clearly worse (too few shards
+-- to balance), 512 within noise.
+parallelChunk :: Int
+parallelChunk = 1024
+
+-- | One unit of parallel work: a contiguous run of output rows, all of them
+-- from a single emitter.
+data Shard = Shard
+  { shEmitter :: !Int
+  -- ^ Index into 'Magic.Compile.spellEmitters'.
+  , shRanges :: ![(Int, Int)]
+  -- ^ Half-open particle-index ranges, a sub-list of that emitter's
+  -- 'aliveRanges' with at most the first and last one split.
+  , shRows :: !Int
+  -- ^ Rows this shard writes; always @Σ (hi − lo)@ over 'shRanges'.
+  }
+  deriving (Eq, Show)
+
+-- | Cut one emitter's alive windows into shards of at most 'parallelChunk'
+-- rows. __This function is law 2's proof__, so it is worth saying exactly
+-- why (func-spec 0022 §2.4):
+--
+-- 1. /The boundaries are pure data./ The emitter order is
+--    'Magic.Compile.spellEmitters'; the windows are 'aliveRanges', decided
+--    in @O(log n)@ from the envelope; the chunking is a fixed arithmetic
+--    walk over them. Nothing here can see a thread, a core count or a
+--    schedule.
+-- 2. /The shards are independent./ A particle's position is a function of
+--    @(CastContext, Time, EmitterSpec, index)@ and of nothing else — the
+--    root property of an analytic model (architecture §1.3) — so no shard
+--    reads another shard's output.
+-- 3. /There is no cross-thread reduction./ Shard results are concatenated,
+--    never summed, averaged or merge-sorted. Floating-point addition is not
+--    associative, and this is the door that would have let that matter; the
+--    door is not there.
+-- 4. /The concatenation order is fixed./ It is the shard list's order,
+--    which is emitter order then ascending index — not completion order.
+--
+-- Together: any number of threads, any schedule, identical bits.
+shardsOf :: Int -> [(Int, Int)] -> [Shard]
+shardsOf e = go
+  where
+    go [] = []
+    go ranges =
+      let (taken, rows, rest) = takeRows parallelChunk ranges
+       in if rows <= 0 then [] else Shard e taken rows : go rest
+
+    -- Peel at most @budget@ rows off the front of the window list, splitting
+    -- a window if it straddles the boundary.
+    takeRows _ [] = ([], 0, [])
+    takeRows budget ((lo, hi) : rest)
+      | budget <= 0 = ([], 0, (lo, hi) : rest)
+      | hi - lo <= budget =
+          let (taken, rows, leftover) = takeRows (budget - (hi - lo)) rest
+           in ((lo, hi) : taken, (hi - lo) + rows, leftover)
+      | otherwise = ([(lo, lo + budget)], budget, (lo + budget, hi) : rest)
+
+-- | Lay the shard buffers end to end. The extra pass func-spec 0022 §2.4
+-- knowingly pays for: the 0010 sampler wrote its six columns exactly once,
+-- and this writes them twice. The trade is a bandwidth-bound copy against
+-- arithmetic that is now spread over every core — and it is the reason the
+-- threshold exists, since at small counts the copy is all there is.
+concatBuffers :: [ParticleBuffer] -> ParticleBuffer
+concatBuffers parts =
+  ParticleBuffer
+    { pbPosX = U.concat (map pbPosX parts)
+    , pbPosY = U.concat (map pbPosY parts)
+    , pbPosZ = U.concat (map pbPosZ parts)
+    , pbSize = U.concat (map pbSize parts)
+    , pbLife = U.concat (map pbLife parts)
+    , pbColor = U.concat (map pbColor parts)
+    , pbCount = sum (map pbCount parts)
+    }
+
 -- | Write one emitter's live particles, starting at buffer row @row0@;
 -- returns the next free row.
 fillEmitter
@@ -365,6 +542,7 @@ fillEmitter write ctx t em ranges row0 = goRange row0 ranges
     env = emSpawn em
     count = emCount em
     Appearance ramp size _blend mAmplify _shape = emAppearance em
+    amplifyCode = emcAmplify (emCode em)
     Seconds lifetime = envLifetime env
     -- Hoisted out of the per-particle loop (func-spec 0010 S2): the
     -- caster and face frames depend on the emitter, not on the particle,
@@ -388,7 +566,8 @@ fillEmitter write ctx t em ranges row0 = goRange row0 ranges
                 -- §4.5 (3) Amplify: negative curve values clamp to size 0.
                 finalSize = case mAmplify of
                   Nothing -> size
-                  Just amp -> size * max 0 (evalFinite amp (frameEnvFor ctx t em i ageD))
+                  Just amp ->
+                    size * max 0 (curveAt amplifyCode amp (frameEnvFor ctx t em i ageD))
             write
               row
               (positionIn frame ctx t em i ageD)
@@ -492,6 +671,11 @@ positionIn :: EmitterFrame -> CastContext -> Time -> EmitterSpec -> Int -> Doubl
 positionIn frame ctx t em i ageD = position
   where
     Motion spawnPattern trajectory radiation _drift mRange mConverge = emMotion em
+    -- The compiled form of the four formulas above (func-spec 0022 S3).
+    -- Every use goes through 'curveAt' / 'curveAtV3', so an emitter that
+    -- never went through 'Magic.Compile.compile' still samples — by the
+    -- reference evaluator, at the reference answer.
+    code = emCode em
     age = realToFrac ageD :: Float
     -- The modulation layer's clock: seconds since the cast started.
     Time tCast = t
@@ -510,7 +694,7 @@ positionIn frame ctx t em i ageD = position
 
     -- §4.5 (1) Range: scale the shape sample point. Not clamped
     -- (negative = mirrored); a no-op for SpawnAtAnchor (offset 0).
-    rangeScale = maybe 1 (`evalFinite` birthEnv) mRange
+    rangeScale = maybe 1 (\e -> curveAt (emcRange code) e birthEnv) mRange
     V2 sx sy = case spawnPattern of
       SpawnAtAnchor _ -> V2 0 0
       SpawnOnShape shape -> vscale2 rangeScale (sampleShape shape i 0)
@@ -560,7 +744,7 @@ positionIn frame ctx t em i ageD = position
     -- keep the 0002 phase-stagger path bit-for-bit.
     trajTerm = case trajectory of
       Formula v3 ->
-        let V3 fx fy fz = evalFiniteV3 v3 ageEnv
+        let V3 fx fy fz = curveAtV3 (emcTraject code) v3 ageEnv
          in vscale fx au + vscale fy aw + vscale fz axis
       _ ->
         let phase = case trajectory of
@@ -585,7 +769,7 @@ positionIn frame ctx t em i ageD = position
     position = case mConverge of
       Nothing -> rawPosition
       Just conv ->
-        let kc = evalFinite conv frameEnv
+        let kc = curveAt (emcConverge code) conv frameEnv
             r = rawPosition - anchorW
             axial = vscale (dot r axis) axis
             trans = r - axial
@@ -614,6 +798,24 @@ frameEnvFor ctx (Time seconds) em i ageD =
         , envPIndex = i
         , envSeed = seed ctx
         }
+
+-- | Evaluate a modulation curve (func-spec 0022 S3): the compiled bytecode
+-- when 'Magic.Compile.compile' left one, the AST otherwise.
+--
+-- The fallback is not a hedge against the bytecode being wrong — law 1 says
+-- the two answers are the same bits — it is what keeps a hand-built
+-- 'EmitterSpec' (a benchmark fixture, a test) samplable without every such
+-- caller having to compile its own formulas first. The only difference
+-- between the branches is speed.
+curveAt :: Maybe ExprCode -> Expr -> ExprEnv -> Float
+curveAt (Just c) _ env = evalCodeFinite c env
+curveAt Nothing e env = evalFinite e env
+{-# INLINE curveAt #-}
+
+curveAtV3 :: Maybe ExprCodeV3 -> ExprV3 -> ExprEnv -> V3
+curveAtV3 (Just c) _ env = evalCodeFiniteV3 c env
+curveAtV3 Nothing e env = evalFiniteV3 e env
+{-# INLINE curveAtV3 #-}
 
 vscale2 :: Float -> V2 -> V2
 vscale2 s (V2 x y) = V2 (s * x) (s * y)

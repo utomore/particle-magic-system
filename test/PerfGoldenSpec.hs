@@ -34,6 +34,8 @@ import Data.Word (Word32, Word64)
 import GHC.Float (castFloatToWord32)
 import GoldenPlatform (platformScopeNote, referencePlatform)
 import Magic.Codec (loadCircle)
+import Magic.Compile (budgetCap)
+import Magic.Particle.Analytic (parallelChunk, parallelThreshold)
 import Magic.Interface
   ( ActiveSpell
   , CastContext (..)
@@ -50,8 +52,9 @@ import Magic.Interface
   , castSpell
   , observeSpell
   )
-import Data.List (isSuffixOf, sort)
+import Data.List (isInfixOf, isSuffixOf, sort)
 import System.Directory (createDirectoryIfMissing, doesFileExist, listDirectory)
+import System.IO (IOMode (ReadMode), hGetContents, hSetEncoding, openFile, utf8)
 import Test.Hspec
 
 -- | Every shipped example, so no spell shape (fieldless, phased, formula
@@ -169,6 +172,39 @@ spec :: Spec
 spec = describe "pre-refactor golden net (func-spec 0010 §7 S1)" $ do
   mapM_ goldenExample examples
 
+  -- Func-spec 0022 S6. The round replaced the formula evaluator and added a
+  -- second sampling path, and the goldens above are unchanged — which is
+  -- the convention func-spec 0010 established and the strongest statement
+  -- either law can make: a performance change that moves a bit is not a
+  -- performance change, it is a bug.
+  --
+  -- The threshold itself is the one number in that round chosen by
+  -- measurement rather than derivation, so it is pinned here: positive, a
+  -- whole number of shards, and actually covered by the instrument that
+  -- picked it. A future round that edits the constant without re-running
+  -- the bench has to delete this test to do it.
+  describe "the parallel threshold is a measured number (func-spec 0022 S6)" $ do
+    it "is positive and a whole number of shards" $ do
+      parallelThreshold `shouldSatisfy` (> 0)
+      parallelChunk `shouldSatisfy` (> 0)
+      parallelThreshold `mod` parallelChunk `shouldBe` 0
+
+    -- And it is under the cap, so the round is not theoretical: a spell
+    -- that spends its whole budget crosses the threshold and takes the
+    -- faster path today, rather than waiting for a cap raise that has not
+    -- happened.
+    it "is below budgetCap, so a spell at its budget does take the parallel path" $
+      parallelThreshold `shouldSatisfy` (< budgetCap)
+
+    it "and the benchmark that chose it still measures both sides of it" $ do
+      benchSrc <- readUtf8 "bench/Bench.hs"
+      benchSrc `shouldSatisfy` ("parallelReport" `isInfixOf`)
+      benchSrc `shouldSatisfy` ("sampleSequential" `isInfixOf`)
+      benchSrc `shouldSatisfy` ("sampleParallel" `isInfixOf`)
+      -- The wall-clock harness, not tasty-bench: tasty-bench measures CPU
+      -- time, which rises rather than falls when work is spread over cores.
+      benchSrc `shouldSatisfy` ("getMonotonicTime" `isInfixOf`)
+
   -- Derived from the asset directory rather than counted by hand
   -- (func-spec 0021): a round that ships a new example must either put it
   -- in the net or say why, instead of quietly leaving it uncovered — which
@@ -228,3 +264,12 @@ goldenExample name = it (name ++ " renders the golden frames, " ++ law) $ do
     law
       | referencePlatform = "bit for bit"
       | otherwise = "particle counts only, off the reference platform"
+
+-- | The sources are UTF-8; 'readFile' would decode them in the machine's
+-- locale and fall over on Windows.
+readUtf8 :: FilePath -> IO String
+readUtf8 path = do
+  h <- openFile path ReadMode
+  hSetEncoding h utf8
+  contents <- hGetContents h
+  length contents `seq` pure contents
