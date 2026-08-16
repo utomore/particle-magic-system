@@ -14,6 +14,7 @@ EXPORTS
     pm_is_finished
     pm_age
     pm_observe
+    pm_observe_ex
     pm_free
     pm_max_particles
     pm_project

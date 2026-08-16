@@ -216,3 +216,4 @@ shapeWire BillboardSquare = 0
 shapeWire BillboardSoftDot = 1
 shapeWire BillboardRing = 2
 shapeWire BillboardSpark = 3
+shapeWire BillboardTrail = 4

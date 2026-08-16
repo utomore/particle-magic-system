@@ -144,8 +144,17 @@ extern "C" {
 #define PM_SHAPE_SOFT_DOT 1
 #define PM_SHAPE_RING 2
 #define PM_SHAPE_SPARK 3
+/* Stretched along each particle's own velocity. The stretch is NOT a
+   batch parameter -- there is no room for one and never will be, see
+   PM_BATCH_INFO_STRIDE -- it is derived per particle from the velocity
+   columns pm_observe_ex hands out. A host that wants trails must call
+   pm_observe_ex; one that calls pm_observe still gets these batches and
+   may draw them as PM_SHAPE_SQUARE, which is the pre-trail picture. */
+#define PM_SHAPE_TRAIL 4
 
-/* Ints per batch in the batch_info array: offset, count, blend, shape. */
+/* Ints per batch in the batch_info array: offset, count, blend, shape.
+   Frozen. A shape with parameters would need a wider stride, which is
+   exactly why no shape has parameters (ADR-0013, ADR-0018). */
 #define PM_BATCH_INFO_STRIDE 4
 
 /* An active spell. Opaque: created by pm_cast, released by pm_free. */
@@ -220,6 +229,37 @@ int pm_observe(PmSpell* spell,
                float* pos_x, float* pos_y, float* pos_z,
                float* size, float* life, uint32_t* color,
                int capacity, int* batch_info, int max_batches);
+
+/* pm_observe plus three velocity columns, in units per second.
+
+   Same batch semantics, same batch_info layout and stride, same
+   all-or-nothing capacity rule -- the two share one implementation. The
+   six original columns are bit-for-bit what pm_observe writes; pm_observe
+   IS this function with vel_x/vel_y/vel_z NULL, so an existing host needs
+   no recompile and sees no change whatsoever.
+
+   The three velocity pointers are optional and independent: pass NULL for
+   any you do not want. A spell whose circle contains no "trail" style
+   computes no velocity, and then a non-NULL column is filled with zeros
+   rather than reported as an error -- whether a given spell trails is the
+   spell's business, and the host's call should not have to change shape
+   because the player loaded a different circle.
+
+   Velocity is the backward difference of the particle's rendered position
+   over a fixed 1/240 s step, plus the force-field layer's own integrated
+   velocity where fields apply. It is therefore deterministic and frame
+   rate independent: the same spell trails identically at 30 and 240 fps.
+   A particle in its first 1/240 s is differenced one-sidedly from birth,
+   and one at exactly age 0 reports zero.
+
+   To draw a PM_SHAPE_TRAIL batch: stretch each particle's quad along its
+   velocity direction, by a length that grows with |v| -- and clamp that
+   length, or a fast particle will streak across the whole screen. */
+int pm_observe_ex(PmSpell* spell,
+                  float* pos_x, float* pos_y, float* pos_z,
+                  float* size, float* life, uint32_t* color,
+                  float* vel_x, float* vel_y, float* vel_z,
+                  int capacity, int* batch_info, int max_batches);
 
 /* Orthographic projection of `count` abstract-space positions onto
    PM_PLANE_*: plane coordinates into out_x / out_y, painter's depth into
