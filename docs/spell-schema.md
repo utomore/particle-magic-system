@@ -33,7 +33,7 @@ related-spec: [func-0014]
 | 夾層（1 層） | `bridge` | **調變** | 把內圈的行為再折彎一次 |
 | 外圈（2 層） | `outer` | **呈現** | 粒子從哪裡生出來、往哪個方向散 |
 
-再加上兩個**選配**的陣級設定：`phases`（生命週期分段：先畫陣、再收束、才施放）與 `fields`（力場：重力／吸引子／渦流）。
+再加上三個**選配**的陣級設定：`phases`（生命週期分段：先畫陣、再收束、才施放）、`fields`（力場：重力／吸引子／渦流）與 `anchors`（發動點：法術從哪幾個位置射出來）。
 
 順序不是慣例而是語意：內圈先決定行為 → 夾層調變它 → 外圈決定它從哪裡發散。同一圈的兩層若放了**同類**符文，索引 1（外層）覆蓋索引 0（內層）。
 
@@ -51,7 +51,8 @@ related-spec: [func-0014]
     "bridge": null,
     "inner":  [ /* 0~2 個符文，或 null */ ],
     "core":   { "center": null, "nodes": {} },
-    "fields": []
+    "fields": [],
+    "anchors": null
   }
 }
 ```
@@ -279,7 +280,7 @@ related-spec: [func-0014]
 
 ---
 
-## 8. 選配：`phases` 與 `fields`
+## 8. 選配：`phases`、`fields` 與 `anchors`
 
 ### 8.1 `phases`：生命週期分段（畫陣 → 收束 → 施放 → 消散）
 
@@ -316,6 +317,32 @@ related-spec: [func-0014]
 力場只作用於**施放階段**的粒子——畫陣階段的粒子要保持可讀，不被吹走。
 
 `gravity-well.json` 示範前三種；`wuxing-seal.json` 示範 `wind` 與 `turbulence`，`yin-yang.json` 示範 `spring`。
+
+### 8.3 `anchors`：發動點（法術從哪裡射出來）
+
+```json
+"anchors": [
+  { "offset": [ 0.6, 0, 0], "normal": [0, 0, 1] },
+  { "offset": [-0.6, 0, 0], "normal": [0, 0, 1] }
+]
+```
+
+不寫 `anchors`（或寫 `null`）＝ **一個發動點，在施法者正前方**——這是所有既有法術的行為，一個位元都沒變。寫了，就是一道法術**同時從好幾個地方射出來**。
+
+| 鍵 | 限制 | 說明 |
+|---|---|---|
+| `offset` | 3 個數字的陣列 `[x,y,z]` | 相對施法者的位置。座標是施法者面向的座標系：`x` = 右、`y` = 上、`z` = 正前方。 |
+| `normal` | **非零**的 `[x,y,z]` | 這個發動點的初始面法線，也就是「這道往哪裡射」。`[0,0,1]` = 正前方。 |
+
+三件要記得的事：
+
+1. **粒子是平分的，不是複製的**。兩個發動點＝同樣多的粒子分成兩束，不是兩倍粒子。想要更強請調 `core.center.power`；加發動點不是作弊路徑（多加也照樣撞粒子上限）。
+2. **陣只畫一次**。`phases` 畫出來的魔法陣在原點，不會跟著複製 N 份——發動點決定的是法術從哪裡出去，不是陣長什麼樣。
+3. **上限 16 個**，而且**空陣列 `[]` 是錯誤**（要「沒有」請整個鍵刪掉或寫 `null`）——因為 `[]` 到底是「沒有發動點」還是「用預設那個」，看檔案是猜不出來的。
+
+各發動點的符文與參數完全相同，只有位置與法線不同。想要「左手火、右手冰」，那是**兩張陣**，不是兩個發動點。
+
+`twin-lance.json` 是雙發動點的例子：兩道雷矛從身體兩側平行射出。
 
 ---
 
@@ -362,6 +389,9 @@ OK assets/spells/grand-sigil.json
 | `… must be > 0` / `… must be >= 0` | 參數超出值域（見上表的「限制」欄）。 |
 | `ring array has N layers; a ring holds at most 2` | `outer` 或 `inner` 放了超過 2 個元素。 |
 | `axis must be a non-zero vector` | 渦流的 `axis` 是 `[0,0,0]`。 |
+| `normal must be a non-zero vector` | 某個發動點的 `normal` 是 `[0,0,0]`，沒有面可以定。 |
+| `expected at least one activation point` | `anchors` 寫成 `[]`；要「沒有」請刪掉這個鍵或寫 `null`。 |
+| `too many activation points: N, the cap is 16` | `anchors` 超過 16 個。 |
 | `invalid formula: …` | 公式字串語法錯誤；訊息含行列與合法名稱清單。 |
 | `too many particles: this circle needs N, the cap is M` | `power` 太大。粒子數 = 256 × `power`。 |
 
@@ -397,6 +427,7 @@ OK assets/spells/grand-sigil.json
 | `grand-sigil.json` | `phases` + 全部槽位都有東西：畫陣階段會逐槽位畫筆畫。 |
 | `lattice-seal.json` | `phases` + 雷元素 + 四節點：另一組槽位組合畫出另一個符文陣。 |
 | `gravity-well.json` | `fields` 三種力場同時作用在施放階段的粒子上。 |
+| `twin-lance.json` | `anchors` 兩個發動點：同一道法術從身體兩側平行射出，粒子平分不加倍。 |
 
 **新語彙**
 

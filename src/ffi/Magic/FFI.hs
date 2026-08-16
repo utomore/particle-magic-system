@@ -58,6 +58,15 @@ module Magic.FFI
   , pm_scene_count
   , pm_scene_spells
 
+    -- * Spatial summary entry points (func-spec 0025; add-only)
+  , pm_spell_bounds
+  , pm_spell_box
+  , pm_emitter_count
+  , pm_emitter_box
+  , pm_occupancy
+  , pm_occupancy_mask
+  , pm_scene_spell_bounds
+
     -- * Contract constants (mirrored in @include\/particle_magic.h@,
     -- guarded by @test\/FFIContractSpec.hs@)
   , pmAbiVersion
@@ -68,6 +77,7 @@ module Magic.FFI
   , pmErrCapacity
   , pmErrArgs
   , pmErrQuota
+  , pmOccupancyDimDefault
   , pmPlaneSideXY
   , pmPlaneTopXZ
   , blendCode
@@ -94,7 +104,7 @@ import Foreign.C.String (CString)
 import Foreign.C.Types (CChar, CDouble (..), CFloat (..), CInt (..))
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Utils (copyBytes)
-import Foreign.Ptr (Ptr, castPtr, nullPtr)
+import Foreign.Ptr (Ptr, castPtr, nullPtr, plusPtr)
 import Foreign.StablePtr
   ( StablePtr
   , castPtrToStablePtr
@@ -119,6 +129,8 @@ import Magic.Interface
   , DeltaTime (..)
   , FrameInput (..)
   , FrameOutput (batches)
+  , OccupancyGrid (..)
+  , OrientedBox (..)
   , ParticleBuffer (pbColor, pbCount, pbLife, pbPosX, pbPosY, pbPosZ, pbSize)
   , RenderBatch (..)
   , Seed (..)
@@ -126,9 +138,16 @@ import Magic.Interface
   , V3 (..)
   , advanceSpell
   , castSpell
+  , emitterBoxOf
+  , emittersOf
   , isFinished
   , observeSpell
+  , occupancyDimDefault
+  , occupancyMask
+  , occupancyOf
   , spellAge
+  , spellBoundsOf
+  , spellBoxOf
   )
 import Magic.Projection (V2 (..), ViewPlane (..), depthOrder, orthographic)
 import Magic.Scene
@@ -140,6 +159,7 @@ import Magic.Scene
   , castInto
   , castManyInto
   , dismiss
+  , lookupSpell
   , newScene
   , observeScene
   , sceneBudget
@@ -210,6 +230,15 @@ refusalMessage = \case
       ++ " particles, "
       ++ show remaining
       ++ " left"
+
+-- | Mirror of the core's 'occupancyDimDefault' (func-spec 0025): the grid
+-- dimension whose @3³ = 27@ cells fit in the single @uint32_t@
+-- 'pm_occupancy_mask' returns. Pinned on both sides by
+-- @test\/FFIContractSpec.hs@ — a host's bit indices are compiled in, so
+-- this number moving would silently reinterpret every mask already
+-- deployed.
+pmOccupancyDimDefault :: CInt
+pmOccupancyDimDefault = fromIntegral occupancyDimDefault
 
 -- | Wire codes for 'ViewPlane', declaration order of the core's
 -- constructors — same convention as 'blendCode' (guarded by
@@ -800,6 +829,159 @@ pm_scene_spells h outIds maxIds =
           (zip [0 ..] ids)
         pure (fromIntegral n)
 
+-- Spatial summary (func-spec 0025) -------------------------------------------
+--
+-- Seven entry points that carry the system's third output across the ABI:
+-- where a spell is. Same rules as everything above — one frozen boundary
+-- function each, a type crossing, and no decision taken here
+-- (@test\/FFISpaceSpec.hs@ states that as an equivalence). Read-only in
+-- the strongest sense: none of them advances a clock or writes a cell
+-- back, so a host may call them between @pm_advance@ and @pm_observe@
+-- without changing one particle.
+
+foreign export ccall pm_spell_bounds
+  :: StablePtr SpellCell -> Ptr CFloat -> Ptr CFloat -> IO CInt
+
+-- | The whole spell's world axis-aligned box over its entire life, as two
+-- corners. 'pmOk', or 'pmErrArgs' (@NULL@ handle or @NULL@ output) with
+-- nothing written.
+pm_spell_bounds :: StablePtr SpellCell -> Ptr CFloat -> Ptr CFloat -> IO CInt
+pm_spell_bounds h outMin outMax
+  | outMin == nullPtr || outMax == nullPtr = pure pmErrArgs
+  | otherwise =
+      withCell h pmErrArgs $ \ref -> do
+        spell <- readIORef ref
+        let (lo, hi) = spellBoundsOf spell
+        pokeV3 outMin lo
+        pokeV3 outMax hi
+        pure pmOk
+
+foreign export ccall pm_spell_box
+  :: StablePtr SpellCell -> Ptr CFloat -> Ptr CFloat -> Ptr CFloat -> IO CInt
+
+-- | The whole spell as an oriented box over its entire life: center,
+-- three unit axes (3×3, row major — U, then V, then the normal) and three
+-- half-extents. This is also the frame 'pm_occupancy' divides up, and it
+-- does not change while the spell runs (func-spec 0025 §2.7).
+pm_spell_box
+  :: StablePtr SpellCell
+  -> Ptr CFloat
+  -- ^ out: center, 3 floats
+  -> Ptr CFloat
+  -- ^ out: axes, 9 floats
+  -> Ptr CFloat
+  -- ^ out: half-extents, 3 floats
+  -> IO CInt
+pm_spell_box h outCenter outAxes outHalf =
+  withCell h pmErrArgs $ \ref -> do
+    spell <- readIORef ref
+    writeBox (spellBoxOf spell) outCenter outAxes outHalf
+
+foreign export ccall pm_emitter_count :: StablePtr SpellCell -> IO CInt
+
+-- | How many emitters this spell compiled to — the index range
+-- 'pm_emitter_box' accepts. 0 for a @NULL@ handle.
+pm_emitter_count :: StablePtr SpellCell -> IO CInt
+pm_emitter_count h =
+  withCell h 0 $ \ref -> fromIntegral . length . emittersOf <$> readIORef ref
+
+foreign export ccall pm_emitter_box
+  :: StablePtr SpellCell -> CInt -> Ptr CFloat -> Ptr CFloat -> Ptr CFloat -> IO CInt
+
+-- | One emitter's fitted oriented box at the cast's current age, in the
+-- same layout as 'pm_spell_box'. An index outside
+-- @[0, pm_emitter_count)@ is 'pmErrArgs' with nothing written.
+pm_emitter_box
+  :: StablePtr SpellCell
+  -> CInt
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> IO CInt
+pm_emitter_box h index outCenter outAxes outHalf =
+  withCell h pmErrArgs $ \ref -> do
+    spell <- readIORef ref
+    let ems = emittersOf spell
+        i = fromIntegral index :: Int
+    if i < 0 || i >= length ems
+      then pure pmErrArgs
+      else writeBox (emitterBoxOf spell (ems !! i)) outCenter outAxes outHalf
+
+-- | The copy-out shared by the two box entry points: nothing is written
+-- until every output pointer has been checked, so the error path leaves
+-- the host's arrays untouched — the same all-or-nothing rule
+-- 'pm_observe' follows.
+writeBox :: OrientedBox -> Ptr CFloat -> Ptr CFloat -> Ptr CFloat -> IO CInt
+writeBox box outCenter outAxes outHalf
+  | outCenter == nullPtr || outAxes == nullPtr || outHalf == nullPtr = pure pmErrArgs
+  | otherwise = do
+      pokeV3 outCenter (obCenter box)
+      pokeV3 outAxes (obAxisU box)
+      pokeV3 (advanceFloats outAxes 3) (obAxisV box)
+      pokeV3 (advanceFloats outAxes 6) (obAxisN box)
+      pokeV3 outHalf (V3 (obHalfU box) (obHalfV box) (obHalfN box))
+      pure pmOk
+
+foreign export ccall pm_occupancy
+  :: StablePtr SpellCell -> CInt -> Ptr CInt -> CInt -> IO CInt
+
+-- | @dim³@ occupancy counts of the spell's currently live particles, in
+-- the fixed 'pm_spell_box' frame; cell @(k*dim + j)*dim + i@ counts the
+-- particles whose position falls in it, with @i@ along the box's U axis,
+-- @j@ along V and @k@ along the normal.
+--
+-- Returns the number of cells written, 'pmErrArgs' for a non-positive
+-- @dim@ or a @NULL@ handle, or 'pmErrCapacity' when @capacity < dim³@ —
+-- in which case __nothing is written at all__.
+pm_occupancy :: StablePtr SpellCell -> CInt -> Ptr CInt -> CInt -> IO CInt
+pm_occupancy h dim outCounts capacity
+  | dim <= 0 = pure pmErrArgs
+  | otherwise =
+      withCell h pmErrArgs $ \ref -> do
+        let n = fromIntegral dim :: Int
+            cells = n * n * n
+        if cells > fromIntegral capacity || outCounts == nullPtr
+          then pure pmErrCapacity
+          else do
+            spell <- readIORef ref
+            let counts = ogCounts (occupancyOf n spell)
+            U.imapM_ (\i c -> pokeElemOff outCounts i (fromIntegral c)) counts
+            pure (fromIntegral cells)
+
+foreign export ccall pm_occupancy_mask :: StablePtr SpellCell -> IO Word32
+
+-- | The @PM_OCCUPANCY_DIM_DEFAULT@ fast path: bit @c@ is set when cell
+-- @c@ of a @3³@ 'pm_occupancy' would be non-zero. 0 for a @NULL@ handle,
+-- which is also what an empty spell answers — "nothing anywhere" is the
+-- honest reading of both.
+pm_occupancy_mask :: StablePtr SpellCell -> IO Word32
+pm_occupancy_mask h = withCell h 0 $ \ref -> occupancyMask <$> readIORef ref
+
+foreign export ccall pm_scene_spell_bounds
+  :: StablePtr SceneCell -> CInt -> Ptr CFloat -> Ptr CFloat -> IO CInt
+
+-- | 'pm_spell_bounds' for one spell inside a scene: 'pm_scene_spells'
+-- hands out the ids, this hands out the boxes. An unknown id — stale,
+-- finished, never issued — is 'pmErrArgs' with nothing written.
+--
+-- There is deliberately no whole-scene union (func-spec 0025 §7-10):
+-- folding these is three lines in the host, and a scene-wide box is a
+-- number almost nothing can use.
+pm_scene_spell_bounds
+  :: StablePtr SceneCell -> CInt -> Ptr CFloat -> Ptr CFloat -> IO CInt
+pm_scene_spell_bounds h sid outMin outMax
+  | outMin == nullPtr || outMax == nullPtr = pure pmErrArgs
+  | otherwise =
+      withScene h pmErrArgs $ \ref -> do
+        scene <- readIORef ref
+        case lookupSpell (SpellId (fromIntegral sid)) scene of
+          Nothing -> pure pmErrArgs
+          Just spell -> do
+            let (lo, hi) = spellBoundsOf spell
+            pokeV3 outMin lo
+            pokeV3 outMax hi
+            pure pmOk
+
 -- Projection (func-spec 0011 §3) ---------------------------------------------
 --
 -- Two entry points that take no handle at all: projection is a function of
@@ -960,6 +1142,20 @@ peekV3 p
       y <- peekByteOff q 4
       z <- peekByteOff q 8
       pure (V3 x y z)
+
+-- | Three floats into a host-owned array, through the same cast pointer
+-- 'copyFloats' uses and for the same reason: @CFloat@ and @Float@ share a
+-- representation, so every bit pattern (infinities included — an
+-- unbounded formula's box legitimately has them) survives the crossing.
+pokeV3 :: Ptr CFloat -> V3 -> IO ()
+pokeV3 p (V3 x y z) = do
+  pokeFloat p 0 x
+  pokeFloat p 1 y
+  pokeFloat p 2 z
+
+-- | The same array, @n@ elements along.
+advanceFloats :: Ptr CFloat -> Int -> Ptr CFloat
+advanceFloats p n = castPtr (plusPtr (castPtr p :: Ptr Float) (n * 4))
 
 -- | Widening a host's @float@ dt to the core's @Double@ clock. Exact for
 -- every finite value (and for NaN\/infinities, which @realToFrac@ would

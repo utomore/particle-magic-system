@@ -57,6 +57,7 @@ library magic-core
                       Magic.Circle
                       Magic.Sigil
                       Magic.Compile
+                      Magic.Space
                       Magic.Particle.Analytic
                       Magic.Particle.Field
                       Magic.Project
@@ -301,6 +302,14 @@ test-suite spec
                     , VocabCodecSpec
                     , FlatReadabilitySpec
                     , Acceptance21Spec
+                    , SpaceExamples
+                    , SpaceBoundsSpec
+                    , OccupancySpec
+                    , AnchorCodecSpec
+                    , MultiAnchorSpec
+                    , SpaceInterfaceSpec
+                    , FFISpaceSpec
+                    , Acceptance25Spec
                     , App.Effects
                     , App.HotReload
                     , App.Loop

@@ -92,8 +92,8 @@ spec = do
       paths <- examplePaths
       -- 10 at func-spec 0014's delivery; soft-bloom.json joins in 0015,
       -- lattice-seal.json in 0016, wuxing-seal.json and yin-yang.json
-      -- in 0021.
-      length paths `shouldBe` 14
+      -- in 0021, twin-lance.json in 0025.
+      length paths `shouldBe` 15
       reports <- mapM reportFor paths
       [repPath r | r <- reports, isFail r] `shouldBe` []
       exitCodeFor reports `shouldBe` 0

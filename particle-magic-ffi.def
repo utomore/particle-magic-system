@@ -28,3 +28,10 @@ EXPORTS
     pm_scene_budget
     pm_scene_count
     pm_scene_spells
+    pm_spell_bounds
+    pm_spell_box
+    pm_emitter_count
+    pm_emitter_box
+    pm_occupancy
+    pm_occupancy_mask
+    pm_scene_spell_bounds

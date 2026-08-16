@@ -207,6 +207,36 @@ visibleEmitters ctx spell =
   ]
 ```
 
+#### 3.1.1 更緊的盒與佔用格網（func-spec 0025 新增）
+
+`emitterBounds` 的立方體很鬆——一道沿法線射出 8 units 的光束，X／Y 兩軸也被撐到 8。0025 補上一組**貼合**的查詢，全部同樣從 `Magic.Interface` 匯出、全部是純函數、全部 **opt-in**（不呼叫就零成本，`FrameOutput` 一個欄位都沒加）：
+
+```haskell
+emitterBoxOf  :: ActiveSpell -> EmitterSpec -> OrientedBox   -- 這個發射器「目前」到哪
+spellBoundsOf :: ActiveSpell -> (V3, V3)                     -- 整道法術「這輩子」的 AABB
+spellBoxOf    :: ActiveSpell -> OrientedBox                  -- 同上，有向盒
+occupancyOf   :: Int -> ActiveSpell -> OccupancyGrid          -- N³ 佔用計數
+occupancyMask :: ActiveSpell -> Word32                        -- N = 3 的快路徑
+
+data OrientedBox = OrientedBox
+  { obCenter :: V3
+  , obAxisU, obAxisV, obAxisN :: V3   -- 單位正交：面右、面上、面法線
+  , obHalfU, obHalfV, obHalfN :: Float
+  }
+```
+
+三件要知道的事：
+
+1. **有向盒比 AABB 緊得多**（實測各範例陣是 `emitterBounds` 體積的 1.5%–13%），因為行進距離只算進法線軸。你的碰撞層若只吃 AABB，用 `boxToAABB` 轉一次即可。
+2. **兩種時窗，刻意不同**：`emitterBoxOf` 用**當前年齡**（這一幀該不該剔除它），`spellBoundsOf`／`spellBoxOf` 用**整個生命週期**（這道法術會不會碰到那面牆）。後者因此在法術全程**不變**。
+3. **格網的框固定不動**（＝`spellBoxOf`）。第 5 格在第 10 幀和第 11 幀指的是同一塊空間，所以「粒子進入某區域」這種事件偵測才寫得出來。索引序是 `(k*N + j)*N + i`，`i` 沿 U、`j` 沿 V、`k` 沿法線。
+
+N = 3 時 27 格恰好塞進一個 `Word32`：`occupancyMask` 一次查詢就給你「哪些格子是活的」，broad phase 是一次 `popCount` 或位元 AND，零配置。
+
+這些查詢**只讀**：呼叫前後 `observeSpell` 的輸出逐位元相同。核心仍然不做視錐剔除也不做碰撞判定——它交的是資訊，判定是你的（ADR-0019）。
+
+成本誠實說：`occupancyOf` 是單趟 O(粒子數)，實測 **24 ns／粒**（256 粒 ≒ 8 µs，粒子上限 16384 粒 ≒ 0.40 ms）。典型法術可以每幀問；上限附近的法術每幀問就要自己算一下預算。
+
 ### 3.2 多陣合成與場景層（func-spec 0012 新增；場景層已於 0018 上 C ABI）
 
 **合成**——把幾張陣當成一個法術施放：
@@ -421,6 +451,37 @@ pm_scene_free(sc);
 
 跨界等價律（`test/Acceptance18Spec.hs`）:對生成的操作序列,每一步之後 `pm_scene_observe` 與 `observeScene` 逐位元相同,收碼分類與 `castInto` 的 `Either CastRefusal` 一致,`pm_scene_budget` 與 `sceneBudget` 相同。
 
+### 4.7 這道法術佔哪裡（0025 新增）
+
+§3.1.1 的空間摘要整套上了 C ABI，7 個純增補進入點，`PM_ABI_VERSION` 仍是 **1**：
+
+```c
+float lo[3], hi[3];
+pm_spell_bounds(spell, lo, hi);            /* 整道法術一輩子的世界 AABB */
+
+float c[3], axes[9], half[3];              /* axes 是 3x3 列主序：U, V, 法線 */
+pm_spell_box(spell, c, axes, half);        /* 同上，但是有向盒——緊得多 */
+
+int n = pm_emitter_count(spell);
+pm_emitter_box(spell, 0, c, axes, half);   /* 單一發射器「目前」的盒 */
+
+int counts[27];
+pm_occupancy(spell, PM_OCCUPANCY_DIM_DEFAULT, counts, 27);   /* 3x3x3 計數 */
+uint32_t mask = pm_occupancy_mask(spell);  /* 同一件事，一個字，零配置 */
+
+/* 場景裡的某一道：pm_scene_spells 給 id，這裡給界 */
+pm_scene_spell_bounds(scene, id, lo, hi);
+```
+
+broad phase 因此是一行：兩道法術的 mask 做 AND，非零才需要細算。
+
+要記住的三件事與 §3.1.1 相同（有向盒比 AABB 緊、兩種時窗刻意不同、格網的框全程固定）。C 面另外兩點：
+
+- `pm_occupancy` 的 `capacity` 不足時回 `PM_ERR_CAPACITY` 且**一個位元都不寫**，與 `pm_observe` 同一條 all-or-nothing 規則；`dim` ≤ 0 是 `PM_ERR_ARGS`。
+- `pm_occupancy_mask` 對 `NULL` handle 回 0，位元 27..31 恆為 0。
+
+跨界等價律（`test/FFISpaceSpec.hs`）：每個進入點與對應的 `Magic.Interface` 函數逐位元相同，13 個範例陣 × 3 種維度。
+
 ---
 
 ## 5. 路線 C：Unity（C#）
@@ -431,7 +492,7 @@ Unity 走的就是 §4 的 C ABI，只是隔著 P/Invoke。
 
 | 檔案 | 是什麼 |
 |---|---|
-| [`bindings/csharp/ParticleMagic.cs`](../bindings/csharp/ParticleMagic.cs) | 參考綁定：13 個 `DllImport`、全部常數、顏色拆包與 Z 翻轉助手。**不依賴 Unity**，Godot C#／純 .NET 照用 |
+| [`bindings/csharp/ParticleMagic.cs`](../bindings/csharp/ParticleMagic.cs) | 參考綁定：30 個 `DllImport`（0011 的 13 個 ＋ 0018 的場景 10 個 ＋ 0025 的空間 7 個）、全部常數、顏色拆包與 Z 翻轉助手。**不依賴 Unity**，Godot C#／純 .NET 照用 |
 | [`examples/unity/SpellRenderer.cs`](../examples/unity/SpellRenderer.cs) | 一個真的會畫東西的 `MonoBehaviour`：固定時步、緩衝重用、Z 翻轉、alpha 批次用 `pm_depth_order` 排序 |
 | [`examples/unity/PmSmoke.cs`](../examples/unity/PmSmoke.cs) | 一行指令跑完整個 smoke（`unity run … -executeMethod PmSmoke.Run`），驗 marshaller、投影、排序與 Mesh |
 | [`examples/unity/README.md`](../examples/unity/README.md) | 放置步驟、材質設定、預期畫面、smoke 指令與人眼 checklist |
@@ -587,6 +648,9 @@ void Update()
 | **只有 win64 被完整實測** | `.so` / `.dylib` 由 cabal stanza 天然涵蓋，但沒有列入驗收 |
 | **billboard 形狀是無參數列舉** | func-spec 0015 起有四種形狀碼（square／soft-dot／ring／spark），但形狀**永遠不帶參數**（拉伸、旋轉需另開查詢，ADR-0013）；怎麼畫每種形狀由宿主自行決定（demo 用 64×64 程序生成 alpha 貼圖，RGB 全白、顏色仍來自頂點色） |
 | **只有 Unity 被實測過** | C# 綁定在 Unity 6000.5.7f1 batchmode 實測通過（[0011 §9.3](spec/func-0011-host-integration-surface.md)，可用 `examples/unity/PmSmoke.cs` 一鍵複驗）；Godot／Unreal／其他 .NET 宿主只有合約保證，沒有實測 |
+| **空間摘要交資訊，不交判定** | func-spec 0025 給的是包絡與佔用格網（§3.1.1／§4.7），**不是**碰撞判定：「粒子撞到牆會怎樣」是遊戲層的規則。真要做碰撞回饋（粒子反彈）需要把結果送回模擬，那會是輸出第一次影響輸入，屬於另一輪。視錐剔除同理——核心沒有相機概念（ADR-0008） |
+| **發動點是編譯期常數** | `"anchors"` 的位置與法線在施法時定下，**不隨時間移動**（跟隨施法者的發動點做不到）。與 0007 的時變場參數是同一筆記帳，應一起做，記在 func-spec 0025 §7-8 |
+| **各發動點共用同一份符文** | N 個發動點只有位置與法線不同；「左手火、右手冰」是**兩張陣**，用 `castSpells`／`pm_scene_cast_many` 各帶自己的 `anchors`（func-spec 0025 §7-9） |
 
 ---
 

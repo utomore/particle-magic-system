@@ -282,3 +282,39 @@ Format rules (the authority is [docs/release.md](docs/release.md) §3, and
   build so the compatibility law above rests on twelve examples rather
   than ten. The C ABI, the schema version, `ParticleBuffer`, the particle
   budget and the dependency list are untouched. (delivered)
+- **0025 spatial output and several activation points** — ADR-0019: the
+  system gains a third output. Until now a host could learn what a
+  spell's particles look like and nothing about where the spell *is* —
+  `emitterBounds` was one same-radius cube, Haskell-only, and there was
+  no spell-level union and no occupancy information at all. `Magic.Space`
+  answers all three: `emitterBox` resolves the same interval arithmetic
+  per axis in the emitter's own face frame (travel goes on the normal,
+  spread stays in plane), which measures 1.5%–13% of the frozen cube's
+  volume across the shipped examples; `spellBounds`/`spellBox` fold them;
+  and `occupancyOf` grids the live particles in one O(n) read-only pass,
+  with `occupancyMask` returning all 27 cells of the default 3×3×3 grid
+  as a single `Word32` — 27 being this system's own nine-grid extruded
+  along the normal, not a coincidence. The grid's frame is the whole-life
+  box and does not move while the spell runs, because a cell that means a
+  different region each frame cannot answer "did anything enter here".
+  `emitterBounds` itself is bit-for-bit unchanged, witnessed against
+  values captured from the pre-0025 build: it is a frozen export whose
+  numbers a host may already depend on, so the tighter bound arrives as a
+  new function rather than a better version of the old one. All of it is
+  a *query*, not a `FrameOutput` field — most spells are pure visuals and
+  should pay nothing, and nothing here influences a single particle
+  (calling any of it leaves `observeSpell` bit-identical). This is a
+  summary, not a spatial partition: architecture §7 and §11 stand, and
+  ADR-0019 records the line so nobody cites this round as a precedent.
+  The other half: a spell can fire from more than one place. `Anchor`
+  could always express an arbitrary position and normal — the formation's
+  node emitters have used it since 0006 — so all that was missing was
+  somewhere for a player to write it down. `"anchors"` is the third
+  circle-level opt-in property after `phases` and `fields`, and particles
+  are *shared out* between activation points rather than multiplied by
+  them: `spellBudget` is identical to the single-point spell's, so adding
+  a point is a choice of shape, never a way around `power` or the cap.
+  Seven add-only C entry points and `PM_OCCUPANCY_DIM_DEFAULT` carry it
+  all across the ABI with `PM_ABI_VERSION` still 1. New example
+  `twin-lance.json`; every example and golden that existed before this
+  round is untouched. (delivered)

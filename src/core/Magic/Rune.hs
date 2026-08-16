@@ -32,6 +32,9 @@ module Magic.Rune
 
     -- * Force fields (spec 0007; a circle-level property, not a rune)
   , ForceField (..)
+
+    -- * Activation points (spec 0025; a circle-level property, not a rune)
+  , Anchor (..)
   ) where
 
 import Magic.Expr (Expr, ExprV3)
@@ -254,4 +257,30 @@ data ForceField
     -- falls off with distance nor has a singularity, so it produces a
     -- steady oscillation about the center instead of a collapse onto it.
     Spring !V3 !Float
+  deriving (Eq, Show)
+
+-- | The activation point a spell (or one of its emitters) fires from, in
+-- the caster's coordinate frame (resolved at sample time with
+-- 'Magic.Types.CastContext': local +Z is @casterFacing@, local X\/Y are
+-- the 'Magic.Types.basisFromNormal' pair of the facing).
+--
+-- Permanent type, frozen since spec 0002 — where it was declared in
+-- "Magic.Compile", which still re-exports it, so every existing import
+-- keeps working. Func-spec 0025 moves the declaration down here for the
+-- same reason spec 0015 moved 'BillboardShape': it became circle-level
+-- player vocabulary ('Magic.Circle.circleAnchors'), and "Magic.Circle"
+-- cannot import "Magic.Compile" — the interpreter reads the circle, not
+-- the other way round.
+--
+-- Not a rune, and deliberately so (func-spec 0025 §2.5): an activation
+-- point says /where this spell comes out/, which is not one of ADR-0003's
+-- four slot responsibilities (essence, behavior, modulation,
+-- presentation). It hangs off the circle as a whole, exactly as
+-- 'ForceField' and @circlePhases@ do.
+data Anchor = Anchor
+  { anchorOffset :: !V3
+  -- ^ Offset from the caster position (caster frame; skeleton = origin).
+  , anchorNormal :: !V3
+  -- ^ Initial face normal (caster frame; skeleton = +Z = casterFacing).
+  }
   deriving (Eq, Show)

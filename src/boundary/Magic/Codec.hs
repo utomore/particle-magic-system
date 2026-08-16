@@ -67,7 +67,8 @@ import Magic.Circle (Circle (..), Core (..), Nodes (..), PhaseConfig (..), TwoOf
 import Magic.Expr (Expr, ExprV3 (..))
 import Magic.Expr.Parse (parseExpr, renderExpr, renderExprParseError)
 import Magic.Rune
-  ( BillboardShape (..)
+  ( Anchor (..)
+  , BillboardShape (..)
   , BridgeRune (..)
   , Element (..)
   , Envelope (..)
@@ -163,6 +164,7 @@ parseCircle = withObject "circle" $ \o -> do
     Just v -> parseCore v <?> Key "core"
   phases <- parseSlot "phases" parsePhaseConfig o
   fields <- parseFields o
+  anchors <- parseAnchors o
   pure
     Circle
       { outerRings = outer
@@ -171,6 +173,7 @@ parseCircle = withObject "circle" $ \o -> do
       , core = circleCore
       , circlePhases = phases
       , circleFields = fields
+      , circleAnchors = anchors
       }
 
 emptyCore :: Core
@@ -416,6 +419,54 @@ parseFields o = do
         sequence [parseForceField item <?> Index i | (i, item) <- zip [0 ..] (toList items)]
       _ -> fail "expected an array of force fields (or null)"
 
+-- | Activation points (func-spec 0025 §3.1): the third opt-in
+-- circle-level array, after @phases@ and @fields@ and by the same rules —
+-- a missing key and @null@ both mean "no key", which is the single origin
+-- anchor every pre-0025 spell file already casts from.
+--
+-- An /empty/ array is the one shape that is an error rather than a
+-- synonym for it. @[]@ would otherwise have to mean either "no
+-- activation point" (a spell that fires from nowhere) or "the default
+-- one", and neither reading is guessable from the file; refusing it keeps
+-- the two spellings of "no key" at two, not three.
+--
+-- The ceiling of 16 is a second gate in front of 'budgetCap': particles
+-- are shared out between activation points, not multiplied by them
+-- (func-spec 0025 §2.6), so a very long list would quietly divide a
+-- spell down to nothing per point instead of failing.
+parseAnchors :: Object -> Parser (Maybe [Anchor])
+parseAnchors o = do
+  mv <- slotValue o "anchors"
+  case mv of
+    Nothing -> pure Nothing
+    Just v -> flip (<?>) (Key "anchors") $ case v of
+      Array items
+        | null (toList items) -> fail "expected at least one activation point (use null, or omit the key, for the default single one)"
+        | length items > maxAnchors ->
+            fail $
+              "too many activation points: "
+                ++ show (length items)
+                ++ ", the cap is "
+                ++ show maxAnchors
+        | otherwise ->
+            Just
+              <$> sequence [parseAnchor item <?> Index i | (i, item) <- zip [0 ..] (toList items)]
+      _ -> fail "expected an array of activation points (or null)"
+
+-- | How many activation points one circle may name.
+maxAnchors :: Int
+maxAnchors = 16
+
+-- | A zero @normal@ has no face plane to build, so the core would
+-- silently fall back to a degenerate basis — rejected here, exactly as a
+-- vortex's zero @axis@ is.
+parseAnchor :: Value -> Parser Anchor
+parseAnchor = withObject "activation point" $ \o -> do
+  offset <- vec3Field o "offset"
+  normal <- vec3Field o "normal"
+  _ <- nonZeroVec "normal" normal <?> Key "normal"
+  pure (Anchor offset normal)
+
 -- | Field validation lives here, at the boundary: 'softening' keeps the
 -- attractor's singularity finite, 'falloff' may not amplify with
 -- distance, and a zero 'axis' has no swirl plane to define. The core
@@ -475,9 +526,12 @@ vec3Field o key = do
     number val = realToFrac <$> (parseJSON val :: Parser Double)
 
 nonZeroAxis :: V3 -> Parser ()
-nonZeroAxis (V3 x y z)
+nonZeroAxis = nonZeroVec "axis"
+
+nonZeroVec :: String -> V3 -> Parser ()
+nonZeroVec name (V3 x y z)
   | x /= 0 || y /= 0 || z /= 0 = pure ()
-  | otherwise = fail "axis must be a non-zero vector"
+  | otherwise = fail (name ++ " must be a non-zero vector")
 
 -- | Lifecycle staging (spec 0006 §4.5): opt-in circle-level key, not a
 -- rune slot — no "rune" tag, just the two durations.
@@ -583,6 +637,10 @@ saveCircle circle =
             , "core" .= encodeCore (core circle)
             , "phases" .= maybe Null encodePhaseConfig (circlePhases circle)
             , "fields" .= map encodeForceField (circleFields circle)
+            , -- Null rather than [] for the absent case: an empty array is
+              -- a load error (see 'parseAnchors'), so encoding one would
+              -- write a file this codec refuses to read back.
+              "anchors" .= maybe Null (toJSON . map encodeAnchor) (circleAnchors circle)
             ]
       ]
 
@@ -758,6 +816,10 @@ encodeForceField field = case field of
       , "center" .= encodeV3 center
       , "k" .= toDouble k
       ]
+
+encodeAnchor :: Anchor -> Value
+encodeAnchor (Anchor offset normal) =
+  object ["offset" .= encodeV3 offset, "normal" .= encodeV3 normal]
 
 encodeV3 :: V3 -> Value
 encodeV3 (V3 x y z) = toJSON (map toDouble [x, y, z])
