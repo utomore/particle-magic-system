@@ -41,8 +41,17 @@
  * no locks (ADR-0011 D4); different handles on different threads are fine.
  *
  * Determinism: the same (json, pos, facing, seed, dt sequence) always
- * produces bit-identical output, on every platform and through either
- * consumption path (ADR-0011 D8).
+ * produces bit-identical output through either consumption path
+ * (ADR-0011 D8), on a given platform. Across platforms the guarantee is
+ * the structure -- the same particles, in the same order, in the same
+ * counts -- but the position columns can differ in their last bit or
+ * two: C's sin() and cos() are not required to be correctly rounded, and
+ * two libm implementations legitimately disagree on the last ulp. The
+ * measured spread between windows/x86_64 and linux/x86_64 is at most
+ * 1.79e-07 in pos_x and pos_z, with size, life and color bit-identical
+ * (func-spec 0019 S2, ADR-0016). Replay a recording on the machine that
+ * made it and it is exact; compare two machines and compare with a
+ * tolerance.
  */
 #ifndef PARTICLE_MAGIC_H
 #define PARTICLE_MAGIC_H

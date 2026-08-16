@@ -8,6 +8,11 @@
 -- pre-0007 build (the same 80-step walk, run against the code as it stood
 -- at commit "Implement func-spec 0006"), so this spec fails the moment a
 -- fieldless spell's pixels move by one ULP.
+--
+-- Scope (func-spec 0019 S2, ADR-0016): "one ULP" is exactly the size of
+-- the disagreement between two platforms' libm, so this baseline is
+-- asserted on the platform it was captured on and reported pending
+-- elsewhere. See "GoldenPlatform".
 module FieldPlumbingSpec (spec) where
 
 import Data.Bits (shiftR, xor)
@@ -16,6 +21,7 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
 import Data.Word (Word32, Word64)
 import GHC.Float (castFloatToWord32)
+import GoldenPlatform (platformScopeNote, referencePlatform)
 import Magic.Circle (Circle (..), PhaseConfig (..), emptyCircle)
 import Magic.Codec (loadCircle)
 import Magic.Compile (CompiledSpell (..), EmitterSpec (..), Phase (..), compile)
@@ -226,5 +232,15 @@ compatibilityCase (path, expected) =
   it (path ++ " renders bit-for-bit what it did before spec 0007") $ do
     bytes <- BS.readFile path
     circle <- either (fail . show) pure (loadCircle bytes)
+    -- The fieldless precondition is the half of this law that holds
+    -- everywhere, so it is asserted before the scope check.
     circleFields circle `shouldBe` []
-    walkDigest circle `shouldBe` expected
+    if referencePlatform
+      then walkDigest circle `shouldBe` expected
+      else
+        -- Unlike the two golden nets, this baseline is a single digest
+        -- over the whole 80-step walk: there is no per-frame structure
+        -- recorded beside it to fall back on, and re-recording it on a
+        -- second platform would only assert that this machine agrees
+        -- with itself. ADR-0016 scopes it rather than weakening it.
+        pendingWith platformScopeNote

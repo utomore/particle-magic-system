@@ -19,6 +19,12 @@
 -- the example is reported @pending@ instead of passing silently. That is
 -- how the baseline was produced (run once on the pre-refactor build, then
 -- commit); from then on the files exist and every run is a comparison.
+--
+-- Scope (func-spec 0019 S2, ADR-0016): the digest is compared only on the
+-- platform the goldens were recorded on. Elsewhere the per-frame particle
+-- counts — which this file's own golden lines already carry, and which
+-- measured identical on Linux — are compared instead. See
+-- "GoldenPlatform" for why.
 module PerfGoldenSpec (spec) where
 
 import qualified Data.ByteString as BS
@@ -26,6 +32,7 @@ import Data.Bits (shiftR, xor, (.&.))
 import qualified Data.Vector.Unboxed as U
 import Data.Word (Word32, Word64)
 import GHC.Float (castFloatToWord32)
+import GoldenPlatform (platformScopeNote, referencePlatform)
 import Magic.Codec (loadCircle)
 import Magic.Interface
   ( ActiveSpell
@@ -142,19 +149,27 @@ spec = describe "pre-refactor golden net (func-spec 0010 §7 S1)" $ do
     length examples `shouldBe` 10
 
 goldenExample :: String -> Spec
-goldenExample name = it (name ++ " renders the golden frames, bit for bit") $ do
+goldenExample name = it (name ++ " renders the golden frames, " ++ law) $ do
   actual <- walk <$> castOf name
   let path = goldenPath name
   exists <- doesFileExist path
   if not exists
-    then do
-      createDirectoryIfMissing True goldenDir
-      writeFile path (render actual)
-      pendingWith ("golden primed at " ++ path ++ " — commit it and re-run")
+    then
+      if referencePlatform
+        then do
+          createDirectoryIfMissing True goldenDir
+          writeFile path (render actual)
+          pendingWith ("golden primed at " ++ path ++ " — commit it and re-run")
+        else
+          -- Priming off the reference platform would bake this machine's
+          -- libm into the baseline, and every later Windows run would
+          -- read it as a regression.
+          expectationFailure
+            ("golden missing at " ++ path ++ ", and it may not be primed here: " ++ platformScopeNote)
     else do
       expected <- parse <$> readFile path
       length actual `shouldBe` length expected
-      let diffs = [i | (i, a, e) <- zip3 [0 :: Int ..] actual expected, a /= e]
+      let diffs = [i | (i, a, e) <- zip3 [0 :: Int ..] actual expected, compared a /= compared e]
       case diffs of
         [] -> pure ()
         (i : _) ->
@@ -162,10 +177,23 @@ goldenExample name = it (name ++ " renders the golden frames, bit for bit") $ do
             ( name
                 ++ ": "
                 ++ show (length diffs)
-                ++ " frame(s) differ, first at "
+                ++ " frame(s) differ ("
+                ++ law
+                ++ "), first at "
                 ++ show i
                 ++ "\n  golden: "
                 ++ show (expected !! i)
                 ++ "\n  actual: "
                 ++ show (actual !! i)
             )
+  where
+    -- ADR-0016: the digest is the same-platform half of the law, the
+    -- particle count the platform-free half.
+    compared :: Frame -> Frame
+    compared frame@(n, _)
+      | referencePlatform = frame
+      | otherwise = (n, 0)
+
+    law
+      | referencePlatform = "bit for bit"
+      | otherwise = "particle counts only, off the reference platform"

@@ -85,6 +85,14 @@ A spell is JSON in and six float/uint32 columns out; the same
 here and through the Haskell path. `examples/c/main.c` is a complete, working
 host in 150 lines.
 
+That equality is exact within one machine. Between machines it is exact in
+structure — same particles, same order, same counts — and accurate to a
+couple of ulp in the position columns, because C's `sin`/`cos` are not
+required to be correctly rounded and two libm implementations legitimately
+differ in the last bit (measured: at most `1.79e-07` between Windows and
+Linux on x86_64; size, life and color identical). See
+[ADR-0016](docs/adr/adr-0016-release-compatibility-policy.md).
+
 ## The host surface
 
 ```haskell
@@ -123,9 +131,11 @@ Rendering in 2D: `Magic.Projection` does the dimension-dropping half for you
 (`SideXY` or `TopXZ`), and `depthOrder plane buffer` returns a stable
 far-to-near index permutation to draw in. Screen origin and scale stay yours.
 
-Determinism guarantee: the same `(Circle, CastContext, dt sequence)` always
-produces bit-identical output — spells are replayable and testable as pure
-functions.
+Determinism guarantee: on a given platform, the same
+`(Circle, CastContext, dt sequence)` always produces bit-identical output —
+spells are replayable and testable as pure functions. Across platforms the
+guarantee narrows to structure plus a couple of ulp in the positions
+(ADR-0016).
 
 ## Repository layout
 
@@ -157,6 +167,53 @@ functions.
   `cabal run particle-magic` — the raylib demo (first build compiles raylib's
   C sources; it rescans `assets/spells` as it runs, so files can be added and
   removed without restarting it); `cabal bench` — pure-core baselines
+
+## Building and CI
+
+GHC 9.14.1 and cabal 3.16.1.0 (the `tested-with:` field is the authority;
+CI installs exactly that compiler). On Linux, h-raylib needs the X11/GL
+development headers at compile time — `libx11-dev libxrandr-dev
+libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev` on Debian and
+Ubuntu. Nothing in CI opens a window: the demo executable is built, never
+run, and its logic half is covered headless by the test suite.
+
+Every push and pull request runs three steps on both Tier 1 platforms,
+ordered most-expensive-first because a red build makes the other two
+meaningless:
+
+```
+cabal build all                            # includes the demo, the C ABI shared library and the benchmarks
+cabal test                                 # the full hspec suite
+cabal run magic-validate -- assets/spells  # exit code = number of bad spell files
+```
+
+Supported platforms (this table is the same list as the CI matrix, and a
+test fails if the two drift apart — see
+[docs/release.md](docs/release.md)):
+
+| Tier | What it means | Platforms |
+|---|---|---|
+| **Tier 1** | Verified by CI on every push: build, test, validate. A regression is a defect. | `windows-latest` (x86_64), `ubuntu-latest` (x86_64) |
+| **Tier 2** | Expected to work, not covered by CI. Breakage gets fixed but does not block a release. | macOS, other Linux distributions |
+| Unsupported | Nobody has tried. | ARM, WASM, mobile |
+
+The first build on a cold cache is slow — h-raylib compiles raylib's C
+sources — and warm builds are not.
+
+## Releases
+
+Releases are git tags: `v` followed by the four-segment cabal version,
+character for character (`v0.1.0.0`). There is no Hackage upload; the tag
+exists so that a `source-repository-package` user has something to pin.
+
+The public sublibraries follow PVP, so a breaking change to a frozen
+interface is a major bump. `PM_ABI_VERSION` in the C header moves
+independently of the package version — the header is add-only, so its
+generation only advances if that rule is ever broken.
+
+The full procedure, the version-bump rules and the compatibility promises
+are in [docs/release.md](docs/release.md); the reasoning is in
+[ADR-0016](docs/adr/adr-0016-release-compatibility-policy.md).
 
 ## License
 
