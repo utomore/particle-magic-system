@@ -179,11 +179,19 @@ related-spec: [func-0008, func-0011, func-0013]
 1. **Haskell 宿主的依賴面是四個，不是兩個。** integration.md §3 原本只寫 `build-depends: particle-magic:magic-boundary`，照抄**編不過**：`Magic.Codec.loadCircle` 吃的是原始位元組（要 `bytestring`），而 `ParticleBuffer` 的六條欄是 `Data.Vector.Unboxed`（ADR-0006，要 `vector`）。這是「只有文件片段、沒有東西編譯它」最典型的代價——寫 E1 的第一分鐘就撞到了。已補進 §3 與範例的 `.cabal` 註解。
 2. **`dt` 的寬度是跨宿主等價的前提。** `pm_advance` 收的是 `float`，進來之後才加寬成 double。所以一個在自己原始碼裡寫 `1.0f/60.0f` 的 C 宿主，和一個寫 `1/60 :: Double` 的 Haskell 宿主，**跑的不是同一個模擬**——決定論是 per-input（ADR-0011 D8），而 `dt` 是輸入之一。範例刻意收窄成 `float2Double (1/60 :: Float)` 以換取與 `examples/c/main.c` 的可 diff 性，並在 README、原始碼註解與 `ExampleHostSpec` 檔頭各寫了一次。（`test/FFIHarness.hs` 的 `step` 一直就是這樣做的，所以 S4 的兩條路徑不必額外對齊就對上了。）
 
-### 8.3 E3 的後續判準
+### 8.3 交付後在 CI 上才浮現的第三條事實：`expected-output.txt` 也是一份 golden
+
+本輪在 Windows 上驗收，`expected-output.txt` 用**逐字比對**。整合進 PR 之後 CI 的 **Linux 腳紅了**，而且只紅在這裡：120 幀裡有一幀的 checksum 差在最後一位小數（`81.830827` vs `81.830826`），Windows 腳全綠。
+
+這不是本輪的錯誤，是本輪**漏套了專案既有的規則**。func-0019 §8.2 早已量到 glibc 與 mingw 的 `sin`／`cos` 有 1 ulp 差異、ADR-0016 D4 也已把決定論的宣稱收窄為「同平台逐位元、跨平台結構＋2 ulp」，`test/golden/*` 三份 golden 規格全都走 `GoldenPlatform` 的平台分級——只有本輪新增的這一份沒有。而它其實比位置欄更敏感：`checksum` 與投影平面座標都是**位置欄的和**，幾百顆粒子加起來，1 ulp 不會停在 1 ulp。
+
+修法即補上同一條規則：`ExampleHostSpec` 的 S3／S4 在參考平台（windows/x86_64）逐字比對，非參考平台則逐 token 比——非數值的 token（`frame`／`slot`／`plane`／`depth`）與整數（幀序、粒子數、批次數、blend 碼、深度排序出來的 slot 排列）仍然**逐字相等**，只有浮點數走 `1e-5` 相對容差。跨平台守住的是「同樣的粒子、同樣的順序、同樣的數量」，也就是 ADR-0016 說的那一半。golden 檔本身**零重錄**。
+
+### 8.4 E3 的後續判準
 
 實作 E1 的過程中**沒有**出現「不照抄 `Flat.hs` 就寫不出來」的情況——不畫圖的宿主確實不需要 pan／zoom，如 §2.3 所預測。所以案 A 的觸發條件仍未滿足，記帳留在 roadmap §3.3。下一個會觸發它的事件是**真的有人要畫一個 2D 宿主**（食譜第 3 條的低解析 render target 一旦要做，`screenOf` 就免不了）。
 
-### 8.4 未觸及
+### 8.5 未觸及
 
 - **CI**：`examples/haskell/` 落在根 `cabal build all` 之外，要另一行指令；把那一行收進 CI 是 **func-0019** 的地盤，本輪未動 `.github/workflows/ci.yml`。
 - **CHANGELOG.md**：格式規則是「一份 func-spec 一則」（`docs/release.md` §3），本輪不是 func-spec，版本號亦未動，故未加條目。

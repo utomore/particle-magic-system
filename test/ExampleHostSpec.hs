@@ -48,6 +48,7 @@ import FFIHarness (Observed (..), castOk, observeRaw, referenceStates, spellByte
 import Foreign.C.Types (CDouble (..), CFloat (..))
 import Foreign.StablePtr (StablePtr)
 import GHC.Float (float2Double)
+import GoldenPlatform (platformScopeNote, referencePlatform)
 import Magic.FFI (SpellCell, pm_advance, pm_age, pm_free, pm_is_finished)
 import Magic.Interface
   ( ActiveSpell
@@ -71,6 +72,7 @@ import Magic.Projection (V2 (..), ViewPlane (..), depthOrder, orthographic)
 import System.Directory (listDirectory)
 import Test.Hspec
 import Text.Printf (printf)
+import Text.Read (readMaybe)
 
 -- Where the example lives -----------------------------------------------------
 
@@ -150,7 +152,7 @@ spec = describe "Haskell reference host (enhance-0001 E1)" $ do
       -- Zipped so a failure names the offending line instead of dumping
       -- 130 of them twice.
       length actual `shouldBe` length expected
-      mapM_ (uncurry shouldBe) (zip actual expected)
+      mapM_ (uncurry sameLine) (zip actual expected)
 
   describe "S4 — the C host sees the same simulation" $
     it "reproduces every frame line through the C ABI, as examples/c/main.c drives it" $ do
@@ -158,7 +160,7 @@ spec = describe "Haskell reference host (enhance-0001 E1)" $ do
       actual <- ffiRun
       let comparable = takeWhile (not . isPrefixOf "projection") (drop 1 expected)
       length actual `shouldBe` length comparable
-      mapM_ (uncurry shouldBe) (zip actual comparable)
+      mapM_ (uncurry sameLine) (zip actual comparable)
 
   describe "S5 — the example ships with the package" $
     it "lists every one of its files in extra-source-files" $ do
@@ -292,6 +294,53 @@ planeHeader = printf "projection %s: %d particles, far to near"
 
 projectionRow :: Int -> Int -> Double -> Double -> Double -> String
 projectionRow = printf "  %d  slot %4d  plane (%9.5f, %9.5f)  depth %9.5f"
+
+-- Comparison ------------------------------------------------------------------
+
+-- | One golden line against one produced line, under ADR-0016's scoping.
+--
+-- @expected-output.txt@ is a golden like every other in this repository
+-- and inherits the same law: bit-for-bit /on the platform it was recorded
+-- on/ (windows\/x86_64), structural everywhere else. It is worth being
+-- concrete about why this file needs it at all, because the numbers here
+-- are not positions — they are a @checksum@ column and projected plane
+-- coordinates, both of them /sums/ over the position columns. So the 1 ulp
+-- that libm's @sin@\/@cos@ can differ by (func-spec 0019 S2 measured it:
+-- 1.79e-07 world units, @pbPosX@ and @pbPosZ@ only) does not stay at 1 ulp
+-- once a few hundred particles have been added up. The first Linux run of
+-- this spec differed in exactly one digit of one frame's checksum
+-- (81.830827 vs 81.830826), which is that effect and nothing else.
+--
+-- Everything that is /not/ a float is still compared exactly on every
+-- platform: the frame index, the particle count, the batch count, the
+-- blend code, the slot permutation the depth order produces. That is the
+-- cross-platform half of the law — same particles, same order, same
+-- counts — and it is the half that would catch a real regression.
+sameLine :: String -> String -> Expectation
+sameLine actual expected
+  | referencePlatform = actual `shouldBe` expected
+  | tokensAgree = pure ()
+  | otherwise =
+      expectationFailure
+        ( "line differs beyond the cross-platform tolerance:\n  golden: "
+            ++ expected
+            ++ "\n  actual: "
+            ++ actual
+            ++ "\n  "
+            ++ platformScopeNote
+        )
+  where
+    tokensAgree = length as == length es && and (zipWith tokenEq as es)
+    (as, es) = (tokenize actual, tokenize expected)
+
+    -- The punctuation is dropped on both sides alike, so the words around
+    -- the numbers ("frame", "slot", "plane", "depth") still have to line
+    -- up — only the numerals get the tolerance.
+    tokenize = words . map (\c -> if c `elem` ("()," :: String) then ' ' else c)
+
+    tokenEq a e = case (readMaybe a, readMaybe e) of
+      (Just x, Just y) -> abs (x - y) <= 1e-5 * (1 + max (abs x) (abs y :: Double))
+      _ -> a == e
 
 -- Parsers ---------------------------------------------------------------------
 
