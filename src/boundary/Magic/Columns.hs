@@ -15,21 +15,29 @@
 -- 'Magic.Particle.Buffer.bufferInvariant' holds by construction — the
 -- caller cannot produce an inconsistent buffer even by accident.
 --
--- __Frozen__ (spec 0011 §9): the export list below.
+-- __Frozen__ (spec 0011 §9): the export list below. Func-spec 0023 adds
+-- 'fromColumnsWithVelocity' to it without touching 'fromColumns' — the
+-- add-only rule (ADR-0011 D7) applied to a Haskell export list rather
+-- than to a C header, so @pm_depth_order@ and every other existing
+-- consumer of the six-column door is undisturbed.
 module Magic.Columns
   ( ParticleBuffer
   , ColumnError (..)
   , fromColumns
+
+    -- * Nine columns (func-spec 0023 S4)
+  , fromColumnsWithVelocity
   ) where
 
 import qualified Data.Vector.Unboxed as U
 import Data.Word (Word32)
 import Magic.Particle.Buffer (ParticleBuffer (..))
 
--- | Why a set of columns is not a buffer. The payload lists all six
--- lengths in field order (x, y, z, size, life, color), because a caller
--- staring at a mismatch wants to see which column is the odd one out, not
--- just that one exists.
+-- | Why a set of columns is not a buffer. The payload lists all the
+-- lengths in field order (x, y, z, size, life, color, and for
+-- 'fromColumnsWithVelocity' the three velocities after them), because a
+-- caller staring at a mismatch wants to see which column is the odd one
+-- out, not just that one exists.
 newtype ColumnError = LengthMismatch [Int]
   deriving (Eq, Show)
 
@@ -62,6 +70,9 @@ fromColumns xs ys zs sizes lifes colors
           , pbSize = sizes
           , pbLife = lifes
           , pbColor = colors
+          , pbVelX = U.empty
+          , pbVelY = U.empty
+          , pbVelZ = U.empty
           , pbCount = n
           }
   | otherwise = Left (LengthMismatch lengths)
@@ -75,3 +86,64 @@ fromColumns xs ys zs sizes lifes colors
       , U.length lifes
       , U.length colors
       ]
+
+-- | Build a buffer from nine columns (func-spec 0023 S4): the six of
+-- 'fromColumns' plus velocity.
+--
+-- The velocity columns are the /opt-in/ ones
+-- 'Magic.Particle.Buffer.bufferInvariant' describes, so this accepts two
+-- shapes and no third: all three empty (the caller has no velocity, and
+-- the result is exactly what 'fromColumns' would have built), or all
+-- three the common length of the other six. Anything else is a
+-- 'LengthMismatch' listing all nine — including the case where the
+-- velocities agree with each other but not with the positions, which is
+-- the mistake a host marshalling two different frames into one call would
+-- actually make.
+fromColumnsWithVelocity
+  :: U.Vector Float
+  -- ^ position x
+  -> U.Vector Float
+  -- ^ position y
+  -> U.Vector Float
+  -- ^ position z
+  -> U.Vector Float
+  -- ^ size
+  -> U.Vector Float
+  -- ^ life fraction
+  -> U.Vector Word32
+  -- ^ packed RGBA colour
+  -> U.Vector Float
+  -- ^ velocity x (empty for none)
+  -> U.Vector Float
+  -- ^ velocity y (empty for none)
+  -> U.Vector Float
+  -- ^ velocity z (empty for none)
+  -> Either ColumnError ParticleBuffer
+fromColumnsWithVelocity xs ys zs sizes lifes colors vxs vys vzs
+  | all (== n) sixLengths && velocityOk =
+      Right
+        ParticleBuffer
+          { pbPosX = xs
+          , pbPosY = ys
+          , pbPosZ = zs
+          , pbSize = sizes
+          , pbLife = lifes
+          , pbColor = colors
+          , pbVelX = vxs
+          , pbVelY = vys
+          , pbVelZ = vzs
+          , pbCount = n
+          }
+  | otherwise = Left (LengthMismatch (sixLengths ++ velLengths))
+  where
+    n = U.length xs
+    sixLengths =
+      [ n
+      , U.length ys
+      , U.length zs
+      , U.length sizes
+      , U.length lifes
+      , U.length colors
+      ]
+    velLengths = [U.length vxs, U.length vys, U.length vzs]
+    velocityOk = velLengths == [0, 0, 0] || velLengths == replicate 3 n

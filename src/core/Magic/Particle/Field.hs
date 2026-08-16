@@ -63,6 +63,7 @@ module Magic.Particle.Field
   , fieldInputsOf
   , stepColumns
   , displacementColumns
+  , velocityColumns
 
     -- * Boxed entry points (compatibility; not the hot path)
   , step
@@ -384,6 +385,29 @@ displacementColumns
 displacementColumns st slots = (col (fsDispX st), col (fsDispY st), col (fsDispZ st))
   where
     n = U.length (fsDispX st)
+    col c = U.map (\j -> if j >= 0 && j < n then c `U.unsafeIndex` j else 0) slots
+
+-- | The integrated velocities of the given flat slot ids, in the same
+-- order and with the same out-of-range rule as 'displacementColumns'
+-- (func-spec 0023 S2).
+--
+-- This is the field layer's half of a trailing particle's velocity, and
+-- it is the /exact/ finite difference of 'displacementColumns' rather
+-- than an approximation of it: 'stepSlot' integrates
+-- @disp' = disp + dt·vel'@, so @(disp' − disp) \/ dt == vel'@ identically,
+-- for every field and every step size. The analytic half is differenced
+-- over 'Magic.Particle.Analytic.velocityStep' and this half over the
+-- simulation's own @dt@ — the only interval at which a displacement that
+-- exists solely as an integration history is defined at all (func-spec
+-- 0023 §10).
+--
+-- Add-only: nothing above reads it unless the spell has a trail, so a
+-- fieldless or trail-free spell never calls it.
+velocityColumns
+  :: FieldState -> U.Vector Int -> (U.Vector Float, U.Vector Float, U.Vector Float)
+velocityColumns st slots = (col (fsVelX st), col (fsVelY st), col (fsVelZ st))
+  where
+    n = U.length (fsVelX st)
     col c = U.map (\j -> if j >= 0 && j < n then c `U.unsafeIndex` j else 0) slots
 
 -- Boxed entry points ----------------------------------------------------------

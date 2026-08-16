@@ -255,11 +255,12 @@ parseBillboard = withText "billboard" $ \t -> case t of
   "soft-dot" -> pure BillboardSoftDot
   "ring" -> pure BillboardRing
   "spark" -> pure BillboardSpark
+  "trail" -> pure BillboardTrail
   other ->
     fail $
       "unknown billboard "
         ++ show (T.unpack other)
-        ++ "; valid billboards: square, soft-dot, ring, spark"
+        ++ "; valid billboards: square, soft-dot, ring, spark, trail"
 
 parseFaceShape :: Value -> Parser FaceShape
 parseFaceShape = withObject "shape" $ \o -> do
@@ -660,6 +661,7 @@ encodeBillboard shape = case shape of
   BillboardSoftDot -> "soft-dot"
   BillboardRing -> "ring"
   BillboardSpark -> "spark"
+  BillboardTrail -> "trail"
 
 encodeFaceShape :: FaceShape -> Value
 encodeFaceShape shape = case shape of

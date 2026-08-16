@@ -36,8 +36,19 @@
 -- module's signatures are untouched and ADR-0007 holds. Law 2 — the two
 -- paths agree bit for bit on any number of cores — follows from how
 -- 'shardsOf' cuts, not from luck; the argument is written out there.
+-- Func-spec 0023 adds the third: three velocity columns, computed by
+-- finite difference and skipped in their entirety when the spell has no
+-- 'Magic.Rune.BillboardTrail'. The skip is structural — 'sample' picks
+-- 'Magic.Particle.Buffer.buildBuffer' or 'buildBufferWithVelocity' once,
+-- so a trail-free spell allocates nothing extra and executes not one
+-- extra instruction per particle, exactly as ADR-0010 D9's zero-field
+-- fast path does for the force-field layer.
 module Magic.Particle.Analytic
   ( sample
+
+    -- * Velocity (func-spec 0023 S2)
+  , velocityStep
+  , particleVelocity
 
     -- * Parallel sampling (func-spec 0022 S4, ADR-0017)
   , sampleSequential
@@ -83,6 +94,7 @@ import Magic.Compile
   , Envelope (..)
   , Motion (..)
   , SpawnPattern (..)
+  , spellNeedsVelocity
   )
 import Magic.Expr (Expr, ExprEnv (..), ExprV3, evalFinite, evalFiniteV3)
 import Magic.Expr.Code
@@ -108,7 +120,14 @@ import Magic.Types
   , normalize
   , vscale
   )
-import Magic.Particle.Buffer (ParticleBuffer (..), WriteRow, buildBuffer, emptyBuffer)
+import Magic.Particle.Buffer
+  ( ParticleBuffer (..)
+  , WriteRow
+  , WriteVel
+  , buildBuffer
+  , buildBufferWithVelocity
+  , emptyBuffer
+  )
 
 -- Envelope scheduling ---------------------------------------------------------
 
@@ -406,17 +425,27 @@ windowRows windows = sum [hi - lo | ws <- V.toList windows, (lo, hi) <- ws]
 
 fillSequential
   :: CompiledSpell -> CastContext -> Time -> V.Vector [(Int, Int)] -> ParticleBuffer
-fillSequential spell ctx t windows = buildBuffer (windowRows windows) fill
+fillSequential spell ctx t windows
+  | spellNeedsVelocity spell =
+      buildBufferWithVelocity rows $ \write writeVel ->
+        walk (\em -> fillEmitterVel write writeVel ctx t em)
+  | otherwise =
+      buildBuffer rows $ \write ->
+        walk (\em -> fillEmitter write ctx t em)
   where
     ems = spellEmitters spell
+    rows = windowRows windows
 
-    fill :: WriteRow s -> ST s ()
-    fill write = goEmitter 0 0
+    -- Emitter by emitter, in 'spellEmitters' order, each starting where
+    -- the previous one stopped. Shared by both branches so the row layout
+    -- cannot differ between them — the opt-in law's whole content.
+    walk :: (EmitterSpec -> [(Int, Int)] -> Int -> ST s Int) -> ST s ()
+    walk fillOne = goEmitter 0 0
       where
         goEmitter !row !e
           | e >= V.length ems = pure ()
           | otherwise = do
-              row' <- fillEmitter write ctx t (ems V.! e) (windows V.! e) row
+              row' <- fillOne (ems V.! e) (windows V.! e) row
               goEmitter row' (e + 1)
 
 fillParallel
@@ -425,8 +454,18 @@ fillParallel spell ctx t windows =
   concatBuffers (parMap rdeepseq shardBuffer (shardsFrom windows))
   where
     ems = spellEmitters spell
-    shardBuffer (Shard e ranges rows) =
-      buildBuffer rows $ \write -> () <$ fillEmitter write ctx t (ems V.! e) ranges 0
+    wantsVelocity = spellNeedsVelocity spell
+    shardBuffer (Shard e ranges rows)
+      -- Func-spec 0023: the decision is the /spell's/, so every shard of
+      -- one sampling takes the same branch — which is what keeps the
+      -- concatenated velocity columns all-or-nothing, and what keeps law 2
+      -- an equation between two whole buffers rather than between rows
+      -- that happen to agree.
+      | wantsVelocity =
+          buildBufferWithVelocity rows $ \write writeVel ->
+            () <$ fillEmitterVel write writeVel ctx t (ems V.! e) ranges 0
+      | otherwise =
+          buildBuffer rows $ \write -> () <$ fillEmitter write ctx t (ems V.! e) ranges 0
 
 -- | Every shard of a set of windows, in output order: emitter by emitter,
 -- and inside an emitter by ascending particle index.
@@ -530,6 +569,13 @@ concatBuffers parts =
     , pbSize = U.concat (map pbSize parts)
     , pbLife = U.concat (map pbLife parts)
     , pbColor = U.concat (map pbColor parts)
+    , -- Func-spec 0023: every shard of one sampling agrees on whether it
+      -- computes velocity (the decision is the spell's, taken once), so
+      -- concatenating the velocity columns preserves the invariant's
+      -- all-or-nothing clause without a case split here.
+      pbVelX = U.concat (map pbVelX parts)
+    , pbVelY = U.concat (map pbVelY parts)
+    , pbVelZ = U.concat (map pbVelZ parts)
     , pbCount = sum (map pbCount parts)
     }
 
@@ -537,7 +583,58 @@ concatBuffers parts =
 -- returns the next free row.
 fillEmitter
   :: WriteRow s -> CastContext -> Time -> EmitterSpec -> [(Int, Int)] -> Int -> ST s Int
-fillEmitter write ctx t em ranges row0 = goRange row0 ranges
+fillEmitter = fillEmitterWith noVelocity
+{-# INLINE fillEmitter #-}
+
+-- | 'fillEmitter', also writing each row's velocity (func-spec 0023 S2).
+fillEmitterVel
+  :: WriteRow s
+  -> WriteVel s
+  -> CastContext
+  -> Time
+  -> EmitterSpec
+  -> [(Int, Int)]
+  -> Int
+  -> ST s Int
+fillEmitterVel write writeVel ctx t em =
+  fillEmitterWith
+    (\frame row i ageD -> writeVel row (velocityIn frame ctx t em i ageD))
+    write
+    ctx
+    t
+    em
+{-# INLINE fillEmitterVel #-}
+
+-- | What the row walk does with a particle's velocity: nothing, or write
+-- it. Takes the emitter frame because the frame is hoisted out of the
+-- per-particle loop (func-spec 0010 S2) and the velocity difference wants
+-- the very same one — sampling the position formula twice through two
+-- different frames would make the difference meaningless.
+type VelocityWrite s = EmitterFrame -> Int -> Int -> Double -> ST s ()
+
+-- | The velocity hook of a six-column fill: it does nothing, and being
+-- passed to an @INLINE@ worker at a saturated call site it leaves no
+-- trace — the same technique 'App.Render.Quads.buildQuadsWith' uses for
+-- its identity permutation.
+noVelocity :: VelocityWrite s
+noVelocity _ _ _ _ = pure ()
+{-# INLINE noVelocity #-}
+
+-- | The shared row walk of both fills, parameterised by what to do with
+-- velocity. Inlined at both (saturated) call sites, so 'fillEmitter'
+-- compiles to the loop func-spec 0010 delivered: the six-column path pays
+-- nothing for the velocity path's existence.
+{-# INLINE fillEmitterWith #-}
+fillEmitterWith
+  :: VelocityWrite s
+  -> WriteRow s
+  -> CastContext
+  -> Time
+  -> EmitterSpec
+  -> [(Int, Int)]
+  -> Int
+  -> ST s Int
+fillEmitterWith onVelocity write ctx t em ranges row0 = goRange row0 ranges
   where
     env = emSpawn em
     count = emCount em
@@ -574,6 +671,7 @@ fillEmitter write ctx t em ranges row0 = goRange row0 ranges
               finalSize
               lifeFrac
               (rampColor ramp lifeFrac)
+            onVelocity frame row i ageD
             goIndex (row + 1) (i + 1) hi
 
 -- | The stable slots alive at @t@, in exactly the row order 'sample'
@@ -625,6 +723,61 @@ aliveSlotIndices spell t@(Time seconds)
 -- so there is exactly one copy of the formula.
 particlePosition :: CastContext -> Time -> EmitterSpec -> Int -> Double -> V3
 particlePosition ctx t em = positionIn (emitterFrame ctx em) ctx t em
+
+-- Velocity (func-spec 0023 S2) ------------------------------------------------
+
+-- | The backward difference interval of the velocity columns, in seconds.
+-- __Frozen__ (func-spec 0023 §2.4).
+--
+-- A constant, deliberately, and never the frame's @dt@. A trail's length
+-- is @|v|@ times a coefficient, so a @dt@-derived velocity would make the
+-- same spell trail differently on a 30 Hz machine and a 144 Hz one —
+-- which contradicts both determinism (ADR-0007) and the fixed-timestep
+-- axiom (architecture §11). @1\/240@ is short enough to track a fast
+-- trajectory's curvature and long enough that the difference of two
+-- 'Float' positions keeps its significant digits.
+velocityStep :: Double
+velocityStep = 1 / 240
+
+-- | Velocity of particle @i@ of an emitter at age @ageD@, in units per
+-- second — the analytic layer's half of a trailing particle's velocity.
+--
+-- __Definition__ (frozen, func-spec 0023 §2.4): the backward difference
+-- of the position formula over 'velocityStep',
+--
+-- > vel = (particlePosition age − particlePosition (age − h)) / h
+--
+-- with the earlier sample clamped to age 0 and the divisor shortened to
+-- match. A particle younger than @h@ is therefore differenced over the
+-- interval it actually has (one-sided), and a particle at exactly age 0
+-- reports zero rather than dividing by it. No negative age ever reaches
+-- the sampler, which matters because the trajectory and formula
+-- evaluators are total on @[0, ∞)@ and say nothing about the other side.
+--
+-- Why a difference and not a derivative: 'Magic.Rune.Formula' carries a
+-- player-written 'Magic.Expr.ExprV3', so a symbolic derivative would need
+-- a whole @Expr@ traversal plus answers for 'Magic.Expr.Chan' (not
+-- differentiable) and @floor@ \/ @sign@ (not continuous), to save one
+-- position evaluation (func-spec 0023 §8-2).
+--
+-- Determinism follows from 'particlePosition' being one: same
+-- @(ctx, t, emitter, index, age)@, same bits, on any machine and any
+-- number of cores.
+particleVelocity :: CastContext -> Time -> EmitterSpec -> Int -> Double -> V3
+particleVelocity ctx t em = velocityIn (emitterFrame ctx em) ctx t em
+
+-- | 'particleVelocity' with the per-emitter frame supplied — the form the
+-- sampler uses, so both sampled positions share the one frame the row's
+-- position was computed through.
+velocityIn :: EmitterFrame -> CastContext -> Time -> EmitterSpec -> Int -> Double -> V3
+velocityIn frame ctx t em i ageD
+  | h <= 0 = V3 0 0 0
+  | otherwise = vscale (realToFrac (1 / h)) (here - before)
+  where
+    earlier = max 0 (ageD - velocityStep)
+    h = ageD - earlier
+    here = positionIn frame ctx t em i ageD
+    before = positionIn frame ctx t em i earlier
 
 -- | The parts of the position formula that depend on the emitter and the
 -- cast context but not on the particle: the caster frame, the anchor in

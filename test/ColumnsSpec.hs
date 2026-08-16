@@ -90,6 +90,13 @@ spec = describe "Magic.Columns (func-spec 0011 §0.3)" $ do
                 , pbSize = sizes
                 , pbLife = lifes
                 , pbColor = colors
+                , -- Func-spec 0023: the six-column door leaves the
+                  -- velocity columns empty, which is what makes
+                  -- 'fromColumns' still produce exactly the buffer it
+                  -- always did.
+                  pbVelX = U.empty
+                , pbVelY = U.empty
+                , pbVelZ = U.empty
                 , pbCount = length rows
                 }
 
