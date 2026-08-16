@@ -224,22 +224,4 @@ are in [docs/release.md](docs/release.md); the reasoning is in
 
 ## License
 
-The **Particle Magic System License 1.0** — see [LICENSE](LICENSE). It is
-this project's own licence, not MIT, BSD, Apache or a variant of any of
-them, and the project is source-available rather than open source in the
-OSI sense. Please don't describe it as open source.
-
-Use, study, modification, commercial use and redistribution are all
-permitted, free of charge and without royalty. The two conditions are:
-
-1. **Credit, and no claim of authorship.** You may not present this
-   software, or a substantial portion of it, as your own original work.
-   Anything you distribute that is built on it must credit the author and
-   name this project as its origin — documentation, an about screen or a
-   credits list is enough. What you wrote yourself is still yours.
-2. **Tell the author.** Before you publicly release, publish, distribute
-   or sell something built on it, open an issue or email
-   `utomore@outlook.com` saying what it is and where to find it. Private
-   use, internal use, study and unreleased modification need no notice.
-   It is a notification, not a request for permission: no reply is
-   needed.
+MIT — see [LICENSE](LICENSE).

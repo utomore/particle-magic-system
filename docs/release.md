@@ -113,20 +113,3 @@ source-repository-package
 **對宿主的一句話**：在同一台機器上重播錄影，用相等比較；跨機器比對，用容差比較。
 
 **對本專案的一句話**：逐位元 golden 的摘要半場只在錄製它的平台（目前 windows/x86_64）斷言，每幀粒子數到處斷言——見 `test/GoldenPlatform.hs`。新增參考平台＝錄一份該平台的 golden ＋ 放寬 `referencePlatform`，其他 golden spec 的部分不動。**這條規則適用於每一份 golden**，包括 `examples/haskell/expected-output.txt`（enhance-0001 §8.3：它漏套過一次，代價是 CI 的 Linux 腳紅在一個 checksum 的最後一位小數）。
-
----
-
-## 6. 授權
-
-授權是本專案**自有的 Particle Magic System License 1.0**，不是 MIT／BSD／Apache，也不是它們的變體；本專案是 source-available，不是 OSI 意義下的 open source，請勿以「開源」描述。操作性條文在 [LICENSE](../LICENSE)，本節只講它對發布流程的意思。
-
-使用、研究、修改、商用、再散布一律免費允許。兩個條件是：
-
-1. **署名，且不得宣稱是自己的**：不得把本軟體或其中相當部分當成自己的原創作品（宣稱著作權、移除著作權聲明、以自己名義重新授權都算）。散布時必須標明原作者與本專案出處；文件、about 畫面或製作名單即可。使用者自己寫的部分仍然是他的。
-2. **必須通知作者**：公開發行／發布／散布／販售之前，以 GitHub issue 或 email 通知，說明作品名稱與位置。私下、內部、評估、研究、未發布的修改都不需要。**是告知不是申請**——不需要回覆。
-
-發布流程受影響的兩點：
-
-- `particle-magic.cabal` 的 `license:` 欄為 SPDX 的 `LicenseRef-ParticleMagic-1.0`（自訂授權沒有 SPDX id，只能用 LicenseRef），`license-file` 指向 `LICENSE`；`examples/haskell/particle-magic-example.cabal` 同。授權若升版，兩個欄位與 `LICENSE` 檔頭的版本號一起改。
-- 違反第 2 或 3 條的效果寫在授權第 4 條：授權自動終止，恢復合規後自動回復。這是條文本身的事，不需要發布流程做什麼。
-- **Hackage 上傳不在流程內**：自訂授權的套件雖可上傳，但它不是 OSI 授權，散布管道請以本 repo 的 git tag 為準（§4）。若未來要上 Hackage，屬於需要重新裁決的事。
