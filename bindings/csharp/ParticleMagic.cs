@@ -39,6 +39,7 @@ namespace ParticleMagic
         public const int ErrBudget = -2;        // PM_ERR_BUDGET
         public const int ErrCapacity = -3;      // PM_ERR_CAPACITY
         public const int ErrArgs = -4;          // PM_ERR_ARGS
+        public const int ErrQuota = -5;         // PM_ERR_QUOTA: scene full, retry after a Dismiss
 
         public const int BlendAlpha = 0;        // PM_BLEND_ALPHA
         public const int BlendAdditive = 1;     // PM_BLEND_ADDITIVE
@@ -103,6 +104,68 @@ namespace ParticleMagic
 
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
         public static extern void pm_free(IntPtr spell);
+
+        // --- Scenes: several casts alive at once (func-spec 0018) ---
+        //
+        // A PmScene* is an IntPtr like a PmSpell*, and the rules are the
+        // same: one scene per thread, free it exactly once. Two things
+        // differ, and both bite silently if you get them wrong:
+        //
+        //   * size the six columns from the globalCap you passed to
+        //     pm_scene_new, NOT from pm_max_particles(). The query bounds
+        //     ONE spell; a scene holds several. Undersize them and the
+        //     second cast starts returning ErrCapacity from
+        //     pm_scene_observe.
+        //   * a spell inside a scene has no PmSpell* of its own. Never
+        //     hand a scene's spell id to pm_free, and never move a
+        //     PmSpell* into a scene -- pick one mode per cast.
+        //
+        // ErrQuota is the one failure worth reacting to rather than only
+        // logging: the spell compiled, the scene is simply full, so a
+        // host may pm_scene_dismiss something and cast again.
+
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern IntPtr pm_scene_new(int globalCap);
+
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void pm_scene_free(IntPtr scene);
+
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int pm_scene_cast(IntPtr scene, byte[] circleJsonUtf8,
+                                               float[] casterPos, float[] casterFacing,
+                                               ulong seed, byte[] errBuf, int errLen,
+                                               out int outId);
+
+        // circleJsons is an array of NUL-terminated UTF-8 buffers composed
+        // into ONE spell. IntPtr[] rather than byte[][]: the marshaller
+        // cannot pin a jagged array, so pin each row yourself (GCHandle,
+        // or Marshal.AllocHGlobal + copy) and pass the pointers.
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int pm_scene_cast_many(IntPtr scene, IntPtr[] circleJsons, int count,
+                                                    float[] casterPos, float[] casterFacing,
+                                                    ulong seed, byte[] errBuf, int errLen,
+                                                    out int outId);
+
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void pm_scene_dismiss(IntPtr scene, int spellId);
+
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void pm_scene_advance(IntPtr scene, float dt);
+
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int pm_scene_observe(IntPtr scene,
+                                                  float[] posX, float[] posY, float[] posZ,
+                                                  float[] size, float[] life, uint[] color,
+                                                  int capacity, int[] batchInfo, int maxBatches);
+
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int pm_scene_budget(IntPtr scene, out int outUsed, out int outCap);
+
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int pm_scene_count(IntPtr scene);
+
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int pm_scene_spells(IntPtr scene, int[] outIds, int maxIds);
 
         // --- 2D projection (optional; a 3D host ignores these) ---
 

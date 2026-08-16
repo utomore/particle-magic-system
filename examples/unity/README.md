@@ -94,7 +94,49 @@ unity run <你的專案> --non-interactive -- \
 
 一個實測到的資料觀察：目前 9 個範例陣裡，alpha 批次的 buffer 順序**本來就**是由遠而近（發射器沿法線擠出，index 與深度單調相關），所以「排序前後看起來一樣」是正常的，不代表排序沒生效——上表最後一列驗的是置換本身相等，不受這件事影響。
 
-## 8. 還是要用眼睛看的三件事
+## 8. 一次好幾張陣：場景模式（func-spec 0018）
+
+上面整份說的都是**一張陣**：一個 `PmSpell*`、一個 `SpellRenderer`。要同時有好幾張（火球還在燒、護盾又升起來），不必自己開一個 `List<IntPtr>` 記帳——0018 把 `Magic.Scene` 整個送上了 C ABI，`ParticleMagic.cs` 裡的 `pm_scene_*` 十個函數就是它。
+
+差別只有三點，但每一點做錯都是靜默的：
+
+| | 單張陣 | 場景 |
+|---|---|---|
+| handle | `pm_cast` → `PmSpell*`，`pm_free` 釋放 | `pm_scene_new(globalCap)` → `PmScene*`，`pm_scene_free` 釋放 |
+| 新增／移除 | 一個 handle 一個法術 | `pm_scene_cast` 回一個 `int` id;提前收掉用 `pm_scene_dismiss(id)` |
+| 六欄開多大 | `pm_max_particles()`（**單一法術**的上限） | **你自己傳給 `pm_scene_new` 的 `globalCap`** |
+
+第三列是最容易出錯的一條：`pm_max_particles()` 界定的是一張陣，場景可以同時裝好幾張。拿它去配置場景的緩衝，第二張陣一進來 `pm_scene_observe` 就開始回 `Pm.ErrCapacity`,而且照 all-or-nothing 的慣例**整幀不畫**——看起來像閃爍，不像錯誤。
+
+每幀的迴圈與單張陣同形,只是換一組函數:
+
+```csharp
+scene = Pm.pm_scene_new(globalCap);          // 一次
+...
+Pm.pm_scene_advance(scene, fixedDt);         // 固定時步，一幀可能多次
+int batches = Pm.pm_scene_observe(scene, px, py, pz, size, life, color,
+                                  globalCap, batchInfo, maxBatches);
+// batchInfo 的佈局、PM_BATCH_INFO_STRIDE、手性、深度排序全部與 pm_observe 相同
+```
+
+新增的錯誤碼 `Pm.ErrQuota`（`PM_ERR_QUOTA`, −5）是唯一值得**反應**而不只是記 log 的一個：法術本身編得起來,只是場景滿了,所以宿主可以 `pm_scene_dismiss` 掉一個舊的再施一次。`pm_scene_budget(scene, out used, out cap)` 告訴你還剩多少;被拒的那一次**完全沒有改動場景**,三個查詢都與拒收前相同。
+
+另外兩條規則:
+
+- **法術不能跨模式。** 進了場景的法術**沒有** `PmSpell*`,既不能丟給 `pm_free`,也不能把既有的 `PmSpell*` 搬進場景。每次施法二選一。
+- **一個 scene 一個執行緒**,與 `PmSpell*` 同一條紀律(ADR-0011 D4)。
+
+本輪**沒有**附一個 `SceneRenderer.cs`——要看可跑的完整軌跡(兩張共存 → 第三張被配額拒 → 一張自然結束後配額釋放 → 第三張成功),跑 C 範例即可,它與 Unity 走的是同一份 DLL:
+
+```
+cabal build flib:particle-magic-ffi
+clang -Iinclude examples/c/scene.c particle-magic-ffi.dll -o pm_scene.exe
+./pm_scene.exe assets/spells/ring-fire.json
+```
+
+（`batch_info` 不會告訴你某個 batch 屬於哪一張陣——Haskell 面自己也不知道,C 面不多知道一件事。真有這個需求時的做法寫在 func-spec 0018 §8。）
+
+## 9. 還是要用眼睛看的三件事
 
 自動 smoke 驗不到的，按 Play 自己確認：
 

@@ -27,6 +27,7 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
 import Data.Word (Word32, Word64)
 import GHC.Float (castFloatToWord32)
+import GoldenPlatform (platformScopeNote, referencePlatform)
 import Magic.Codec (loadCircle)
 import Magic.Compile
   ( Anchor (..)
@@ -267,12 +268,23 @@ goldenFlight name = describe name $ do
     expected <- goldenOf name
     let frames = flight spell
         actual = map fst frames
+        -- ADR-0016 (func-spec 0019 S2): the column digest is a
+        -- same-platform law, the particle count is not. Off the platform
+        -- the goldens were recorded on, the count sequence is what stays
+        -- assertable — and it is what the legality checks below hang on.
+        compared (n, h) = if referencePlatform then (n, h) else (n, 0 :: Word64)
     length actual `shouldBe` length expected
-    case [i | (i, a, e) <- zip3 [0 :: Int ..] actual expected, a /= e] of
+    case [i | (i, a, e) <- zip3 [0 :: Int ..] actual expected, compared a /= compared e] of
       [] -> pure ()
       (i : _) ->
         expectationFailure
-          ( "frame " ++ show i ++ ": " ++ show (actual !! i) ++ " /= " ++ show (expected !! i)
+          ( "frame "
+              ++ show i
+              ++ ": "
+              ++ show (actual !! i)
+              ++ " /= "
+              ++ show (expected !! i)
+              ++ (if referencePlatform then "" else "\n  " ++ platformScopeNote)
           )
     let illegal =
           [ i

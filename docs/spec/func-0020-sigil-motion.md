@@ -2,16 +2,16 @@
 id: func-0020
 type: spec
 title: sigil-motion
-status: open
+status: done
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 depends-on: [func-0017]
 related-adr: [adr-0007, adr-0014, adr-0015, adr-0020]
 ---
 
 # Func-Spec 0020：陣形的時間維度（自轉、反向層、蓄力加速）
 
-> 狀態：**設計定案，待實作**
+> 狀態：**已完成**（2026-08-16 驗收，見 §9）
 > 性質：一般 —— 交付後凍結 `SigilSpin` 的分段角度函數與自轉導出規則。**同輪交付 ADR-0020**（逐位元邊界第三次收窄，取代 ADR-0015 D4）。
 > 前置依賴：**spec 0017（需已完成）**——本 spec 修改 `src/core/Magic/Sigil.hs` 與 `Particle/Analytic.hs` 的 `SpawnOnStroke` case，並依賴 0017 交付後的陣形時間軸（陣活到 `ppEnd`、無收束曲線）。0016／0017 皆為 `Sigil.hs`／`Compile.hs` 的前手，依 SKILL.md 規則 4 **動工門檻＝0017 驗收**。**與 spec 0018／0019 平行**（0018 觸 `src/ffi`＋`include`＋`bindings`，0019 觸 `.github`＋README＋cabal metadata——逐檔交集 = ∅，§0.2）。**與 spec 0025 平行**（其只碰 `Compile.hs`／`Circle.hs`／`Codec.hs`／`Interface.hs`／`src/ffi`，本 spec 明文不碰 `Compile.hs`，見 §2.2）。
 > 依據：spec 0006 §9（「陣形旋轉／動態陣形動畫」的原始記帳）、spec 0016 §8-3、**spec 0017 §8-2 與 [ADR-0015](../adr/adr-0015-sigil-persists-through-cast.md) 的後果末列**（「陣形旋轉／動態陣形變得更值得做——一個只存在 1.5 秒的陣沒什麼好轉的，**一個存在整場的陣有**」——本 spec 是那句話的兌現）；[ADR-0014](../adr/adr-0014-sigil-from-circle-hash.md)（摘要即合約）、**ADR-0015 D1／D2／D3／D4**（駐留、無收束、陣不吃力場、逐位元邊界——四條全部是本 spec 的前提）；ADR-0007（核心零 IO、引用透明）；architecture §3.3（生命週期）、§4.3（分層時間軸）。
@@ -248,10 +248,10 @@ flowchart LR
 
 | # | Todo | 測試 |
 |---|---|---|
-| S1 | `SigilSpin`／分段 `spinAngle`／`staticSpin`／`SigilStroke.skSpin` | `test/SigilSpinSpec.hs`（`spinAngle sp 0 == 0`（§2.4）；C¹ 連續：`t = ssRampEnd` 處角度與角速度皆連續（數值極限，property）；**角速度上界** `\|ω(t)\| ≤ \|rate\| + \|accel\|·rampEnd` 對任意 `t`（property——0017 之後的關鍵防護）；全函數且有限（含極端 `t`）；`staticSpin` 恆 0；**等距同構三律**：0016 的索引單調律、n 臂等分律、`\|R·p\| = \|p\| ≤ strokeRadius`（property，全六種 kind × 隨機 `t`）；`ssRate` 反號 ⇒ 角度反號） |
-| S2 | `sigilPlan` 的自轉導出（旋向由層索引、速率／加速度由摘要、`ssRampEnd = castStart`）＋位元分配註解表 | `test/SigilMotionSpec.hs`（決定論；相鄰層旋向相反（見證表）；中心筆畫 `ssRate == 0`；`\|ssRate\| ∈ [0.05,0.45]`、`ssAccel ∈ [0,0.30]` 且與 `ssRate` 同號（property）；`ssRampEnd ≡ castStart`（見證）；**本輪位段與 0016 位段不相交**——以 `hashCircle` 單位元翻轉見證：翻 0016 位段只變幾何、翻本輪位段只變自轉） |
-| S3 | `positionIn` 的 `SpawnOnStroke` case 套旋轉 | `test/SigilMotionWiringSpec.hs`（**主效果零影響律**：全部範例陣的**施放**發射器輸出於全相位、全時刻逐位元不變（施放永不走 `SpawnOnStroke` 的見證）；**無 `phases` 零影響律**：8 個無 `phases` 範例陣 `FrameOutput` 240 幀逐位元不變、golden 零重錄；**陣不吃力場律**（ADR-0015 D3 延伸）：強力場下陣形列的場位移恆為零，同時施放列確實被扭曲；陣形粒子恆落在 `emitterBounds` 內（`emitterBounds` 未修改的見證）） |
-| S4 | 端到端＋ADR-0020＋兩個 golden 與 `FieldPlumbingSpec` 兩摘要重錄＋手動 smoke | `test/Acceptance20Spec.hs`（240 幀決定論逐位元；同一 `t` 兩次取樣相同；**陣形點集隨 `t` 確實改變**（自轉真的發生，property 而非目視）；相鄰層角位移方向相反（端到端見證）；**蓄力段角速度嚴格遞增、`castStart` 之後恆定**（以連續三個時刻的角位移差見證）；`isFinished` 於 `ppEnd` 翻轉不變）＋**手動 smoke**：開窗目視三個範例陣的自轉、相鄰層反向、蓄力加速後維持，截圖描述入 §9 |
+| S1 ✅ | `SigilSpin`／分段 `spinAngle`／`staticSpin`／`SigilStroke.skSpin` | `test/SigilSpinSpec.hs`（`spinAngle sp 0 == 0`（§2.4）；C¹ 連續：`t = ssRampEnd` 處角度與角速度皆連續（數值極限，property）；**角速度上界** `\|ω(t)\| ≤ \|rate\| + \|accel\|·rampEnd` 對任意 `t`（property——0017 之後的關鍵防護）；全函數且有限（含極端 `t`）；`staticSpin` 恆 0；**等距同構三律**：0016 的索引單調律、n 臂等分律、`\|R·p\| = \|p\| ≤ strokeRadius`（property，全六種 kind × 隨機 `t`）；`ssRate` 反號 ⇒ 角度反號） |
+| S2 ✅ | `sigilPlan` 的自轉導出（旋向由層索引、速率／加速度由摘要、`ssRampEnd = castStart`）＋位元分配註解表 | `test/SigilMotionSpec.hs`（決定論；相鄰層旋向相反（見證表）；中心筆畫 `ssRate == 0`；`\|ssRate\| ∈ [0.05,0.45]`、`ssAccel ∈ [0,0.30]` 且與 `ssRate` 同號（property）；`ssRampEnd ≡ castStart`（見證）；**本輪位段與 0016 位段不相交**——以 `hashCircle` 單位元翻轉見證：翻 0016 位段只變幾何、翻本輪位段只變自轉） |
+| S3 ✅ | `positionIn` 的 `SpawnOnStroke` case 套旋轉 | `test/SigilMotionWiringSpec.hs`（**主效果零影響律**：全部範例陣的**施放**發射器輸出於全相位、全時刻逐位元不變（施放永不走 `SpawnOnStroke` 的見證）；**無 `phases` 零影響律**：8 個無 `phases` 範例陣 `FrameOutput` 240 幀逐位元不變、golden 零重錄；**陣不吃力場律**（ADR-0015 D3 延伸）：強力場下陣形列的場位移恆為零，同時施放列確實被扭曲；陣形粒子恆落在 `emitterBounds` 內（`emitterBounds` 未修改的見證）） |
+| S4 ✅ | 端到端＋ADR-0020＋兩個 golden 與 `FieldPlumbingSpec` 兩摘要重錄＋手動 smoke | `test/Acceptance20Spec.hs`（240 幀決定論逐位元；同一 `t` 兩次取樣相同；**陣形點集隨 `t` 確實改變**（自轉真的發生，property 而非目視）；相鄰層角位移方向相反（端到端見證）；**蓄力段角速度嚴格遞增、`castStart` 之後恆定**（以連續三個時刻的角位移差見證）；`isFinished` 於 `ppEnd` 翻轉不變）＋**手動 smoke**：開窗目視三個範例陣的自轉、相鄰層反向、蓄力加速後維持，截圖描述入 §9 |
 
 ## 8. 非目標
 
@@ -262,8 +262,110 @@ flowchart LR
 5. **筆畫自身的形變動畫**（半徑呼吸、`sweep` 開合、`GlyphBand` 遮罩隨時間切換）——那是改 `sampleStroke` 的閉式定義，會破壞 §2.1 的正交性。
 6. **陣的獨立時間軸**（`phases.linger`）——0017 §8-3 的記帳，需新 JSON 鍵。
 7. **靜止不重畫的陣**——0017 §8-1 的記帳。與本輪無關但常被一起提起：自轉讓「循環重畫」的視覺代價**變小**（轉動掩蓋了重生的接縫），可在 §9 回填目視觀察。
-8. **陣形 golden 改為結構性斷言**——ADR-0020 會**裁決**這件事，但實際改寫留給下一輪（本輪仍照舊重錄，以免把 ADR 的裁決與它的執行混在同一個 PR）。
+8. **陣形 golden 改為結構性斷言**——ADR-0020 會**裁決**這件事，但實際改寫留給下一輪（本輪仍照舊重錄，以免把 ADR 的裁決與它的執行混在同一個 PR）。**已由 ADR-0020 D3 裁決通過**：下一輪起改為結構性斷言，逐位元保護集中在施放粒子與無 `phases` 的法術上。
+9. **節點群繞面心公轉**（§9.6-1 的偏差記帳）——節點發射器走 `SpawnAtAnchor` ＋ 固定 `anchorOffset`，要它公轉必須改 `Magic.Compile.formationEmittersFor`，而 `Compile.hs` 零觸碰是本輪與 0025 平行的根據。形狀應是：讓節點錨點本身成為施法時鐘的函數（或改走一個單點的 `SpawnOnStroke`），與 0025 的 `anchors` 是同一類「錨點不再是常數」的需求，**應與 0025 合流後一起做**。中心不動維持不變——那是設計要的視覺定錨點，不是欠款。
+10. **每發射器提升三角函數**（§9.6-6）——把 `(cos θ, sin θ)` 提到 `EmitterFrame` 每幀算一次而非每粒子一次，可省下實測約 0.06 ms/幀。`EmitterFrame` 與 `positionIn` 屬 spec 0010 凍結面，應與 0022（效能第二階梯）一起評估。
 
 ## 9. 驗收紀錄
 
-（實作時回填：日期、`cabal test` 結果、位元分配表最終內容、golden 第三度重錄的首個差異幀、蓄力段角速度曲線的實測、三個範例陣的自轉手動 smoke 描述、與計畫的差異。）
+**日期**：2026-08-16。**測試**：`cabal test` → **1205 examples, 0 failures**（0017 交付時 1156）。`cabal build all` 綠（含 demo exe、`magic-validate`、bench、foreign-library）。
+
+### 9.1 四個 Todo 的測試結果
+
+| # | 測試模組 | 結果 |
+|---|---|---|
+| S1 | `test/SigilSpinSpec.hs` | 綠（14 條）。`spinAngle sp 0 == 0`、`t ≤ 0` 全段恆 0（全函數的 clamp）、`staticSpin` 恆 0；**C¹**（`t = ssRampEnd` 左右差商差 ≤ `\|accel\|·h`）；**角速度上界** `\|ω\| ≤ \|rate\| + \|accel\|·rampEnd`（property，`t ∈ [-1, 12]`）；蓄力段加速→之後恆速（四點見證）；反號⇒角度反號（`===`，逐位元）；極端 `t`（±1e12）無 NaN／Inf；**等距同構三律**：旋轉是剛性重標記（反轉回原點誤差 ≤ 1e-5）、`strokeParam` 單調不受影響、n 臂等分律於 6 種 kind × 3 種 spin × 4 個時刻仍成立、`\|R·p\| = \|p\| ≤ strokeRadius` |
+| S2 | `test/SigilMotionSpec.hs` | 綠（14 條）。決定論；輪廓 `SigilSpin 0.05 0 0`；**相鄰環反向**（五層全滿 `[1,1,-1,1,-1,1,-1]`、中間有空層的 `gappedCircle` `[1,1,-1,1,-1]`、三個範例陣皆交替）；`\|ssRate\| ∈ [0.05,0.45]`、`\|ssAccel\| ∈ [0,0.30]` 且同號（property over `genAnyCircle`）；`ssRampEnd ≡ phDraw + phConverge`（property＋四個範例陣見證 1.5／1.8／2.4／2.0）；**位段不相交**：18 個幾何摘要與改動前逐位元相同 |
+| S3 | `test/SigilMotionWiringSpec.hs` | 綠（9 條）。**主效果零影響律**：施放發射器永不帶 `SpawnOnStroke`（12 個範例＋property）、且施放列與「把每個 `skSpin` 歸零」的反事實建置**逐位元相同**（4 個陣 × 10 個時刻），同時陣形列確實不同；**無 `phases` 零影響律**：8 個範例零陣形發射器、逐時刻取樣逐位元相同、golden 零重錄；**陣不吃力場律**：強力場下陣形列位移恆為 0（4 個時刻）而施放列被扭曲；陣形粒子全落在未修改的 `emitterBounds` 內；**陣心不動** |
+| S4 | `test/Acceptance20Spec.hs` | 綠（9 條）。陣形點集隨 `t` 確實改變（3 段區間 × 4 個陣）、`t = 0` 仍是 0016 的原圖；**相鄰環角位移方向相反**（端到端，由取樣位置的有號夾角量得）；**蓄力段角位移嚴格遞增、`castStart` 之後恆定**（差異 < 1e-3）；240 幀決定論；同 `t` 兩次取樣逐位元相同；`isFinished` 於 `ppEnd` 翻轉不變；緩衝不超預算；發射器相位標記未新增 |
+
+同步加法（既有斷言零修改）：`SigilStrokeSpec` 加兩條「`sampleStroke`／`strokeParam`／`strokeRadius` 完全不看 `skSpin`」的 property——§2.1 正交性的直接見證，也是六種閉式定義不必重開的理由。
+
+### 9.2 最終的 `Word64` 位元分配表
+
+寫入 `Magic.Sigil` 的 `bitsAt` haddock。摘要 `d = hashCircle circle`：
+
+| 位元 | 輪次 | 用途 |
+|---|---|---|
+| 0..1 | 0016 | 對稱階（結構中心 ±1） |
+| 40..47 | 0016 | 輪廓刻度群起始相位 |
+
+層自有的字 `dl = mixW d layerIndex`：
+
+| 位元 | 輪次 | 用途 |
+|---|---|---|
+| 3..5 | 0016 | 六種筆畫擇一 |
+| 8..17 | 0016 | `skPhase` |
+| 18..26 / 21..23 / 24..27 / 28..31 / 32..33 | 0016 | ArcRing sweep／Polygram k／Spokes len／Ticks len／Rose k（依 kind 互斥） |
+| **34..40** | **0020** | `\|ssRate\|` |
+| **41..47** | **0020** | `\|ssAccel\|` |
+| 48..59 | 0016 | GlyphBand 遮罩 |
+| 0..2、6..7、60..63 | — | **未使用**（留給第四輪） |
+
+**0020 沒有從 `d` 本身多讀任何一個位元**：輪廓的自轉由結構定死（最外層、正向、取範圍下緣），旋向亦然（繪製序奇偶），只有兩個量值來自摘要。
+
+### 9.3 逐位元邊界與 golden 第三度重錄的實測
+
+`cabal test` 對舊 golden 的失敗報告：
+
+| 檔案／摘要 | 首個差異幀 | 對應 `t` |
+|---|---|---|
+| `test/golden/perf-0010/bare-sigil.txt` | **幀 0** | 1/60 s |
+| `test/golden/perf-0010/grand-sigil.txt` | **幀 0** | 1/60 s |
+| `FieldPlumbingSpec` `bare-sigil` 摘要 | — | 走 0.1 s 步長,同樣自第一步起 |
+| `FieldPlumbingSpec` `grand-sigil` 摘要 | — | 同上 |
+
+與 §1-6 的預測完全吻合：**邊界就是 `t = 0`**，`t > 0` 的第一幀即改變。粒子數逐幀相同（`(8, …)`／`(45, …)` 兩側一致），只有位置摘要改變——`emCount` 一個沒動,預算與 `PhasePlan` 四界標逐欄位不變。
+
+**無 `phases` 的 8 個範例 golden 零重錄**（`converge-flame`／`empty`／`gravity-well`／`lissajous`／`pulse-ring`／`ring-fire`／`spiral-spark`／`square-burst` 全綠）。`lattice-seal`／`soft-bloom` 不在 golden 集內。
+
+新值：`bare-sigil` 摘要 `2167537573813250408`、`grand-sigil` 摘要 `5046468577478034913`。
+
+### 9.4 蓄力段角速度曲線的實測（`lattice-seal`，`castStart = 2.4 s`、`ppEnd = 6.9 s`）
+
+`ω(t)` rad/s，中央差商實測：
+
+| 筆畫 | 0.5 | 1.0 | 1.5 | 2.0 | **2.4** | 3.0 | 4.5 | 6.0 | 6.9 |
+|---|---|---|---|---|---|---|---|---|---|
+| 0 輪廓 `ArcRing 1` | 0.050 | 0.050 | 0.050 | 0.050 | 0.050 | 0.050 | 0.050 | 0.050 | 0.050 |
+| 1 輪廓 `Ticks` | 0.050 | 0.050 | 0.050 | 0.050 | 0.050 | 0.050 | 0.050 | 0.050 | 0.050 |
+| 2 `ArcRing 0.94` | −0.396 | −0.502 | −0.608 | −0.715 | **−0.799** | −0.800 | −0.800 | −0.800 | −0.800 |
+| 3 `Polygram 7/4` | 0.175 | 0.183 | 0.191 | 0.200 | **0.206** | 0.206 | 0.206 | 0.206 | 0.206 |
+| 4 `GlyphBand` | −0.119 | −0.159 | −0.199 | −0.239 | **−0.271** | −0.271 | −0.271 | −0.271 | −0.271 |
+| 5 `Polygram 7/2` | 0.226 | 0.251 | 0.276 | 0.300 | **0.320** | 0.320 | 0.320 | 0.320 | 0.320 |
+| 6 `Rose 2` | −0.190 | −0.191 | −0.192 | −0.193 | **−0.194** | −0.194 | −0.194 | −0.194 | −0.194 |
+
+三件事同時可讀：**符號在繪製序上嚴格交替**、**每一層在 `t ≤ 2.4` 嚴格增速、之後恆定到小數第三位**、**峰值 0.800 rad/s（7.9 秒一圈）遠在設計上界 `0.45 + 0.30×2.4 = 1.17` 之內**。若沿用初稿的純二次式，`ω(6.9)` 會是 `0.29 + 0.21×6.9 ≈ 1.76`（2.4 倍），到法術尾聲已是模糊碟子——§2.3 的分段設計換到的就是這個差別。
+
+### 9.5 手動 smoke（開窗目視，2026-08-16）
+
+`lattice-seal` 以 `aaa-` 前綴複本開場，3D 檢視、滑鼠拖曳把相機仰角轉到 `el −89`（近正對陣面），每 ~280 ms 截圖共 44 張，橫跨一次自動重施：
+
+- **`age 1.20s`（Drawing 末）**：多層陣完整，中央的雙瓣 `Rose 2` 兩瓣約指向左上–右下；7 邊形環的頂點在右上。
+- **`age 2.72s`（剛過 `castStart`）**：雙瓣已明顯**逆向**轉開，兩瓣改為近上下；7 邊形環同時**順向**轉到頂點朝上——**相鄰環反向在畫面上直接讀得出來**。輪廓的刻度環幾乎沒動。
+- **`age 5.20s`（Casting 中段，1422 粒）**：內層再度轉過可觀角度，外框刻度仍只挪了很小一段——**外框慢、內部快**的設計意圖成立；陣的整體形狀（半徑、對稱、筆畫）與 `age 1.20s` 時完全一致，只有朝向不同,保長律的目視確認。
+- 對照 `age 5.58s` 的**上一次**施放與 `age 1.20s` 的**這一次**：同一個陣在不同時刻朝向不同,重施後從 0 重新開始轉——`spinAngle sp 0 = 0` 的目視確認。
+
+自轉同時把 0017 §8-1 記帳的「循環重畫接縫」蓋掉了不少：轉動中的圖形讓每 `formLife` 一次的重生在畫面上更不易察覺（§8-7 的預期成立）。
+
+「蓄力段加速後維持恆速」目視只能看出「有在加速」，精確的單調／恆定由 §9.4 的實測與 `Acceptance20Spec` 承擔，不以目視聲稱。
+
+### 9.6 實作備註（與設計文件的偏差）
+
+1. **§3.2「節點與中心」一列的節點半場未實作**（開發者裁決，2026-08-16）。節點發射器在 `Magic.Compile.formationEmittersFor` 走的是 `SpawnAtAnchor 0` ＋ 固定 `anchorOffset`，不走 `SpawnOnStroke`；要它們「整體繞面心公轉」必須改 `Compile.hs`，而 `Compile.hs` 零觸碰正是 §2.2 的證明與「與 0025 平行」的全部根據。**本輪只轉筆畫**；「中心筆畫 `ssRate = 0`」的視覺意圖天然成立（中心與節點發射器是錨定點，旋轉在結構上到不了它們），由 `SigilMotionWiringSpec` 的「陣心不動」見證。節點公轉記帳於 §8-9。
+2. **§7 S2 的「以 `hashCircle` 單位元翻轉見證位段不相交」不可能成立，已改為等價的幾何摘要 golden**（開發者裁決，2026-08-16）。0016 的層飾紋來自 `dl = mixW d idx`，而 `mixW` 依賴 `d` 的**每一個**位元——翻任何一位都會改幾何，所以「翻 0016 位段只變幾何、翻本輪位段只變自轉」在數學上做不到。改採：改動**前**擷取 18 個電路（五槽階梯 0..5 ＋ 12 個範例）全部非 `skSpin` 欄位的 FNV 摘要，寫死進 `SigilMotionSpec`；改動後逐位元相同 ⇒ 本輪沒有動到 0016 的任何一個位段。此法是端到端的、不需要為測試擴大凍結模組的匯出面，見 §9.2 的分配表。
+3. **旋向由「層索引奇偶」改為「繪製序奇偶」**。§3.2 寫的是層索引，但中間有空層時兩個相鄰**畫出來**的環會同向——實測 `grand-sigil` 佔用 idx 1,3,4,5，索引奇偶給出 −,−,+,− ，畫面上最外兩環同向轉，讀起來像 bug，且會讓 §7 S4 明文要求的「相鄰層角位移方向相反」端到端測試失敗。改以繪製序（輪廓群＝序 0，各佔用層依序 1,2,3…）後恆為交替，仍是純結構決定。層自有的字 `dl` 仍用**層索引**取，所以 0016 的幾何逐位元不變（§9.2 的摘要見證）。`gappedCircle` 是專為這條加的 fixture。
+4. **`spinAngle` 對 `t < 0` clamp 到 0**（§3.1 只寫「全函數」）。不 clamp 的話 `ω(t) = rate + accel·t` 在負時間無界，§7 S1 明文要求的角速度上界 property 會在 `t < 0` 破掉。施法時鐘本來就不為負，但既有測試會以 `choose (-1, 12)` 取樣，clamp 讓上界在整條實數線上成立，且 `spinAngle sp 0 = 0` 依然是 `t ≤ 0` 全段的值。
+5. **`ssRampEnd` 由 `sigilPlan` 自行從 `circlePhases` 算出**，`sigilPlan :: Circle -> SigilPlan` 簽名不變。§2.3 說「編譯期烤進資料」，但沒說由誰算；`Circle` 本身就帶著 `phases`，所以不需要像 0017 那樣多傳一個 `Seconds`——這也是 `Compile.hs` 能完全不碰的最後一塊。
+6. **每粒子每幀一對 `sin`／`cos`，未做每發射器提升**。可以把 `(cos θ, sin θ)` 提到 `EmitterFrame` 每幀算一次，但那是 spec 0010 凍結的結構，為實測約 +0.06 ms/幀動它不划算。記帳於 §8-10。
+
+### 9.7 凍結清單（下游 spec 可引用）
+
+- `data SigilSpin = SigilSpin { ssRate, ssAccel, ssRampEnd :: !Float }` 三欄形狀，與 `staticSpin`。
+- `spinAngle :: SigilSpin -> Double -> Float` 的**分段角度函數**：蓄力段二次、`ssRampEnd` 之後線性；C¹；`t ≤ 0` 恆 0；角速度上界 `|ssRate| + |ssAccel|·ssRampEnd`。改它會改變每一個既有法術的陣怎麼轉。
+- `SigilStroke.skSpin` 欄位；起始相位仍**只**住在 `skPhase`（再開一個起始相位欄會使 `spinAngle sp 0 = 0` 失效，連帶失去 `t = 0` 的逐位元邊界）。
+- **自轉導出規則**：旋向＝繪製序奇偶（輪廓群為序 0、正向）；`|ssRate| ∈ [0.05, 0.45]`；`|ssAccel| ∈ [0, 0.30]` 且與 `ssRate` 同號；`ssRampEnd = phDraw + phConverge`。
+- **摘要位段**：`dl` 的 34..47 已被本輪佔用；`d` 的 0..1、40..47 與 `dl` 的 3..5、8..33、48..59 屬 0016。未使用者僅 `dl` 的 0..2、6..7、60..63（§9.2）。
+- **旋轉繞面平面原點**（`Magic.Particle.Analytic.rotate2`）——保長性是 `strokeRadius`／`emitterBounds`／spec 0010 剔除全部零變更的唯一根據。改成繞筆畫自身中心會同時推翻這四者。
+- **逐位元邊界 `t = 0`**，與兩條零影響律（主效果、無 `phases`）——ADR-0020 D1／D2。
+- 自轉吃**施法時鐘**（調變層語意），不吃粒子年齡——ADR-0020「被否決的方案」第二條。

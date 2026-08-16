@@ -46,6 +46,18 @@ module Magic.FFI
   , pm_project
   , pm_depth_order
 
+    -- * Scene entry points (func-spec 0018; the same contract, extended)
+  , pm_scene_new
+  , pm_scene_free
+  , pm_scene_cast
+  , pm_scene_cast_many
+  , pm_scene_dismiss
+  , pm_scene_advance
+  , pm_scene_observe
+  , pm_scene_budget
+  , pm_scene_count
+  , pm_scene_spells
+
     -- * Contract constants (mirrored in @include\/particle_magic.h@,
     -- guarded by @test\/FFIContractSpec.hs@)
   , pmAbiVersion
@@ -55,20 +67,25 @@ module Magic.FFI
   , pmErrBudget
   , pmErrCapacity
   , pmErrArgs
+  , pmErrQuota
   , pmPlaneSideXY
   , pmPlaneTopXZ
   , blendCode
   , shapeCode
   , planeOf
+  , refusalCode
 
     -- * Internals (not part of the C contract; exposed for testing)
   , SpellCell (..)
   , nullSpell
   , isNullSpell
+  , SceneCell (..)
+  , nullScene
+  , isNullScene
   , writeErr
   ) where
 
-import Control.Monad (foldM)
+import Control.Monad (foldM, when)
 import qualified Data.ByteString as BS
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import qualified Data.Vector.Unboxed as U
@@ -98,6 +115,7 @@ import Magic.Interface
   , BlendMode (..)
   , CastContext (..)
   , CastRequest (..)
+  , Circle
   , DeltaTime (..)
   , FrameInput (..)
   , FrameOutput (batches)
@@ -113,6 +131,20 @@ import Magic.Interface
   , spellAge
   )
 import Magic.Projection (V2 (..), ViewPlane (..), depthOrder, orthographic)
+import Magic.Scene
+  ( CastRefusal (..)
+  , Scene
+  , SceneConfig (..)
+  , SpellId (..)
+  , advanceScene
+  , castInto
+  , castManyInto
+  , dismiss
+  , newScene
+  , observeScene
+  , sceneBudget
+  , sceneSpells
+  )
 
 -- Contract constants ---------------------------------------------------------
 
@@ -138,7 +170,7 @@ pmAbiVersion = 1
 pmMaxParticles :: CInt
 pmMaxParticles = 16384
 
-pmOk, pmErrJson, pmErrBudget, pmErrCapacity, pmErrArgs :: CInt
+pmOk, pmErrJson, pmErrBudget, pmErrCapacity, pmErrArgs, pmErrQuota :: CInt
 pmOk = 0
 pmErrJson = -1
 pmErrBudget = -2
@@ -148,6 +180,36 @@ pmErrCapacity = -3
 -- selector that is neither 'pmPlaneSideXY' nor 'pmPlaneTopXZ' (func-spec
 -- 0011 §3). Only the array entry points can return it.
 pmErrArgs = -4
+
+-- | The spell compiled, but the scene's @global_cap@ has no room left for
+-- it (func-spec 0018): 'Magic.Scene.QuotaExceeded' crossing the boundary.
+-- Distinct from 'pmErrBudget' on purpose — a host can retry a quota
+-- refusal after dismissing something, and cannot retry a compile failure
+-- at all.
+pmErrQuota = -5
+
+-- | 'CastRefusal' → C code. A pure function, so the classification is
+-- testable without a handle in sight, and so the /only/ decision the
+-- scene entry points make is which of the frozen constants to hand back.
+refusalCode :: CastRefusal -> CInt
+refusalCode = \case
+  CompileFailed _ -> pmErrBudget
+  QuotaExceeded _ _ -> pmErrQuota
+
+-- | The human-readable half of a refusal, for the host's @err_buf@. The
+-- 'CompileFailed' text is the one 'pm_cast_ex' already writes, so the two
+-- cast paths report a bad circle identically; 'QuotaExceeded' carries
+-- both of its numbers, since @need@ is the one thing
+-- 'pm_scene_budget' cannot tell the host afterwards (func-spec 0018 §8-2).
+refusalMessage :: CastRefusal -> String
+refusalMessage = \case
+  CompileFailed err -> "spell compile error: " ++ show err
+  QuotaExceeded need remaining ->
+    "scene quota exceeded: needs "
+      ++ show need
+      ++ " particles, "
+      ++ show remaining
+      ++ " left"
 
 -- | Wire codes for 'ViewPlane', declaration order of the core's
 -- constructors — same convention as 'blendCode' (guarded by
@@ -201,6 +263,31 @@ withCell h fallback k
   | isNullSpell h = pure fallback
   | otherwise = do
       SpellCell ref <- deRefStablePtr h
+      k ref
+
+-- | What a @PmScene*@ points at (func-spec 0018 §3.3): the same shape as
+-- 'SpellCell', for the same reason — 'Magic.Scene.Scene' is an immutable
+-- pure value and hosts want to advance it in place, so the handle is a
+-- cell the entry points read, compute and write back (ADR-0011 D4).
+--
+-- A scene owns its spells outright: they have no 'SpellCell' of their
+-- own, which is what keeps @pm_free@ and @pm_scene_dismiss@ from ever
+-- naming the same cast (func-spec 0018 §2).
+newtype SceneCell = SceneCell (IORef Scene)
+
+-- | The @NULL@ scene handle, tolerated by every @pm_scene_*@ entry point
+-- exactly as 'nullSpell' is by the single-spell ones.
+nullScene :: StablePtr SceneCell
+nullScene = castPtrToStablePtr nullPtr
+
+isNullScene :: StablePtr SceneCell -> Bool
+isNullScene h = castStablePtrToPtr h == nullPtr
+
+withScene :: StablePtr SceneCell -> b -> (IORef Scene -> IO b) -> IO b
+withScene h fallback k
+  | isNullScene h = pure fallback
+  | otherwise = do
+      SceneCell ref <- deRefStablePtr h
       k ref
 
 -- Entry points ---------------------------------------------------------------
@@ -376,35 +463,57 @@ pm_observe
 pm_observe h px py pz psize plife pcolor capacity infoPtr maxBatches =
   withCell h 0 $ \ref -> do
     spell <- readIORef ref
-    let bs = batches (observeSpell spell)
-        buffers = map rbParticles bs
-        total = sum (map pbCount buffers)
-        nBatches = length bs
-        columns = [castPtr px, castPtr py, castPtr pz, castPtr psize, castPtr plife, castPtr pcolor] :: [Ptr ()]
-        columnsMissing = total > 0 && any (== nullPtr) columns
-        infoMissing = nBatches > 0 && infoPtr == nullPtr
-    if total > fromIntegral capacity
-      || nBatches > fromIntegral maxBatches
-      || columnsMissing
-      || infoMissing
-      then pure pmErrCapacity
-      else do
-        let writeBatch offset (i, batch) = do
-              let pb = rbParticles batch
-                  n = pbCount pb
-              copyFloats px offset (pbPosX pb)
-              copyFloats py offset (pbPosY pb)
-              copyFloats pz offset (pbPosZ pb)
-              copyFloats psize offset (pbSize pb)
-              copyFloats plife offset (pbLife pb)
-              copyWords pcolor offset (pbColor pb)
-              pokeElemOff infoPtr (4 * i) (fromIntegral offset)
-              pokeElemOff infoPtr (4 * i + 1) (fromIntegral n)
-              pokeElemOff infoPtr (4 * i + 2) (blendCode (rbBlend batch))
-              pokeElemOff infoPtr (4 * i + 3) (shapeCode (rbShape batch))
-              pure (offset + n)
-        _ <- foldM writeBatch 0 (zip [0 :: Int ..] bs)
-        pure (fromIntegral nBatches)
+    copyOut (batches (observeSpell spell)) px py pz psize plife pcolor capacity infoPtr maxBatches
+
+-- | The copy-out shared by 'pm_observe' and 'pm_scene_observe' (func-spec
+-- 0018 §3.3): a batch list into the host's six columns plus one
+-- @batch_info@ record each, with the capacity check run to completion
+-- /before/ the first poke — which is what makes the error path
+-- all-or-nothing for both entry points at once.
+--
+-- Lifted out of 'pm_observe' unchanged; @test\/FFIObserveSpec.hs@ and
+-- @test\/Acceptance9Spec.hs@ are the regression net for that move.
+copyOut
+  :: [RenderBatch]
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Ptr Word32
+  -> CInt
+  -> Ptr CInt
+  -> CInt
+  -> IO CInt
+copyOut bs px py pz psize plife pcolor capacity infoPtr maxBatches = do
+  let buffers = map rbParticles bs
+      total = sum (map pbCount buffers)
+      nBatches = length bs
+      columns = [castPtr px, castPtr py, castPtr pz, castPtr psize, castPtr plife, castPtr pcolor] :: [Ptr ()]
+      columnsMissing = total > 0 && any (== nullPtr) columns
+      infoMissing = nBatches > 0 && infoPtr == nullPtr
+  if total > fromIntegral capacity
+    || nBatches > fromIntegral maxBatches
+    || columnsMissing
+    || infoMissing
+    then pure pmErrCapacity
+    else do
+      let writeBatch offset (i, batch) = do
+            let pb = rbParticles batch
+                n = pbCount pb
+            copyFloats px offset (pbPosX pb)
+            copyFloats py offset (pbPosY pb)
+            copyFloats pz offset (pbPosZ pb)
+            copyFloats psize offset (pbSize pb)
+            copyFloats plife offset (pbLife pb)
+            copyWords pcolor offset (pbColor pb)
+            pokeElemOff infoPtr (4 * i) (fromIntegral offset)
+            pokeElemOff infoPtr (4 * i + 1) (fromIntegral n)
+            pokeElemOff infoPtr (4 * i + 2) (blendCode (rbBlend batch))
+            pokeElemOff infoPtr (4 * i + 3) (shapeCode (rbShape batch))
+            pure (offset + n)
+      _ <- foldM writeBatch 0 (zip [0 :: Int ..] bs)
+      pure (fromIntegral nBatches)
 
 foreign export ccall pm_free :: StablePtr SpellCell -> IO ()
 
@@ -414,6 +523,282 @@ pm_free :: StablePtr SpellCell -> IO ()
 pm_free h
   | isNullSpell h = pure ()
   | otherwise = freeStablePtr h
+
+-- Scenes (func-spec 0018) ----------------------------------------------------
+--
+-- Ten entry points that are the item-for-item image of "Magic.Scene"'s
+-- export list (§2 of the spec): every one crosses types, calls one frozen
+-- boundary function, and crosses back. Nothing decides anything here —
+-- admission, the quota arithmetic and the batch order all live in the
+-- pure layer, which is what makes @test\/Acceptance18Spec.hs@'s
+-- equivalence law provable rather than aspirational.
+
+foreign export ccall pm_scene_new :: CInt -> IO (StablePtr SceneCell)
+
+-- | Open a scene whose live spells may hold @global_cap@ particles in
+-- total.
+--
+-- A negative cap is /not/ rejected: 'newScene' defines it as a scene that
+-- admits nothing, and turning a defined behaviour into an argument error
+-- here would be a semantic the Haskell path does not have (func-spec 0018
+-- §2). Never returns the 'nullScene' handle in this generation.
+pm_scene_new :: CInt -> IO (StablePtr SceneCell)
+pm_scene_new cap =
+  newStablePtr . SceneCell =<< newIORef (newScene (SceneConfig (fromIntegral cap)))
+
+foreign export ccall pm_scene_free :: StablePtr SceneCell -> IO ()
+
+-- | Release a scene and, with it, every spell still live inside it.
+-- Freeing 'nullScene' is a no-op; freeing twice is undefined behaviour.
+pm_scene_free :: StablePtr SceneCell -> IO ()
+pm_scene_free h
+  | isNullScene h = pure ()
+  | otherwise = freeStablePtr h
+
+foreign export ccall pm_scene_cast
+  :: StablePtr SceneCell
+  -> CString
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Word64
+  -> CString
+  -> CInt
+  -> Ptr CInt
+  -> IO CInt
+
+-- | Cast one circle into the scene: 'pmOk' with the new
+-- 'Magic.Scene.SpellId' written to @out_id@, or one of 'pmErrJson',
+-- 'pmErrBudget', 'pmErrQuota' and 'pmErrArgs' with the reason in
+-- @err_buf@. Every failure leaves the scene exactly as it was — that is
+-- 'castInto''s own promise, kept here by not writing the cell back.
+pm_scene_cast
+  :: StablePtr SceneCell
+  -> CString
+  -- ^ circle JSON, NUL-terminated UTF-8
+  -> Ptr CFloat
+  -- ^ caster position, 3 floats
+  -> Ptr CFloat
+  -- ^ caster facing, 3 floats
+  -> Word64
+  -- ^ cast seed
+  -> CString
+  -- ^ error buffer (may be @NULL@)
+  -> CInt
+  -- ^ error buffer capacity in bytes, including the NUL
+  -> Ptr CInt
+  -- ^ out: the admitted spell's id
+  -> IO CInt
+pm_scene_cast h json posPtr facingPtr sd errBuf errLen outId =
+  withCast h posPtr facingPtr sd errBuf errLen outId $ \ref ctx ->
+    if json == nullPtr
+      then castFail errBuf errLen pmErrJson "spell JSON error: null pointer"
+      else do
+        bytes <- BS.packCString json
+        case loadCircle bytes of
+          Left err -> castFail errBuf errLen pmErrJson (renderLoadError err)
+          Right circle ->
+            admitInto ref outId errBuf errLen (castInto CastRequest {circleOf = circle, ctxOf = ctx})
+
+foreign export ccall pm_scene_cast_many
+  :: StablePtr SceneCell
+  -> Ptr CString
+  -> CInt
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Word64
+  -> CString
+  -> CInt
+  -> Ptr CInt
+  -> IO CInt
+
+-- | 'pm_scene_cast' for a composition: @count@ circles compiled into one
+-- spell, one id, one share of the quota ('castManyInto', func-spec 0012
+-- §5). @count == 0@ casts the empty composition, which is legal and
+-- costs nothing.
+--
+-- The first circle that fails to decode stops the whole cast with
+-- 'pmErrJson'; nothing is admitted, since the composition is one spell.
+pm_scene_cast_many
+  :: StablePtr SceneCell
+  -> Ptr CString
+  -- ^ @count@ NUL-terminated UTF-8 circle JSONs
+  -> CInt
+  -- ^ how many
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Word64
+  -> CString
+  -> CInt
+  -> Ptr CInt
+  -> IO CInt
+pm_scene_cast_many h jsons count posPtr facingPtr sd errBuf errLen outId
+  | count < 0 = castFail errBuf errLen pmErrArgs "scene cast error: negative count"
+  | otherwise =
+      withCast h posPtr facingPtr sd errBuf errLen outId $ \ref ctx ->
+        if count > 0 && jsons == nullPtr
+          then castFail errBuf errLen pmErrArgs "scene cast error: null circle array"
+          else do
+            ptrs <- traverse (peekElemOff jsons) [0 .. fromIntegral count - 1]
+            loaded <- loadCircles ptrs
+            case loaded of
+              Left msg -> castFail errBuf errLen pmErrJson msg
+              Right circles -> admitInto ref outId errBuf errLen (castManyInto circles ctx)
+  where
+    -- The composition's circles, or the first decode failure's message.
+    loadCircles :: [CString] -> IO (Either String [Circle])
+    loadCircles = go id
+      where
+        go acc [] = pure (Right (acc []))
+        go acc (p : ps)
+          | p == nullPtr = pure (Left "spell JSON error: null pointer")
+          | otherwise = do
+              bytes <- BS.packCString p
+              case loadCircle bytes of
+                Left err -> pure (Left (renderLoadError err))
+                Right circle -> go (acc . (circle :)) ps
+
+-- | The argument check and cast-context assembly both scene cast entry
+-- points share. @out_id@ is pre-set to @-1@ (never a 'SpellId', which
+-- ascends from 0) so a host that ignores the return code still sees that
+-- nothing was admitted.
+withCast
+  :: StablePtr SceneCell
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Word64
+  -> CString
+  -> CInt
+  -> Ptr CInt
+  -> (IORef Scene -> CastContext -> IO CInt)
+  -> IO CInt
+withCast h posPtr facingPtr sd errBuf errLen outId k
+  | isNullScene h = castFail errBuf errLen pmErrArgs "scene cast error: null scene"
+  | outId == nullPtr = castFail errBuf errLen pmErrArgs "scene cast error: null out_id"
+  | otherwise = do
+      poke outId (-1)
+      SceneCell ref <- deRefStablePtr h
+      pos <- peekV3 posPtr
+      facing <- peekV3 facingPtr
+      k ref CastContext {casterPos = pos, casterFacing = facing, seed = Seed sd}
+
+-- | Commit an admission decision to the cell, or report the refusal.
+admitInto
+  :: IORef Scene
+  -> Ptr CInt
+  -> CString
+  -> CInt
+  -> (Scene -> Either CastRefusal (SpellId, Scene))
+  -> IO CInt
+admitInto ref outId errBuf errLen admit = do
+  scene <- readIORef ref
+  case admit scene of
+    Left refusal -> castFail errBuf errLen (refusalCode refusal) (refusalMessage refusal)
+    Right (SpellId sid, scene') -> do
+      writeIORef ref $! scene'
+      poke outId (fromIntegral sid)
+      pure pmOk
+
+castFail :: CString -> CInt -> CInt -> String -> IO CInt
+castFail errBuf errLen code msg = writeErr errBuf errLen msg >> pure code
+
+foreign export ccall pm_scene_dismiss :: StablePtr SceneCell -> CInt -> IO ()
+
+-- | Remove a spell early. An unknown id — stale, already finished, never
+-- issued — is a no-op, because 'dismiss' says so and ids are never
+-- reused; the C side therefore needs no generation counter.
+pm_scene_dismiss :: StablePtr SceneCell -> CInt -> IO ()
+pm_scene_dismiss h sid =
+  withScene h () $ \ref -> do
+    scene <- readIORef ref
+    writeIORef ref $! dismiss (SpellId (fromIntegral sid)) scene
+
+foreign export ccall pm_scene_advance :: StablePtr SceneCell -> CFloat -> IO ()
+
+-- | Advance every live spell by @dt@ seconds, in place, dropping the ones
+-- that finished — which is also how their share of the quota comes back.
+pm_scene_advance :: StablePtr SceneCell -> CFloat -> IO ()
+pm_scene_advance h dt =
+  withScene h () $ \ref -> do
+    scene <- readIORef ref
+    writeIORef ref $! advanceScene (FrameInput (DeltaTime (cfloatToDouble dt))) scene
+
+foreign export ccall pm_scene_observe
+  :: StablePtr SceneCell
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Ptr Word32
+  -> CInt
+  -> Ptr CInt
+  -> CInt
+  -> IO CInt
+
+-- | Sample every live spell into the host's six columns — 'observeScene'
+-- through the same 'copyOut' 'pm_observe' uses, so the layout, the
+-- capacity rule and the all-or-nothing error path are not merely alike
+-- but literally the same code.
+--
+-- Batches arrive concatenated in 'SpellId' order and are not merged
+-- across spells. Which spell a batch came from is not reported: the
+-- Haskell path does not know either, and the C side is not allowed to
+-- know more (func-spec 0018 §0.3).
+pm_scene_observe
+  :: StablePtr SceneCell
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Ptr CFloat
+  -> Ptr Word32
+  -> CInt
+  -> Ptr CInt
+  -> CInt
+  -> IO CInt
+pm_scene_observe h px py pz psize plife pcolor capacity infoPtr maxBatches =
+  withScene h 0 $ \ref -> do
+    scene <- readIORef ref
+    copyOut (batches (observeScene scene)) px py pz psize plife pcolor capacity infoPtr maxBatches
+
+foreign export ccall pm_scene_budget
+  :: StablePtr SceneCell -> Ptr CInt -> Ptr CInt -> IO CInt
+
+-- | @(particles committed by the live spells, the scene's cap)@ —
+-- 'sceneBudget' verbatim. Either out pointer may be @NULL@ for a host
+-- that only wants the other one.
+pm_scene_budget :: StablePtr SceneCell -> Ptr CInt -> Ptr CInt -> IO CInt
+pm_scene_budget h outUsed outCap =
+  withScene h pmErrArgs $ \ref -> do
+    (used, cap) <- sceneBudget <$> readIORef ref
+    when (outUsed /= nullPtr) (poke outUsed (fromIntegral used))
+    when (outCap /= nullPtr) (poke outCap (fromIntegral cap))
+    pure pmOk
+
+foreign export ccall pm_scene_count :: StablePtr SceneCell -> IO CInt
+
+-- | How many spells are live — the capacity 'pm_scene_spells' wants.
+pm_scene_count :: StablePtr SceneCell -> IO CInt
+pm_scene_count h =
+  withScene h 0 $ \ref -> fromIntegral . length . sceneSpells <$> readIORef ref
+
+foreign export ccall pm_scene_spells :: StablePtr SceneCell -> Ptr CInt -> CInt -> IO CInt
+
+-- | The live spells' ids in admission order. Returns how many were
+-- written, or 'pmErrCapacity' with __nothing written at all__ when they
+-- do not fit — the same all-or-nothing rule 'pm_observe' follows.
+pm_scene_spells :: StablePtr SceneCell -> Ptr CInt -> CInt -> IO CInt
+pm_scene_spells h outIds maxIds =
+  withScene h 0 $ \ref -> do
+    ids <- sceneSpells <$> readIORef ref
+    let n = length ids
+    if n > fromIntegral maxIds || (n > 0 && outIds == nullPtr)
+      then pure pmErrCapacity
+      else do
+        mapM_
+          (\(i, SpellId sid) -> pokeElemOff outIds i (fromIntegral sid))
+          (zip [0 ..] ids)
+        pure (fromIntegral n)
 
 -- Projection (func-spec 0011 §3) ---------------------------------------------
 --

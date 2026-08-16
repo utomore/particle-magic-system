@@ -1,7 +1,16 @@
 # Changelog
 
-All notable changes to this project are documented here, one line per
+All notable changes to this project are documented here, one entry per
 delivered function spec (details in `docs/spec/`).
+
+Format rules (the authority is [docs/release.md](docs/release.md) §3, and
+`test/ReleaseMetaSpec.hs` enforces the first of them):
+
+- one `## <version> — <YYYY-MM-DD>` section per release, and the version
+  in `particle-magic.cabal` must have a section here;
+- inside a section, one entry per function spec, in numerical order,
+  opening with **`00NN <title>`**;
+- entries say what the round delivered, not what files moved.
 
 ## 0.1.0.0 — 2026-08-13
 
@@ -164,3 +173,80 @@ delivered function spec (details in `docs/spec/`).
   and matched frame for frame; the second term caught a pre-existing bug
   where a circle with `phConverge < formLife` (bare-sigil) started fading
   before it had finished being drawn. (delivered)
+- **0018 the scene layer on the C ABI** — ADR-0012 D8 lifted: its condition
+  was that the scene API be used for a round on the Haskell side before
+  being frozen into a C contract, and spec 0012 met it. A non-Haskell host
+  now gets the same multi-spell capability a Haskell one has — several
+  casts alive under one global particle quota, first-come-first-served
+  admission, quota released the moment a spell ends — instead of keeping
+  its own book of `PmSpell*` handles and their sizes. Ten purely additive
+  exports (`pm_scene_new` / `_free` / `_cast` / `_cast_many` / `_dismiss` /
+  `_advance` / `_observe` / `_budget` / `_count` / `_spells`), one opaque
+  `PmScene*`, one new error code `PM_ERR_QUOTA` (−5) — the one failure a
+  host can act on rather than only log, since the spell compiled and the
+  scene is merely full. `PM_ABI_VERSION` stays 1; the frozen entry-point
+  list grows 11 → 21 and nothing in it changes. The C surface is the
+  item-for-item image of `Magic.Scene`'s export list and adds no semantics
+  of its own: `Acceptance18Spec` states that as an equivalence over
+  generated histories of interleaved casts, dismissals and frames, checking
+  the six columns, the batch descriptors, the admission verdict and the
+  quota ledger after every single step. `pm_scene_observe` shares
+  `pm_observe`'s copy-out verbatim, so the layout, the capacity rule and
+  the all-or-nothing error path are the same code rather than merely alike.
+  Which spell a batch came from is deliberately not reported — `observeScene`
+  does not know either, and the C side is not allowed to know more. A scene
+  owns its spells outright (they have no `PmSpell*`), which is what keeps
+  `pm_free` and `pm_scene_dismiss` from ever naming the same cast. C#
+  binding and a C example (`examples/c/scene.c`) follow. `src/core` and
+  `src/boundary` untouched. (delivered)
+- **0019 engineering: CI, release policy, the second platform** — ADR-0016.
+  "This branch is good to merge" stops depending on one Windows machine:
+  `.github/workflows/ci.yml` runs build → test → `magic-validate` on
+  `windows-latest` and `ubuntu-latest` for every pull request into `main`
+  (plus `v*` tags and on demand — this repository is private, so runner
+  minutes are billed and Windows costs double, and the gate belongs at the
+  merge rather than at every push; ADR-0016 D5). Four text-contract
+  tests keep the workflow, the cabal metadata, `README.md` and
+  `docs/release.md` from drifting apart (support tiers ≡ CI matrix, the
+  declared `tested-with` ≡ the compiler CI installs, every dependency
+  carries a PVP upper bound, the tag format is derived from the version
+  rather than copied). `docs/release.md` is the new procedure: tier
+  definitions, version-bump rules, the `v0.1.0.0` tag format, and the
+  rule that `PM_ABI_VERSION` and the package version move independently.
+  The round's real product is what the first non-Windows run of the suite
+  found: 1156 examples, and 23 bit-for-bit goldens red — every one of
+  them in the position columns, none anywhere else. Root cause measured
+  directly rather than guessed: IEEE-754 does not require `sin`/`cos` to
+  be correctly rounded, and mingw's libm and glibc's differ on the last
+  bit for ~1.3% of arguments (63 of 4096 `Float` angles for `sin`, 46 for
+  `cos`, worst case 1 ulp each), which reaches the output as at most
+  1.79e-07 in `pbPosX`/`pbPosZ` with `pbPosY`, `pbSize`, `pbLife` and
+  `pbColor` bit-identical. So the determinism claim narrows honestly
+  instead of being quietly widened: bit-for-bit within a platform,
+  structure plus two ulp across platforms. Goldens are re-scoped, not
+  re-recorded (`test/GoldenPlatform.hs`); the C header's "on every
+  platform" sentence is corrected, without an ABI generation bump — it is
+  a comment, not a declaration. (delivered)
+- **0020 the sigil's time dimension (it turns)** — ADR-0020: a magic circle
+  now reads as running machinery rather than a decal. The whole figure
+  rotates about its face centre, neighbouring rings counter-rotate, and
+  each stroke winds up while the spell charges and then holds that speed.
+  `SigilSpin` (rate, charge-up acceleration, charge-up end) rides inside
+  `SigilStroke`; `spinAngle` is a piecewise closed form of the cast clock
+  — quadratic to `castStart`, linear after — whose angular speed is
+  bounded by `|rate| + |accel|·castStart` no matter how long the spell
+  runs, which is what a sigil that now lives for the entire cast (0017)
+  requires. The rotation is applied about the face origin, so it is an
+  isometry: func-spec 0016's three laws hold word for word,
+  `strokeRadius` and `emitterBounds` are unchanged, and `Magic.Compile`
+  needed no edit at all — one case of `positionIn` and the derivation in
+  `Magic.Sigil` are the entire change. The starting phase stays in
+  0016's `skPhase`, so `spinAngle sp 0 = 0`: the sigil at `t = 0` is
+  bit-for-bit the figure 0016 drew, and the derived geometry of every
+  shipped spell is byte-identical (the new digest bits do not collide
+  with 0016's). `Magic.Codec`, the schema, the C ABI, the particle budget
+  and the dependency list are all untouched, and no cross-frame state is
+  added — the angle is a pure function of `t`. Casting particles and
+  spells without `phases` are bit-for-bit unaffected at every instant;
+  ADR-0020 also rules that this is the last round the two formation
+  goldens are re-recorded bit-exactly. (delivered)

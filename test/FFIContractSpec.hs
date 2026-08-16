@@ -36,6 +36,7 @@ import Magic.FFI
   , pmErrBudget
   , pmErrCapacity
   , pmErrJson
+  , pmErrQuota
   , pmMaxParticles
   , pmOk
   , pmPlaneSideXY
@@ -81,6 +82,19 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
         , "pm_max_particles"
         , "pm_project"
         , "pm_depth_order"
+        , -- func-spec 0018: the scene layer's ten, add-only. Growing this
+          -- list is the whole point of a frozen contract — what it forbids
+          -- is a name leaving it or changing shape, not a name joining it.
+          "pm_scene_new"
+        , "pm_scene_free"
+        , "pm_scene_cast"
+        , "pm_scene_cast_many"
+        , "pm_scene_dismiss"
+        , "pm_scene_advance"
+        , "pm_scene_observe"
+        , "pm_scene_budget"
+        , "pm_scene_count"
+        , "pm_scene_spells"
         ]
 
   it "exports through the Windows .def file exactly what the header declares" $ do
@@ -119,8 +133,28 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
           , ("PM_ERR_BUDGET", pmErrBudget)
           , ("PM_ERR_CAPACITY", pmErrCapacity)
           , ("PM_ERR_ARGS", pmErrArgs)
+          , ("PM_ERR_QUOTA", pmErrQuota)
           ]
     mapM_ (\(name, value) -> lookup name header `shouldBe` Just (fromIntegral value)) expected
+
+  -- Func-spec 0018 S1. The value is pinned here as a literal rather than
+  -- only mirrored, because a host's `switch` on the return code compiles
+  -- the number in: PM_ERR_QUOTA moving would silently reclassify every
+  -- refusal already deployed.
+  it "pins the scene quota code at -5, on both sides" $ do
+    pmErrQuota `shouldBe` -5
+    header <- headerDefines
+    lookup "PM_ERR_QUOTA" header `shouldBe` Just (-5)
+
+  -- The scene handle is opaque exactly as PmSpell is, and the two
+  -- sentences a host most needs about it (size your columns from
+  -- global_cap; a scene's spells have no PmSpell*) live in the header's
+  -- Scenes section. Same trick as "right-handed" above: a sentinel word
+  -- keeps prose from being edited away.
+  it "declares the scene handle opaque and documents global_cap" $ do
+    header <- readUtf8 headerFile
+    header `shouldSatisfy` isInfixOf' "typedef struct PmScene PmScene;"
+    header `shouldSatisfy` isInfixOf' "global_cap"
 
   it "agrees with Haskell on the view-plane selectors" $ do
     header <- headerDefines

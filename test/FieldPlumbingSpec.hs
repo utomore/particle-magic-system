@@ -8,6 +8,11 @@
 -- pre-0007 build (the same 80-step walk, run against the code as it stood
 -- at commit "Implement func-spec 0006"), so this spec fails the moment a
 -- fieldless spell's pixels move by one ULP.
+--
+-- Scope (func-spec 0019 S2, ADR-0016): "one ULP" is exactly the size of
+-- the disagreement between two platforms' libm, so this baseline is
+-- asserted on the platform it was captured on and reported pending
+-- elsewhere. See "GoldenPlatform".
 module FieldPlumbingSpec (spec) where
 
 import Data.Bits (shiftR, xor)
@@ -16,6 +21,7 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
 import Data.Word (Word32, Word64)
 import GHC.Float (castFloatToWord32)
+import GoldenPlatform (platformScopeNote, referencePlatform)
 import Magic.Circle (Circle (..), PhaseConfig (..), emptyCircle)
 import Magic.Codec (loadCircle)
 import Magic.Compile (CompiledSpell (..), EmitterSpec (..), Phase (..), compile)
@@ -50,18 +56,23 @@ import Test.Hspec
 preFieldDigests :: [(FilePath, Word64)]
 preFieldDigests =
   [ -- The two phased examples were re-captured at func-spec 0016 (the
-    -- sigil's geometry changed) and again at 0017 (the sigil now holds
-    -- until 'ppEnd' instead of collapsing at castStart) — see ADR-0015
-    -- for the scope of that waiver. What this law still guards for them,
-    -- unchanged and load-bearing, is the /field/ side of the claim: a
-    -- fieldless spell runs through the same arithmetic it always did,
-    -- and @test\/PersistWiringSpec.hs@ now checks the harder half —
-    -- formation rows stay exactly undisplaced even while the field layer
-    -- is bending the casting rows right next to them.
-    ("assets/spells/bare-sigil.json", 16740094377505200858)
+    -- sigil's geometry changed), again at 0017 (the sigil now holds
+    -- until 'ppEnd' instead of collapsing at castStart) and a third time
+    -- at 0020 (the sigil turns) — see ADR-0015 for the scope of that
+    -- waiver and ADR-0020, which narrows it to @t = 0@ and rules that
+    -- this is the last round the formation half of these numbers is
+    -- worth re-recording. What this law still guards for them, unchanged
+    -- and load-bearing, is the /field/ side of the claim: a fieldless
+    -- spell runs through the same arithmetic it always did, and
+    -- @test\/PersistWiringSpec.hs@ / @test\/SigilMotionWiringSpec.hs@
+    -- check the harder half — formation rows stay exactly undisplaced
+    -- even while the field layer is bending the casting rows right next
+    -- to them, and the casting rows themselves are bit-for-bit what a
+    -- spin-free build produces.
+    ("assets/spells/bare-sigil.json", 2167537573813250408)
   , ("assets/spells/converge-flame.json", 16464387485720134342)
   , ("assets/spells/empty.json", 3634073563866035966)
-  , ("assets/spells/grand-sigil.json", 18167520682498334567)
+  , ("assets/spells/grand-sigil.json", 5046468577478034913)
   , ("assets/spells/lissajous.json", 17185893384502476165)
   , ("assets/spells/pulse-ring.json", 9492385642234227627)
   , ("assets/spells/ring-fire.json", 10271734941662667557)
@@ -226,5 +237,15 @@ compatibilityCase (path, expected) =
   it (path ++ " renders bit-for-bit what it did before spec 0007") $ do
     bytes <- BS.readFile path
     circle <- either (fail . show) pure (loadCircle bytes)
+    -- The fieldless precondition is the half of this law that holds
+    -- everywhere, so it is asserted before the scope check.
     circleFields circle `shouldBe` []
-    walkDigest circle `shouldBe` expected
+    if referencePlatform
+      then walkDigest circle `shouldBe` expected
+      else
+        -- Unlike the two golden nets, this baseline is a single digest
+        -- over the whole 80-step walk: there is no per-frame structure
+        -- recorded beside it to fall back on, and re-recording it on a
+        -- second platform would only assert that this machine agrees
+        -- with itself. ADR-0016 scopes it rather than weakening it.
+        pendingWith platformScopeNote
