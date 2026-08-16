@@ -250,3 +250,35 @@ Format rules (the authority is [docs/release.md](docs/release.md) §3, and
   spells without `phases` are bit-for-bit unaffected at every instant;
   ADR-0020 also rules that this is the last round the two formation
   goldens are re-recorded bit-exactly. (delivered)
+- **0021 magic vocabulary: the sum types grow up** — the mechanisms were
+  complete and the value ranges were not: four elements, four face shapes,
+  four trajectories, three force fields. This round takes them to nine,
+  eight, eight, six and (for radiation) four, and it is entirely
+  additive — eighteen new constructors, not one existing case edited — so
+  every spell written before it renders bit for bit what it always did.
+  Elements gain the three missing 五行 members plus the 陰陽 pair, split
+  five alpha / four additive; face shapes gain polygon, star, cross and
+  annular sector, each with a conservative `shapeRadius` bound asserted
+  as a property (the one failure mode GHC cannot catch — a bound that is
+  too small silently breaks a host's frustum culling); trajectories gain
+  wave, ballistic, pulse and zigzag, all still closed forms of particle
+  age with no state to carry; force fields gain wind, turbulence and
+  spring, chosen under a hard criterion — `fieldAccel`'s position-only
+  signature is frozen, so velocity-dependent fields (drag, magnetism) are
+  explicitly deferred rather than smuggled in — with the turbulence
+  wobble built as an analytic curl, hence exactly divergence-free.
+  Radiation gains inward convergence and tangential swirl. `BlendMode` is
+  deliberately NOT extended: it is C-ABI vocabulary and belongs to a spec
+  that knows it is changing the wire format, so 陰 is expressed as a dark
+  low-alpha ramp instead. That restraint is what lets the round settle
+  func-spec 0015 §8-5's ledger the way ADR-0012 D5 always framed it — by
+  composition: `castSpells [wuxing-seal, yin-yang]` puts two blends in
+  one `FrameOutput`, which no single circle can do, since a circle has
+  exactly one element. Also delivered: the second tier of top-view
+  readability (depth flattening and an outline floor, both size-only and
+  both off by default, `G` in the demo), two new example spells, and a
+  widened golden net — `soft-bloom` and `lattice-seal` had gone three
+  rounds without one, and their baselines were recorded on the pre-0021
+  build so the compatibility law above rests on twelve examples rather
+  than ten. The C ABI, the schema version, `ParticleBuffer`, the particle
+  budget and the dependency list are untouched. (delivered)

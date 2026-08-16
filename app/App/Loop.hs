@@ -23,6 +23,8 @@ module App.Loop
   , flatViewFor
   , orbitDegreesPerPixel
   , depthTintStrength
+  , depthScaleStrength
+  , outlineFloorPixels
   , mergeSpellList
   , spellDirOf
   , runLoop
@@ -149,6 +151,8 @@ flatViewFor (w, h) plane =
         TopXZ -> (fw * 0.5, fh * 0.5)
     , fvPixelsPerUnit = flatPixelsPerUnit
     , fvDepthTint = 0
+    , fvDepthScale = 1
+    , fvOutlineFloor = 0
     }
   where
     fw = fromIntegral w
@@ -163,6 +167,16 @@ orbitDegreesPerPixel = 0.3
 -- particle that vanishes entirely is worse than one that reads flat.
 depthTintStrength :: Float
 depthTintStrength = 0.55
+
+-- | The second-tier top-view cues, when switched on (func-spec 0021 S6).
+--
+-- The near end is drawn 2.2× and the far end 1/2.2× — enough for the
+-- gradient to read as depth without the near layer swallowing the frame.
+-- The floor is three pixels: below that a quad is a dot with no edge to
+-- recognise, which is the failure the outline emphasis exists to prevent.
+depthScaleStrength, outlineFloorPixels :: Float
+depthScaleStrength = 2.2
+outlineFloorPixels = 3
 
 -- | Everything about how the frame is observed, and nothing about what
 -- is being observed (func-spec 0013 §4). Keeping the four pieces in one
@@ -203,7 +217,7 @@ defaultViewState size cam =
 -- of 'orbit', 'dolly', 'panBy', 'zoomAt' is), which is what makes a demo
 -- nobody touches render exactly what func-spec 0008 delivered.
 applyViewInput :: DemoInput -> ViewState -> ViewState
-applyViewInput input = steer . toggleTint . togglePlane . toggleBackend
+applyViewInput input = steer . toggleReadability . toggleTint . togglePlane . toggleBackend
   where
     toggleBackend vs
       | not (diToggleBackend input) = vs
@@ -234,6 +248,23 @@ applyViewInput input = steer . toggleTint . togglePlane . toggleBackend
                   }
             }
 
+    -- Both knobs move together: they are two halves of one cue (shrink
+    -- the far end, keep the near end's edge), and splitting them would
+    -- let the demo sit in the state where far particles have shrunk below
+    -- readability with nothing holding the floor.
+    toggleReadability vs
+      | not (diToggleReadability input) = vs
+      | otherwise =
+          let fv = vsFlat vs
+              on = fvDepthScale fv > 1
+           in vs
+                { vsFlat =
+                    fv
+                      { fvDepthScale = if on then 1 else depthScaleStrength
+                      , fvOutlineFloor = if on then 0 else outlineFloorPixels
+                      }
+                }
+
     steer vs = case vsMode vs of
       View3D -> vs {vsCamera = dolly (diWheel input) (orbit dragDegrees (vsCamera vs))}
       View2D _ -> vs {vsFlat = zoomAt (diCursor input) (diWheel input) (panBy panPixels (vsFlat vs))}
@@ -248,10 +279,14 @@ applyViewInput input = steer . toggleTint . togglePlane . toggleBackend
       Nothing -> (0, 0)
       Just d -> d
 
-    -- A fresh 2D view for a new plane, keeping the one setting that is
-    -- about the tint rather than about the axes.
+    -- A fresh 2D view for a new plane, keeping the settings that are
+    -- about readability rather than about the axes.
     rebasedFlat plane fv =
-      (flatViewFor (fvScreenSize fv) plane) {fvDepthTint = fvDepthTint fv}
+      (flatViewFor (fvScreenSize fv) plane)
+        { fvDepthTint = fvDepthTint fv
+        , fvDepthScale = fvDepthScale fv
+        , fvOutlineFloor = fvOutlineFloor fv
+        }
 
     flipPlane SideXY = TopXZ
     flipPlane TopXZ = SideXY

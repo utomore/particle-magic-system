@@ -1,3 +1,16 @@
+---
+id: architecture
+type: architecture
+title: particle-magic-architecture
+description: 以魔法陣為資料、由解釋器驅動的粒子魔法系統架構
+status: done
+created: 2026-08-11
+updated: 2026-08-16
+depends-on: []
+related-adr: []
+related-spec: []
+---
+
 # 粒子魔法系統 — 系統架構設計書
 
 > 版本：1.1（2026-08-13：對齊 spec 0001–0005 交付現實——§4.3/§5.1 Expr 合約更正、§5.3 函數清單、§7/§9.2 渲染路線改依 ADR-0009、型別落點註記；語意設計不變）

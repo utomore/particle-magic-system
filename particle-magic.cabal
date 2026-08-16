@@ -294,6 +294,13 @@ test-suite spec
                     , SigilMotionSpec
                     , SigilMotionWiringSpec
                     , Acceptance20Spec
+                    , ElementVocabSpec
+                    , FaceShapeVocabSpec
+                    , TrajectoryVocabSpec
+                    , FieldVocabSpec
+                    , VocabCodecSpec
+                    , FlatReadabilitySpec
+                    , Acceptance21Spec
                     , App.Effects
                     , App.HotReload
                     , App.Loop

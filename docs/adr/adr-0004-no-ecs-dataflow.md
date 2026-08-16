@@ -2,9 +2,10 @@
 id: adr-0004
 type: adr
 title: no-ecs-dataflow
+description: 架構採資料流而非 ECS，粒子是被算出來的輸出
 status: accepted
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-16
 related-adr: []
 related-spec: []
 ---

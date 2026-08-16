@@ -107,6 +107,57 @@ accelOf field pos = case field of
         offAxis = offset - vscale (dot offset axis) axis
         tangent = normalize (cross axis offAxis)
      in vscale (strength / (1 + falloff * norm offAxis)) tangent
+  -- Func-spec 0021's three. The hard selection criterion was the frozen
+  -- signature: 'fieldAccel' sees a position and nothing else, so a field
+  -- that needs the particle's velocity (drag, magnetism) cannot be added
+  -- here at any price — that is a signature change plus a hot-path
+  -- rewrite, and it belongs to a spec that says so (§2.5, §7-2).
+  Wind dir strength turbulence ->
+    vscale strength (normalize dir) + vscale turbulence (curlNoise 1 pos)
+  Turbulence strength scale -> vscale strength (curlNoise scale pos)
+  -- Linear restoring force. No distance falloff and no singularity, so
+  -- unlike 'PointAttractor' this oscillates about the center rather than
+  -- collapsing onto it.
+  Spring center k -> vscale (negate k) (pos - center)
+
+-- | A bounded, divergence-free vector field of position alone
+-- (func-spec 0021 §2.5): the analytic curl of a potential built from
+-- three sinusoids.
+--
+-- Divergence-free /exactly/, not approximately — @div (curl ψ) = 0@ is an
+-- identity, and taking the curl in closed form rather than by finite
+-- differences is what keeps it one. That matters because a field with
+-- divergence pumps particles into sources and sinks, which reads as
+-- clumping rather than as turbulence.
+--
+-- Pure in the position, so it holds no state and cannot break the replay
+-- contract (ADR-0010 D7); bounded by construction, since every term is a
+-- cosine, which is what keeps 'stepColumns' from integrating an infinity.
+curlNoise :: Float -> V3 -> V3
+curlNoise scale (V3 px py pz) =
+  V3
+    (cy * cosC - bz * cosB)
+    (az * cosA - cx * cosC)
+    (bx * cosB - ay * cosA)
+  where
+    -- A zero (or negative) scale would fold the whole field onto a single
+    -- value; the core takes the same "clamp rather than crash" line it
+    -- takes for particle counts, and 'Magic.Codec' rejects it upstream.
+    s = if scale > 0 then 1 / scale else 1
+
+    -- Mutually incommensurate frequency vectors, so the three components
+    -- of the potential do not line up into a visible lattice.
+    avec@(V3 _ ay az) = V3 1.0 1.7 2.3
+    bvec@(V3 bx _ bz) = V3 2.1 1.3 0.7
+    cvec@(V3 cx cy _) = V3 1.9 0.9 1.5
+
+    -- The potential is ψ = (sin(a·q), sin(b·q), sin(c·q)) at q = pos/scale;
+    -- what follows is its curl, differentiated by hand. Scaling q by a
+    -- constant keeps the divergence zero, so the scale is free to be here.
+    at (V3 kx ky kz) = cos ((kx * px + ky * py + kz * pz) * s)
+    cosA = at avec
+    cosB = at bvec
+    cosC = at cvec
 
 -- Per-slot integration --------------------------------------------------------
 

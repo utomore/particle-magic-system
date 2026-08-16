@@ -274,21 +274,58 @@ parseFaceShape = withObject "shape" $ \o -> do
         then pure (Ring rIn rOut)
         else fail $ "ring needs rInner < rOuter, got rInner = " ++ show rIn ++ ", rOuter = " ++ show rOut
     "diamond" -> Diamond <$> (o .: "size" >>= positive "size")
+    -- Func-spec 0021's four. Validation mirrors what the samplers assume:
+    -- a polygon needs three sides to have an interior, a star needs two
+    -- points, and both ring-like shapes need their radii ordered.
+    "polygon" -> do
+      sides <- o .: "sides" >>= atLeastInt "sides" 3
+      radius <- o .: "radius" >>= positive "radius"
+      pure (Polygon sides radius)
+    "star" -> do
+      points <- o .: "points" >>= atLeastInt "points" 2
+      outer <- o .: "outer" >>= positive "outer"
+      inner <- o .: "inner" >>= nonNegative "inner"
+      if inner < outer
+        then pure (Star points outer inner)
+        else
+          fail $
+            "star needs inner < outer, got inner = "
+              ++ show inner
+              ++ ", outer = "
+              ++ show outer
+    "cross" -> do
+      len <- o .: "length" >>= positive "length"
+      width <- o .: "width" >>= positive "width"
+      pure (Cross len width)
+    "sector" -> do
+      inner <- o .: "inner" >>= nonNegative "inner"
+      outer <- o .: "outer" >>= positive "outer"
+      sweep <- o .: "sweep" >>= inRange "sweep" 0 (2 * pi)
+      if inner < outer
+        then pure (Sector inner outer sweep)
+        else
+          fail $
+            "sector needs inner < outer, got inner = "
+              ++ show inner
+              ++ ", outer = "
+              ++ show outer
     other ->
       fail $
         "unknown shape kind "
           ++ show (T.unpack other)
-          ++ "; valid kinds: hollow-square, rect, ring, diamond"
+          ++ "; valid kinds: hollow-square, rect, ring, diamond, polygon, star, cross, sector"
 
 parseRadiationMode :: Value -> Parser RadiationMode
 parseRadiationMode = withText "mode" $ \t -> case t of
   "along-normal" -> pure AlongNormal
   "radial-outward" -> pure RadialOutward
+  "radial-inward" -> pure RadialInward
+  "tangential-swirl" -> pure TangentialSwirl
   other ->
     fail $
       "unknown radiation mode "
         ++ show (T.unpack other)
-        ++ "; valid modes: along-normal, radial-outward"
+        ++ "; valid modes: along-normal, radial-outward, radial-inward, tangential-swirl"
 
 parseBridgeRune :: Value -> Parser BridgeRune
 parseBridgeRune = \v ->
@@ -322,11 +359,33 @@ parseTrajectory o = do
       radius <- o .: "radius" >>= positive "radius"
       freq <- o .: "freq"
       pure (Orbit radius freq)
+    -- Func-spec 0021's four. Frequencies are non-negative (a negative one
+    -- is the same path traced the other way and would only be a second
+    -- spelling of the same spell); amplitudes and speeds stay free, since
+    -- a negative one is a meaningful mirror.
+    "wave" -> do
+      speed <- o .: "speed"
+      amplitude <- o .: "amplitude"
+      freq <- o .: "freq" >>= nonNegative "freq"
+      pure (Wave speed amplitude freq)
+    "ballistic" -> do
+      speed <- o .: "speed"
+      gravity <- o .: "gravity"
+      pure (Ballistic speed gravity)
+    "pulse" -> do
+      speed <- o .: "speed"
+      freq <- o .: "freq" >>= nonNegative "freq"
+      pure (Pulse speed freq)
+    "zigzag" -> do
+      speed <- o .: "speed"
+      amplitude <- o .: "amplitude"
+      freq <- o .: "freq" >>= nonNegative "freq"
+      pure (Zigzag speed amplitude freq)
     other ->
       fail $
         "unknown trajectory kind "
           ++ show (T.unpack other)
-          ++ "; valid kinds: forward, spiral, orbit"
+          ++ "; valid kinds: forward, spiral, orbit, wave, ballistic, pulse, zigzag"
 
 parseEnvelope :: Object -> Parser Envelope
 parseEnvelope o = do
@@ -378,11 +437,28 @@ parseForceField = withObject "force field" $ \o -> do
       strength <- o .: "strength"
       falloff <- o .: "falloff" >>= nonNegative "falloff"
       pure (Vortex center axis (realToFrac (strength :: Double)) (realToFrac falloff))
+    -- Func-spec 0021's three. 'dir' gets the same non-zero check 'axis'
+    -- gets and for the same reason: the core normalizes it, so a zero
+    -- vector would silently mean "no wind" instead of being rejected.
+    "wind" -> do
+      dir <- vec3Field o "dir"
+      _ <- nonZeroAxis dir <?> Key "dir"
+      strength <- o .: "strength"
+      turbulence <- o .: "turbulence" >>= nonNegative "turbulence"
+      pure (Wind dir (realToFrac (strength :: Double)) (realToFrac turbulence))
+    "turbulence" -> do
+      strength <- o .: "strength"
+      scale <- o .: "scale" >>= positive "scale"
+      pure (Turbulence (realToFrac (strength :: Double)) (realToFrac scale))
+    "spring" -> do
+      center <- vec3Field o "center"
+      k <- o .: "k" >>= positive "k"
+      pure (Spring center (realToFrac k))
     other ->
       fail $
         "unknown force field kind "
           ++ show (T.unpack other)
-          ++ "; valid kinds: gravity, attractor, vortex"
+          ++ "; valid kinds: gravity, attractor, vortex, wind, turbulence, spring"
 
 -- | A @[x, y, z]@ array of numbers.
 vec3Field :: Object -> AK.Key -> Parser V3
@@ -423,11 +499,17 @@ parseElement = withText "element" $ \t -> case t of
   "fire" -> pure Fire
   "water" -> pure Water
   "lightning" -> pure Lightning
+  "metal" -> pure Metal
+  "wood" -> pure Wood
+  "earth" -> pure Earth
+  "yin" -> pure Yin
+  "yang" -> pure Yang
   other ->
     fail $
       "unknown element "
         ++ show (T.unpack other)
-        ++ "; valid elements: neutral, fire, water, lightning"
+        ++ "; valid elements: neutral, fire, water, lightning, "
+        ++ "metal, wood, earth, yin, yang"
 
 parseNodes :: Value -> Parser (Nodes (Maybe NodeRune))
 parseNodes = withObject "nodes" $ \o ->
@@ -465,6 +547,22 @@ nonNegative :: String -> Double -> Parser Double
 nonNegative name x
   | x >= 0 = pure x
   | otherwise = fail $ name ++ " must be >= 0, got " ++ show x
+
+-- | A count with a floor (func-spec 0021): a polygon with two sides and a
+-- star with one point have no interior to sample.
+atLeastInt :: String -> Int -> Int -> Parser Int
+atLeastInt name lo x
+  | x >= lo = pure x
+  | otherwise = fail $ name ++ " must be >= " ++ show lo ++ ", got " ++ show x
+
+-- | A half-open range @(lo, hi]@: the sector's sweep may be a full turn
+-- but not a degenerate zero one.
+inRange :: String -> Double -> Double -> Double -> Parser Double
+inRange name lo hi x
+  | x > lo && x <= hi = pure x
+  | otherwise =
+      fail $
+        name ++ " must be > " ++ show lo ++ " and <= " ++ show hi ++ ", got " ++ show x
 
 -- Encoding -------------------------------------------------------------------
 
@@ -511,11 +609,31 @@ encodeFaceShape shape = case shape of
   Rect (V2 w h) -> object ["kind" .= ("rect" :: Text), "w" .= w, "h" .= h]
   Ring rIn rOut -> object ["kind" .= ("ring" :: Text), "rInner" .= rIn, "rOuter" .= rOut]
   Diamond size -> object ["kind" .= ("diamond" :: Text), "size" .= size]
+  Polygon sides radius ->
+    object ["kind" .= ("polygon" :: Text), "sides" .= sides, "radius" .= radius]
+  Star points outer inner ->
+    object
+      [ "kind" .= ("star" :: Text)
+      , "points" .= points
+      , "outer" .= outer
+      , "inner" .= inner
+      ]
+  Cross len width ->
+    object ["kind" .= ("cross" :: Text), "length" .= len, "width" .= width]
+  Sector inner outer sweep ->
+    object
+      [ "kind" .= ("sector" :: Text)
+      , "inner" .= inner
+      , "outer" .= outer
+      , "sweep" .= sweep
+      ]
 
 encodeRadiationMode :: RadiationMode -> Text
 encodeRadiationMode mode = case mode of
   AlongNormal -> "along-normal"
   RadialOutward -> "radial-outward"
+  RadialInward -> "radial-inward"
+  TangentialSwirl -> "tangential-swirl"
 
 encodeBridgeRune :: BridgeRune -> Value
 encodeBridgeRune rune = case rune of
@@ -555,6 +673,14 @@ trajectoryFields t = case t of
     ["kind" .= ("spiral" :: Text), "speed" .= speed, "radius" .= radius, "freq" .= freq]
   Orbit radius freq ->
     ["kind" .= ("orbit" :: Text), "radius" .= radius, "freq" .= freq]
+  Wave speed amplitude freq ->
+    ["kind" .= ("wave" :: Text), "speed" .= speed, "amplitude" .= amplitude, "freq" .= freq]
+  Ballistic speed gravity ->
+    ["kind" .= ("ballistic" :: Text), "speed" .= speed, "gravity" .= gravity]
+  Pulse speed freq ->
+    ["kind" .= ("pulse" :: Text), "speed" .= speed, "freq" .= freq]
+  Zigzag speed amplitude freq ->
+    ["kind" .= ("zigzag" :: Text), "speed" .= speed, "amplitude" .= amplitude, "freq" .= freq]
   -- Unreachable: encodeInnerRune intercepts formula trajectories above;
   -- kept total for the exhaustiveness check.
   Formula (ExprV3 x y z) ->
@@ -585,6 +711,11 @@ encodeElement e = case e of
   Fire -> "fire"
   Water -> "water"
   Lightning -> "lightning"
+  Metal -> "metal"
+  Wood -> "wood"
+  Earth -> "earth"
+  Yin -> "yin"
+  Yang -> "yang"
 
 encodePhaseConfig :: PhaseConfig -> Value
 encodePhaseConfig (PhaseConfig (Seconds d) (Seconds c)) =
@@ -607,6 +738,25 @@ encodeForceField field = case field of
       , "axis" .= encodeV3 axis
       , "strength" .= toDouble strength
       , "falloff" .= toDouble falloff
+      ]
+  Wind dir strength turbulence ->
+    object
+      [ "kind" .= ("wind" :: Text)
+      , "dir" .= encodeV3 dir
+      , "strength" .= toDouble strength
+      , "turbulence" .= toDouble turbulence
+      ]
+  Turbulence strength scale ->
+    object
+      [ "kind" .= ("turbulence" :: Text)
+      , "strength" .= toDouble strength
+      , "scale" .= toDouble scale
+      ]
+  Spring center k ->
+    object
+      [ "kind" .= ("spring" :: Text)
+      , "center" .= encodeV3 center
+      , "k" .= toDouble k
       ]
 
 encodeV3 :: V3 -> Value

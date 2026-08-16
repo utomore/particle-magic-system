@@ -2,9 +2,10 @@
 id: func-0023
 type: spec
 title: production-visuals
+description: 產品級視覺：拖尾、bloom、軟粒子與深度交錯
 status: open
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 depends-on: [func-0022, func-0018]
 related-adr: [adr-0006, adr-0007, adr-0009, adr-0011, adr-0013, adr-0018]
 ---

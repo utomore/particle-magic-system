@@ -91,8 +91,9 @@ spec = do
     it "all shipped examples load, compile and cast" $ do
       paths <- examplePaths
       -- 10 at func-spec 0014's delivery; soft-bloom.json joins in 0015,
-      -- lattice-seal.json in 0016.
-      length paths `shouldBe` 12
+      -- lattice-seal.json in 0016, wuxing-seal.json and yin-yang.json
+      -- in 0021.
+      length paths `shouldBe` 14
       reports <- mapM reportFor paths
       [repPath r | r <- reports, isFail r] `shouldBe` []
       exitCodeFor reports `shouldBe` 0

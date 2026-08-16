@@ -161,17 +161,28 @@ hcOuterRune h rune = case rune of
   RangeRune e -> hcExpr (tagW h 2) e
   StyleRune s -> hcBillboard (tagW h 3) s
 
+-- | Constructor tags are append-only, exactly like the constructors they
+-- stand for (func-spec 0021 §2.4): a tag reused or renumbered would
+-- silently redraw every already-written spell that uses the shape, which
+-- is the ADR-0014 hazard this whole module is built around. Func-spec
+-- 0021's four shapes take tags 4–7 and leave 0–3 where they were.
 hcFaceShape :: Word64 -> FaceShape -> Word64
 hcFaceShape h shape = case shape of
   HollowSquare size -> hcDouble (tagW h 0) size
   Rect (V2 w hgt) -> hcFloat (hcFloat (tagW h 1) w) hgt
   Ring rIn rOut -> hcDouble (hcDouble (tagW h 2) rIn) rOut
   Diamond size -> hcDouble (tagW h 3) size
+  Polygon sides radius -> hcDouble (tagW (tagW h 4) sides) radius
+  Star points rOut rIn -> hcDouble (hcDouble (tagW (tagW h 5) points) rOut) rIn
+  Cross len width -> hcDouble (hcDouble (tagW h 6) len) width
+  Sector rIn rOut sweep -> hcDouble (hcDouble (hcDouble (tagW h 7) rIn) rOut) sweep
 
 hcRadiation :: Word64 -> RadiationMode -> Word64
 hcRadiation h m = tagW h $ case m of
   AlongNormal -> 0
   RadialOutward -> 1
+  RadialInward -> 2
+  TangentialSwirl -> 3
 
 hcBillboard :: Word64 -> BillboardShape -> Word64
 hcBillboard = hcEnum
@@ -194,6 +205,10 @@ hcTrajectory h t = case t of
   Spiral speed radius freq -> hcDouble (hcDouble (hcDouble (tagW h 1) speed) radius) freq
   Orbit radius freq -> hcDouble (hcDouble (tagW h 2) radius) freq
   Formula v -> hcExprV3 (tagW h 3) v
+  Wave speed amp freq -> hcDouble (hcDouble (hcDouble (tagW h 4) speed) amp) freq
+  Ballistic speed gravity -> hcDouble (hcDouble (tagW h 5) speed) gravity
+  Pulse speed freq -> hcDouble (hcDouble (tagW h 6) speed) freq
+  Zigzag speed amp freq -> hcDouble (hcDouble (hcDouble (tagW h 7) speed) amp) freq
 
 hcEnvelope :: Word64 -> Envelope -> Word64
 hcEnvelope h (Envelope d dur life) = hcSeconds (hcSeconds (hcSeconds h d) dur) life

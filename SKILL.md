@@ -11,20 +11,23 @@
 | `docs/adr/adr-NNNN-*.md` | 架構決策紀錄（ADR）：一份一決策，含背景/決策/後果/被否決方案 | 違反前必先修訂；新的架構級決策新增一份 |
 | `docs/spec/func-NNNN-*.md` | **功能規格書（function spec）**：一份對應一個模組或一次程式設計迭代的實作細節 | 每輪實作**動工前**寫定；實作中回填驗收紀錄 |
 | `docs/bugfix/bug-NNNN-*.md` | 缺陷紀錄：一份一缺陷，含重現、根因、修法、回歸測試 | 發現缺陷時新增；修好且回歸測試綠後結案 |
-| `docs/enhance/enhance-YYYY-MM-DD-*.md` | 改善提案：非新功能的體質改善（重構、效能、可讀性、依賴升級） | 提出時新增；落地後結案 |
+| `docs/enhance/enhance-NNNN-*.md` | 改善提案：非新功能的體質改善（重構、效能、可讀性、依賴升級） | 提出時新增；落地後結案 |
 | `docs/analysis/report-YYYY-MM-DD-*.md` | 分析報告：文檔對照程式碼的健檢結果（穩健性、解耦、資安、效能、過時套件） | 做專案健檢時產出，只讀不改 |
 | `docs/roadmap.md` | **路線圖與完整度盤點**：還差什麼、下一輪該蓋哪一個。內容由各 spec 的 §9 非目標與驗收紀錄盤點而來，不引入新決策 | 決定下一份 spec 主題時讀；每次 func-spec 驗收後更新 |
 | `docs/integration.md` | **宿主整合指南**：Haskell／C／C++／Unity／自製前端各自怎麼接，資料合約速查、限制與相容性承諾 | 對外介面（`Magic.Interface`／`Magic.Codec`／`Magic.Projection`／C ABI header）變動時同步更新 |
+| `docs/spell-schema.md` | **法術檔案作者手冊**：魔法陣 JSON 的鍵名與值域 | JSON schema 變動時同步更新 |
+| `docs/release.md` | **發布流程**：發一版要做什麼、版本號怎麼跳、承諾到哪裡為止 | 發版流程或相容性承諾變動時更新 |
 
 ## 文檔 metadata 標準（YAML frontmatter）
 
-spec／bugfix／enhance／adr／report 五類文件的**第一行必須**是 YAML frontmatter，狀態掃描腳本（`dev-flow` skill 的 `scan-status.mjs`，只讀每檔開頭 2KB）只解析這一段：
+本節對齊 `dev-flow` skill v0.3.0 的共用慣例（`skills/_shared/conventions.md`）。spec／bugfix／enhance／adr／report 五類文件的**第一行必須**是 YAML frontmatter，狀態掃描腳本（`dev-flow` skill 的 `scan-status.mjs`，只讀每檔開頭 2KB）只解析這一段：
 
 ```yaml
 ---
-id: func-0003            # func-NNNN | bug-NNNN | enhance-<date>-<slug> | adr-NNNN | report-<date>-<slug>
+id: func-0003            # func-NNNN | bug-NNNN | enhance-NNNN | adr-NNNN | report-<date>-<slug>
 type: spec               # spec | bug | enhance | adr | report
 title: expr-subsystem    # 檔名去掉編號前綴與副檔名的 slug
+description: Expr 數學式子系統：AST、求值器與文字語法
 status: open             # open | in-progress | done | closed；ADR 改用 proposed | accepted | superseded
 created: 2026-08-12
 updated: 2026-08-13
@@ -37,7 +40,17 @@ related-spec: []         # bug/enhance/adr 回鏈到 spec id
 規則：
 
 - **檔名一律英文 kebab-case，內文一律繁體中文**；編號四位數遞增不重用（建檔前先掃該資料夾取最大編號 +1）；日期一律 `YYYY-MM-DD`。
+- **檔名以編號優先，不放日期**（日期在 `created`／`updated`）；`docs/analysis/report-*` 是唯一以日期命名的類型。
 - 修改任何文檔內容時，同步更新 frontmatter 的 `updated`。
+
+### `description` 欄位（必填）
+
+- **每一份文檔都要寫**，architecture／adr／spec／bug／enhance／report 與本專案自有的 `reference` 類（`integration.md`、`roadmap.md`、`release.md`、`spell-schema.md`）一個都不能少。缺少時視同 metadata 不合規，`/code-audit status` 會列進「缺少 description／主軸」並以 exit code 1 收場。
+- **一句話講主軸**：這份文檔在講什麼、要達成什麼。不寫實作細節、不列步驟、不寫理由——那些屬於內文。
+- **繁體中文、40 字以內、不加句號**。超過 40 字就是寫太細，砍掉細節只留主軸。
+- 建檔時就要寫；除非文檔主題本身改變，否則後續修改不動這欄。
+- 各類型的描述對象：architecture 寫「專案在做什麼」、adr 寫「決定了什麼」、spec 寫「這個功能做什麼」、bug 寫「什麼壞了」、enhance 寫「要改善什麼」、report 寫「分析了什麼」。
+- 兩個機械限制來自掃描腳本——值裡**不得出現 `: `(冒號加空白)或 ` #`(空白加井號)**，前者不是合法的 YAML 純量、後者會被當成註解截掉（要用冒號請用全形 `：`）；且 frontmatter 整段必須留在檔頭 2KB 內。
 - frontmatter 的 `status` 是**機器讀的真相**，文件開頭的中文狀態句（`設計中`／`設計定案，待實作`／`實作中`／`已完成`）是人讀的說明；兩者必須同時更新。對應關係：`設計中`／`設計定案，待實作` → `open`，`實作中` → `in-progress`，`已完成` → `done`，廢棄 → `closed`。
 - 狀態總覽：`node <dev-flow>/skills/code-audit/scripts/scan-status.mjs ./docs`（exit 0 = 全部 done/closed；exit 1 = 有未完成或缺 metadata）。
 
@@ -118,7 +131,7 @@ related-spec: []         # bug/enhance/adr 回鏈到 spec id
 | [0018](docs/spec/func-0018-scene-c-abi.md) | 場景層上 C ABI：`PmScene*` handle＋10 個純增補匯出（`pm_scene_new`/`cast`/`cast_many`/`dismiss`/`advance`/`observe`/`budget`/`count`/`spells`/`free`）、`PM_ERR_QUOTA`；C 面 ≡ `Magic.Scene` 匯出面的逐項穿越；解除 ADR-0012 D8 的延後；批次歸屬不提供（維持零新語意） | 一般 | 無（0009/0011/0012 已完成）；**與 0019／0020 三方平行**（見其 §0.2） | 已完成（凍結：10 個 `pm_scene_*` C 進入點的名稱與簽章、`PmScene*` opaque handle、`PM_ERR_QUOTA = −5`、場景獨佔其法術的所有權規則，見其 §9.4） |
 | [0019](docs/spec/func-0019-engineering-ci-release.md) | 工程化：GitHub Actions（build→test→`magic-validate`，win64＋Linux 矩陣；**PR 到 main ＋ tag ＋ 手動**觸發，日常 push 不計費——ADR-0016 D5）、發布與相容性政策（平台分級、PVP、tag 格式）、**Linux 首次實測**——同時是 ADR-0011 D8「跨平台逐位元決定論」宣稱的第一次真實檢驗；同輪 ADR-0016 | 一般 | **無**——與所有進行中的 spec 零交集，隨時可插隊（見其 §0.2） | 已完成（凍結：平台分級 ≡ CI 矩陣、`v<version>` tag 格式、PVP 上界規則、`PM_ABI_VERSION` 與套件版本獨立遞增。**S2 走 §2.1 第二條路**：Linux 1156 examples／23 golden 紅，根因量到是 libm `sin`/`cos` 的 1 ulp 差（絕對差 ≤ 1.79e-07，僅 posX／posZ），決定論範圍正式收窄為「同平台逐位元、跨平台結構＋2 ulp」——ADR-0016 D4、header 檔頭同步修正，見其 §8） |
 | [0020](docs/spec/func-0020-sigil-motion.md) | 陣形的時間維度：`SigilSpin`＋分段 `spinAngle`（蓄力段二次、施放後恆速，角速度有界）、整陣繞面心自轉、層與層反向；**等距同構律**使 0016 三條律與 `emitterBounds` 全部零變更；`Compile.hs` 零觸碰、schema 不升版。撤銷 0016 §1-5 的 Casting 零影響律（其前提已由 ADR-0015 D4 撤銷），改立主效果零影響律；同輪 ADR-0020（逐位元邊界第三次收窄，取代 ADR-0015 D4） | 一般 | spec 0017（需已完成——`Sigil.hs`／`Analytic.hs` 交集，且其時間軸為本輪前提）；**與 0018／0019／0025 平行**（見其 §0.2） | 已完成（凍結：`SigilSpin` 三欄與分段 `spinAngle`、`skSpin`（起始相位仍只住 `skPhase`）、自轉導出規則（旋向＝**繪製序**奇偶）、摘要位段 `dl` 34..47、旋轉繞面原點的保長性、逐位元邊界 `t = 0` 與兩條零影響律，見其 §9.7。節點公轉未做，記帳於其 §8-9） |
-| [0021](docs/spec/func-0021-magic-vocabulary.md) | 魔法語彙擴張：`Element` 4→9（**五行＋陰陽**）、`FaceShape` 4→8、`Trajectory` 4→8、`ForceField` 3→6、`RadiationMode` 2→4，＋俯視進階可讀性（壓平比例、輪廓強調）；全部加法 ⇒ **既有範例陣逐位元不變**；結清 0015 §8-5 的複數 blend 批次記帳；不加 `BlendMode`（避開 C 合約） | 一般 | spec 0020（需已完成——`Analytic.hs` 交集）；**與 0018／0019 平行**（見其 §0.2） | 設計定案，待實作 |
+| [0021](docs/spec/func-0021-magic-vocabulary.md) | 魔法語彙擴張：`Element` 4→9（**五行＋陰陽**）、`FaceShape` 4→8、`Trajectory` 4→8、`ForceField` 3→6、`RadiationMode` 2→4，＋俯視進階可讀性（壓平比例、輪廓強調）；全部加法 ⇒ **既有範例陣逐位元不變**；結清 0015 §8-5 的複數 blend 批次記帳；不加 `BlendMode`（避開 C 合約） | 一般 | spec 0020（需已完成——`Analytic.hs` 交集）；**與 0018／0019 平行**（見其 §0.2） | 已完成（凍結：18 個新建構子的語意與 JSON tag、`Element`/`FaceShape`/`Trajectory`/`ForceField`/`RadiationMode` 的宣告序（進 `hashCircle`，只可附加在尾端）、`Magic.Sigil` 摘要 tag 分配（形狀 4–7、軌跡 4–7、輻射 2–3）、`fieldAccel` 位置-only 簽名續凍。複數 blend 以 0012 合成陣結清，見其 §8.5；`Sigil.hs` 必須改動的原因見其 §8.4-1） |
 | [0022](docs/spec/func-0022-perf-second-tier.md) | 效能第二階梯：`Magic.Expr.Code` bytecode 求值器＋共同子式消去（`Expr.hs` 零觸碰，`evalExpr` 降為參照實作）、`Control.Parallel.Strategies` 平行取樣（核心白名單 +`parallel`）；**兩條逐位元等價律**是全部價值；備齊 ADR-0012 §後果指名的抬高上限前提；同輪 ADR-0017 | 一般 | spec 0021（需已完成——`Compile`／`Analytic` 交集）；**與 0018／0019／0024 平行**（見其 §0.2） | 設計定案，待實作 |
 | [0023](docs/spec/func-0023-production-visuals.md) | 產品級視覺：`ParticleBuffer` 六欄→九欄（速度，opt-in）、`BillboardTrail`＋`pm_observe_ex`（六欄簽名一字不動）、自訂 shader 管線＋bloom＋軟粒子（含測試場景幾何）、跨 batch alpha 深度交錯；**取代 ADR-0009 的「不自訂 shader」前提、鬆綁 ADR-0006 六欄硬點**；同輪 ADR-0018 | **重大基建功能** | spec 0022＋0018（皆需已完成）；**與 0019 平行**（見其 §0.2） | 設計定案，待實作 |
 | [0024](docs/spec/func-0024-authoring-tools-2.md) | 作者工具第二輪：`magic-schema`（draft-07 JSON Schema 入 repo，三向一致守護）、`magic-inspect` 結構報告、`magic-validate --json`、demo 內即時參數面板與寫回往返律；**可水平分割**——`tools/` 半場無依賴 | 一般 | `tools/` 半場：**無**（可提前認領）；`app/` 半場：spec 0023（需已完成——`app/*` 五檔交集）。見其 §0.3 | 設計定案，待實作 |

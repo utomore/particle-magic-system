@@ -2,9 +2,10 @@
 id: adr-0007
 type: adr
 title: effectful-boundary
+description: 效果只存在於 App.* 外殼，Magic.* 核心零 IO
 status: accepted
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-16
 related-adr: []
 related-spec: []
 ---

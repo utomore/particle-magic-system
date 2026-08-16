@@ -54,6 +54,7 @@ module Magic.Compile
     -- * Particle budget and spatial extent (func-spec 0010 S7)
   , ParticleBudget (..)
   , emitterBounds
+  , shapeRadius
 
     -- * Element lookup (closed influence surface, architecture §10)
   , elementAppearance
@@ -413,12 +414,35 @@ defaultSpawn = SpawnAtAnchor 1.6
 -- | Element → appearance lookup (the only place essence influences looks;
 -- closed influence surface, architecture §10). Neutral must reproduce the
 -- 0001 plain discharge: solid white, alpha blend, size 0.05.
+--
+-- Func-spec 0021 adds five rows and nothing else — which is the whole
+-- point of the closed influence surface: an element's blast radius is one
+-- table, so growing the vocabulary from four to nine costs five lines
+-- here and zero elsewhere in the fold.
+--
+-- The blend column is deliberately split 5 alpha / 4 additive, so any
+-- composition mixing the two groups produces a 'Magic.Interface'
+-- 'RenderBatch' run with more than one blend — the material func-spec
+-- 0015 §8-5 booked for the batch-splitting machinery it had already
+-- delivered. 陰 wants a subtractive blend and gets a dark low-alpha ramp
+-- instead: a third 'BlendMode' is a C-ABI change and belongs to a spec
+-- that knows it is making one (func-spec 0021 §2.3).
 elementAppearance :: Element -> Appearance
 elementAppearance element = case element of
   Neutral -> Appearance (ColorRamp 0xFFFFFFFF 0xFFFFFFFF) 0.05 BlendAlpha Nothing BillboardSquare
   Fire -> Appearance (ColorRamp 0xFFD966FF 0xE6390000) 0.05 BlendAdditive Nothing BillboardSquare
   Water -> Appearance (ColorRamp 0x66CCFFFF 0x1A4DCC33) 0.05 BlendAlpha Nothing BillboardSquare
   Lightning -> Appearance (ColorRamp 0xFFFFCCFF 0x8033FF66) 0.05 BlendAdditive Nothing BillboardSquare
+  -- 金: sharp specular highlight; additive blows the overlaps out to white.
+  Metal -> Appearance (ColorRamp 0xFFF2CCFF 0xB38F1A66) 0.05 BlendAdditive Nothing BillboardSquare
+  -- 木: growth and occlusion — additive would make green glow, not grow.
+  Wood -> Appearance (ColorRamp 0x99E680FF 0x2E661A33) 0.05 BlendAlpha Nothing BillboardSquare
+  -- 土: heavy and opaque; alpha is its meaning here, not a concession.
+  Earth -> Appearance (ColorRamp 0xD9B380FF 0x59401A00) 0.05 BlendAlpha Nothing BillboardSquare
+  -- 陰: swallows light — a dark ramp fading to nothing.
+  Yin -> Appearance (ColorRamp 0x6633AAFF 0x0D0A1A00) 0.05 BlendAlpha Nothing BillboardSquare
+  -- 陽: emits light, 陰's opposite number.
+  Yang -> Appearance (ColorRamp 0xFFFFE0FF 0xFFCC4D00) 0.05 BlendAdditive Nothing BillboardSquare
 
 -- | Blend mode of the spell's render batch (first emitter's — always the
 -- casting emitter, spec 0006 keeps index 0 reserved for it; the shell
@@ -869,6 +893,19 @@ emitterBounds ctx (Seconds horizon) em = (anchorW - corner, anchorW + corner)
         maxMagnitude (evalInterval x ageEnv)
           + maxMagnitude (evalInterval y ageEnv)
           + maxMagnitude (evalInterval z ageEnv)
+      -- Func-spec 0021: same rule as the shapes — over-estimating is
+      -- allowed, under-estimating is the bug the culling cannot survive.
+      Wave speed amplitude _ ->
+        abs (realToFrac speed) * maxAge + abs (realToFrac amplitude)
+      -- |v₀t − gt²/2| <= |v₀|t + |g|t²/2 over the whole horizon.
+      Ballistic speed gravity ->
+        abs (realToFrac speed) * maxAge
+          + abs (realToFrac gravity) * maxAge * maxAge / 2
+      -- Speed is mean·(1 − cos) ∈ [0, 2·mean], so the displacement can
+      -- never outrun twice the mean over the age.
+      Pulse meanSpeed _ -> 2 * abs (realToFrac meanSpeed) * maxAge
+      Zigzag speed amplitude _ ->
+        abs (realToFrac speed) * maxAge + abs (realToFrac amplitude)
 
     -- The per-particle drift spread draws its two coefficients from
     -- 'Magic.Types.hashChan' shifted to [-0.5, 0.5].
@@ -890,12 +927,31 @@ emitterBounds ctx (Seconds horizon) em = (anchorW - corner, anchorW + corner)
 -- | An upper bound on @|p|@ for any point @p@ the shape samples.
 -- Bounds are the componentwise ones summed rather than the exact circum-
 -- radius: conservative on purpose, and it keeps the arithmetic obvious.
+--
+-- Under-estimating here is the one failure mode the compiler cannot
+-- catch (func-spec 0021 §2.2): a missing case is an exhaustiveness error,
+-- but a bound that is too small type-checks and then makes a host's
+-- frustum culling drop emitters that are still on screen. Each 0021
+-- radius takes the /max/ of the radii it was given rather than assuming
+-- the codec's ordering validation, so the bound holds for any value of
+-- the constructor, not just the ones that survive 'Magic.Codec'.
 shapeRadius :: FaceShape -> Float
 shapeRadius shape = case shape of
   Ring rInner rOuter -> max (abs (realToFrac rInner)) (abs (realToFrac rOuter))
   Diamond size -> 2 * abs (realToFrac size)
   Rect (V2 w h) -> (abs w + abs h) / 2
   HollowSquare size -> abs (realToFrac size)
+  -- Every sample is a convex combination of the origin and two vertices,
+  -- all of which sit at the circumradius.
+  Polygon _ radius' -> abs (realToFrac radius')
+  Star _ rOuter rInner -> max (abs (realToFrac rOuter)) (abs (realToFrac rInner))
+  -- The far corner of an arm: half a width off the axis, a whole length
+  -- along it.
+  Cross len width -> sqrt (l * l + (halfW * halfW))
+    where
+      l = abs (realToFrac len) :: Float
+      halfW = abs (realToFrac width) / 2
+  Sector rInner rOuter _ -> max (abs (realToFrac rInner)) (abs (realToFrac rOuter))
 
 -- Interval arithmetic over Expr ----------------------------------------------
 

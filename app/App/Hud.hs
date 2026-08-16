@@ -56,11 +56,12 @@ steerLine v = case hvView v of
     let fv = hvFlat v
         (ox, oy) = fvOrigin fv
      in printf
-          "zoom: %.0f px/unit  origin: %.0f, %.0f  tint: %s"
+          "zoom: %.0f px/unit  origin: %.0f, %.0f  tint: %s  depth: %s"
           (fvPixelsPerUnit fv)
           ox
           oy
           (if fvDepthTint fv > 0 then "on" else "off" :: String)
+          (if fvDepthScale fv > 1 then "on" else "off" :: String)
 
 reloadLines :: ReloadStatus -> [String]
 reloadLines status = case status of

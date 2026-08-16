@@ -2,16 +2,17 @@
 id: func-0021
 type: spec
 title: magic-vocabulary
-status: open
+description: 魔法語彙擴張：四個 sum type 由 POC 值域擴到遊戲級
+status: done
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 depends-on: [func-0020]
 related-adr: [adr-0003, adr-0005, adr-0010]
 ---
 
 # Func-Spec 0021：魔法語彙擴張（五行陰陽、形狀、軌跡、力場、輻射）
 
-> 狀態：**設計定案，待實作**
+> 狀態：**已交付**（2026-08-16，見 §8）
 > 性質：一般 —— 新增的建構子與其 JSON tag 依 0002 §2 的可擴充 sum 合約，交付後凍結（只加不改）。**`Element` 的宣告序自本輪起視同 wire code**（§2.4）。
 > 前置依賴：**spec 0020（需已完成）**——本 spec 修改 `src/core/Magic/Particle/Analytic.hs`（`sampleShape`／軌跡取樣），與 0020 的 `positionIn` 改動同檔，依 SKILL.md 規則 4 **動工門檻＝0020 驗收**。**與 spec 0018／0019 平行**（0018 觸 `src/ffi`＋`include`＋`bindings`，0019 觸 `.github`＋cabal metadata；本 spec **不觸碰 `include/particle_magic.h`**——見 §2.3 的 blend 裁決——故交集 = ∅，§0.2）。
 > 依據：architecture **§10**（七個擴充點的機制保證：「新符文／新初始面形狀／新屬性元素」三列各自宣稱「便宜」——**本輪是這三句話的第一次大規模兌現**）、§11（不容易擴充的硬點表，本輪逐條避開）；[roadmap.md](../roadmap.md) §2.1（「機制 100%／實例 POC 級——值域很小」）、§3.4（俯視進階可讀性）、§4.7 候選 G；ADR-0003（槽位固定職責）、ADR-0005（JSON schema 的加法演進）、ADR-0010（力場僅場對粒子）；spec 0015 §8-5（**「複數 blend 的批次要等多元素魔法陣」——本輪結清**）、0013 §8-4／0008 §9-8（俯視可讀性只解到第一階）。
@@ -33,7 +34,7 @@ related-adr: [adr-0003, adr-0005, adr-0010]
 | `BlendMode`＝`{BlendAlpha, BlendAdditive}`＋`PM_BLEND_*` wire code（0005／0009 凍結） | **零變更**（§2.3 的裁決）——這是本 spec 能與 0018 平行的關鍵 |
 | `observeSpell` 依 `(blend, shape)` 相鄰 run-length 分批（0015 S1 凍結分割律） | **零變更**；本輪只是第一次讓「同一個 `FrameOutput` 內出現複數 blend」真的發生 |
 | `docs/spell-schema.md` 的鍵名機械守護（0014 `SchemaDocSpec`） | 新 tag **強制**同步文件，否則測試紅 |
-| `Magic.Sigil`／`SigilSpin`（0016／0020 凍結） | **唯讀**：新 `FaceShape` 經 0016 §3 的 `ShapeRune` 例外參與陣形；本 spec 不碰 `Sigil.hs` |
+| `Magic.Sigil`／`SigilSpin`（0016／0020 凍結） | ~~**唯讀**，本 spec 不碰 `Sigil.hs`~~ → **實作時修正**：`hashCircle` 的三個摘要函數對新建構子是非窮盡的，不補會執行期 crash。改動是純加法的 tag 分配，既有摘要逐位元不變。見 **§8.4-1** |
 | 核心依賴白名單 `{base, vector, deepseq}` | 不新增依賴 |
 
 ### 0.2 檔案盤點（與 0018／0019 的三方零交集證明）
@@ -48,7 +49,9 @@ related-adr: [adr-0003, adr-0005, adr-0010]
 | `src/core/Magic/Particle/Field.hs` | `fieldAccel` +3 case（簽名不變） |
 | `src/boundary/Magic/Codec.hs` | 新 tag 的編解碼（18 個建構子）＋參數驗證 |
 | `docs/spell-schema.md` | 新鍵名段落（`SchemaDocSpec` 強制） |
-| `app/App/Render/Flat.hs`＋`app/App/Camera.hs` | 俯視進階可讀性：深度壓平比例、輪廓強調（S6） |
+| `app/App/Render/Flat.hs`＋~~`app/App/Camera.hs`~~ | 俯視進階可讀性：深度壓平比例、輪廓強調（S6） |
+
+> **§0.2 的實作後修正**（詳見 §8.4）：實際盤點是 **11 個檔案**。多出 `src/core/Magic/Sigil.hs`（摘要函數的窮盡性，§8.4-1）與 `src/core/Magic/Compile.hs` 多匯出一個 `shapeRadius`（§8.4-3）；S6 沒有動 `Camera.hs`（那是 3D 軌道相機，與俯視無關），改動的是 `app/App/{Effects,Loop,Hud}.hs` 與 `app/App/Render/{Flat,Raylib3D}.hs`（§8.4-2）。**與 0018／0019 的零交集結論不受影響**：多出的檔案兩者都不碰。
 
 **新增（8）**：`test/ElementVocabSpec.hs`、`test/FaceShapeVocabSpec.hs`、`test/TrajectoryVocabSpec.hs`、`test/FieldVocabSpec.hs`、`test/VocabCodecSpec.hs`、`test/FlatReadabilitySpec.hs`、`test/Acceptance21Spec.hs`、`assets/spells/wuxing-seal.json`＋`assets/spells/yin-yang.json`。
 
@@ -77,7 +80,7 @@ related-adr: [adr-0003, adr-0005, adr-0010]
 5. `ForceField` 6 種：＋`Wind`／`Turbulence`／`Spring`。**`fieldAccel` 簽名零變更**，`Field.step` 零變更（S4）。
 6. `RadiationMode` 4 種：＋`RadialInward`／`TangentialSwirl`（S5）。
 7. 18 個新建構子全部有 JSON tag、round-trip 成立、參數驗證有錯誤訊息、`docs/spell-schema.md` 同步（S5）。
-8. **複數 blend 批次律**：新範例陣 `wuxing-seal.json` 產生的 `FrameOutput` 含**至少兩個不同 `rbBlend` 的 batch**——0015 §8-5 的記帳在此結清（S7）。
+8. **複數 blend 批次律**：新範例陣 `wuxing-seal.json` 產生的 `FrameOutput` 含**至少兩個不同 `rbBlend` 的 batch**——0015 §8-5 的記帳在此結清（S7）。**實作時修正**：單一 `Circle` 只有一個元素，故單檔法術結構上不可能有兩種 blend；改以 0012 的合成陣（`castSpells [wuxing-seal, yin-yang]`）成立，這正是 0015 §8-5 原文列的另一條路。見 **§8.5**。
 9. 俯視進階可讀性：深度壓平比例與輪廓強調可切換，headless 可測（S6）。
 
 ## 2. 使用到的架構與技巧
@@ -209,15 +212,17 @@ data RadiationMode
 
 ## 6. Todo List 與 1-to-1 測試對應
 
+全部完成（2026-08-16），逐項結果見 §8.1。
+
 | # | Todo | 測試 |
 |---|---|---|
-| S1 | `Element` +5（`Metal`／`Wood`／`Earth`／`Yin`／`Yang`）＋`elementAppearance` 5 列 | `test/ElementVocabSpec.hs`（**append-only 律**：`[minBound..maxBound]` 前四項 ≡ `[Neutral,Fire,Water,Lightning]`；九種各有相異的 `ColorRamp`；blend 分佈含至少一種新 Alpha 與一種新 Additive；`Neutral` 仍逐位元 ≡ 0001 的素放外觀；每種的 `rampStart`／`rampEnd` alpha 於生命末端趨零） |
-| S2 | `FaceShape` +4＋`sampleShape` 4 case＋`shapeRadius` 4 case | `test/FaceShapeVocabSpec.hs`（**保守界 property**：`\|sampleShape s i\| ≤ shapeRadius s`，全 8 種 × 隨機索引；`Polygon n r` 的取樣落在 n 邊形內；`Star` 的外/內半徑分佈；`Cross` 的臂寬界；`Sector` 的張角界；全分量有限；既有四種的取樣**逐位元不變**） |
-| S3 | `Trajectory` +4＋位置取樣 4 case | `test/TrajectoryVocabSpec.hs`（全部為粒子年齡的閉式函數：同齡同輸出（決定論）、有限值（property，含極端年齡）；`Wave` 橫向分量的週期性；`Ballistic` 的頂點時刻 ≡ 解析解；`Pulse` 的位移單調不減；`Zigzag` 的轉折次數 ≡ 頻率×時間；既有四種逐位元不變） |
-| S4 | `ForceField` +3＋`fieldAccel` 3 case（**簽名不變**） | `test/FieldVocabSpec.hs`（`fieldAccel` 對三種新場為純位置函數：同位置同加速度、有限值（property）；`Spring` 的線性律 `a(2p) = 2a(p)` 對中心平移後成立；`Turbulence`／`Wind` 的擾動決定論且有界；**零場快路徑不受影響**（空場清單仍結構性跳過，ADR-0010 D9）；既有三種逐位元不變） |
-| S5 | `RadiationMode` +2＋18 個 JSON tag 的 Codec 編解碼與參數驗證＋`docs/spell-schema.md` | `test/VocabCodecSpec.hs`（18 個新建構子的 round-trip `saveCircle`→`loadCircle` 恆等（property）；每條參數驗證各一個失敗見證＋錯誤訊息含鍵路徑；未知 tag 仍回既有錯誤型別；**`SchemaDocSpec` 的鍵名守護連帶全綠**——新鍵未寫進文件即紅） |
-| S6 | 俯視深度壓平比例＋輪廓強調（`app/App/Render/Flat.hs`／`Camera.hs`） | `test/FlatReadabilitySpec.hs`（壓平係數為 1 時 ≡ 0013 的既有投影逐位元（零輸入零漣漪律，0013 的慣例）；係數 > 1 時深度差被放大且保序；輪廓強調的尺寸下界恆 > 0 且不改變粒子位置；headless 解譯器可觀測） |
-| S7 | 端到端＋`assets/spells/wuxing-seal.json`（混用五行、產生複數 blend）＋`assets/spells/yin-yang.json`（陰陽對置、驗證新形狀與新軌跡） | `test/Acceptance21Spec.hs`（**逐位元相容律**：既有 11 個範例陣 240 幀 `FrameOutput` 逐位元不變；**複數 blend 批次律**：`wuxing-seal` 的 `FrameOutput` 含至少兩個相異 `rbBlend`（0015 §8-5 結清）；兩個新陣 240 幀決定論；`spellBudget = Σ emCount`；`magic-validate` 對兩個新陣 exit 0） |
+| S1 ✅ | `Element` +5（`Metal`／`Wood`／`Earth`／`Yin`／`Yang`）＋`elementAppearance` 5 列 | `test/ElementVocabSpec.hs`（**append-only 律**：`[minBound..maxBound]` 前四項 ≡ `[Neutral,Fire,Water,Lightning]`；九種各有相異的 `ColorRamp`；blend 分佈含至少一種新 Alpha 與一種新 Additive；`Neutral` 仍逐位元 ≡ 0001 的素放外觀；每種的 `rampStart`／`rampEnd` alpha 於生命末端趨零） |
+| S2 ✅ | `FaceShape` +4＋`sampleShape` 4 case＋`shapeRadius` 4 case | `test/FaceShapeVocabSpec.hs`（**保守界 property**：`\|sampleShape s i\| ≤ shapeRadius s`，全 8 種 × 隨機索引；`Polygon n r` 的取樣落在 n 邊形內；`Star` 的外/內半徑分佈；`Cross` 的臂寬界；`Sector` 的張角界；全分量有限；既有四種的取樣**逐位元不變**） |
+| S3 ✅ | `Trajectory` +4＋位置取樣 4 case | `test/TrajectoryVocabSpec.hs`（全部為粒子年齡的閉式函數：同齡同輸出（決定論）、有限值（property，含極端年齡）；`Wave` 橫向分量的週期性；`Ballistic` 的頂點時刻 ≡ 解析解；`Pulse` 的位移單調不減；`Zigzag` 的轉折次數 ≡ 頻率×時間；既有四種逐位元不變） |
+| S4 ✅ | `ForceField` +3＋`fieldAccel` 3 case（**簽名不變**） | `test/FieldVocabSpec.hs`（`fieldAccel` 對三種新場為純位置函數：同位置同加速度、有限值（property）；`Spring` 的線性律 `a(2p) = 2a(p)` 對中心平移後成立；`Turbulence`／`Wind` 的擾動決定論且有界；**零場快路徑不受影響**（空場清單仍結構性跳過，ADR-0010 D9）；既有三種逐位元不變） |
+| S5 ✅ | `RadiationMode` +2＋18 個 JSON tag 的 Codec 編解碼與參數驗證＋`docs/spell-schema.md` | `test/VocabCodecSpec.hs`（18 個新建構子的 round-trip `saveCircle`→`loadCircle` 恆等（property）；每條參數驗證各一個失敗見證＋錯誤訊息含鍵路徑；未知 tag 仍回既有錯誤型別；**`SchemaDocSpec` 的鍵名守護連帶全綠**——新鍵未寫進文件即紅） |
+| S6 ✅ | 俯視深度壓平比例＋輪廓強調（`app/App/Render/Flat.hs`／`Camera.hs`） | `test/FlatReadabilitySpec.hs`（壓平係數為 1 時 ≡ 0013 的既有投影逐位元（零輸入零漣漪律，0013 的慣例）；係數 > 1 時深度差被放大且保序；輪廓強調的尺寸下界恆 > 0 且不改變粒子位置；headless 解譯器可觀測） |
+| S7 ✅ | 端到端＋`assets/spells/wuxing-seal.json`（混用五行、產生複數 blend）＋`assets/spells/yin-yang.json`（陰陽對置、驗證新形狀與新軌跡） | `test/Acceptance21Spec.hs`（**逐位元相容律**：既有 11 個範例陣 240 幀 `FrameOutput` 逐位元不變；**複數 blend 批次律**：`wuxing-seal` 的 `FrameOutput` 含至少兩個相異 `rbBlend`（0015 §8-5 結清）；兩個新陣 240 幀決定論；`spellBudget = Σ emCount`；`magic-validate` 對兩個新陣 exit 0） |
 
 ## 7. 非目標
 
@@ -232,4 +237,89 @@ data RadiationMode
 
 ## 8. 驗收紀錄
 
-（實作時回填：日期、`cabal test` 結果、**擴充成本實測**——每個新建構子平均觸及檔案數與測試條數，以及它與 architecture §10「便宜」宣稱的對照；`Drag` 被排除的理由是否需要回頭修訂 §10 的措辭；與計畫的差異。）
+**日期**：2026-08-16。**測試**：`cabal test` → **1376 examples, 0 failures**（0020 交付時 1205，本輪 +171）。`cabal build` 綠：`magic-core`、`magic-boundary`、demo exe、`magic-validate`。連跑兩次結果相同（第一次會把兩個新範例陣的 golden 錄下來，第二次起是比對）。
+
+### 8.1 七個 Todo 的測試結果
+
+| # | 測試模組 | 條數 | 結果 |
+|---|---|---|---|
+| S1 | `test/ElementVocabSpec.hs` | 13 | 綠。**append-only 律**：`[minBound..maxBound]` 前四項 ≡ `[Neutral,Fire,Water,Lightning]`、後五項 ≡ `[Metal,Wood,Earth,Yin,Yang]`、序數 ≡ `[0..8]`（`hashCircle` 讀的就是它）；九種 `ColorRamp` 兩兩相異；`Neutral` 逐欄 ≡ 0001 素放（`ColorRamp 0xFFFFFFFF 0xFFFFFFFF`／0.05／Alpha／Nothing／Square）；Fire／Water／Lightning 的 ramp 與 blend 逐位元不變；**5 Alpha／4 Additive**，且新元素兩種 blend 都有；五種新元素起點 alpha 全 `0xFF`、終點 alpha 嚴格更低；陰的起色亮度 < 陽 |
+| S2 | `test/FaceShapeVocabSpec.hs` | 12 | 綠。**保守界 property**：`\|sampleShape s i\| ≤ shapeRadius s`，全 8 種 × 隨機索引（0..100000）；全分量有限；`Polygon` 取樣滿足 n 邊形每一條邊的半平面（n = 3/5/6/8）；`Star` 不超外半徑且確實越過內半徑；`Cross` 恆在其中一臂的半寬內；`Sector` 不超半張角、落在環帶內、滿張角時掃過整個圓盤；既有四種取樣的 golden 值 |
+| S3 | `test/TrajectoryVocabSpec.hs` | 19 | 綠。**閉式函數律**（全 7 種）：同齡同輸出、極端年齡（至 1e5）仍有限、age 0 的軸向項恆 0；既有四種公式逐值不變；`Wave` 每 `1/freq` 秒重複橫向分量（property）且不超振幅；**`Ballistic` 頂點在 `v0/g`**、`2v0/g` 回到原點、零重力退化為 `Forward`；**`Pulse` 位移單調不減**（property，隨機速度／頻率／相位）、整週期平均 ≡ 平均速度；**`Zigzag` 轉折次數 ≡ freq × 秒數 ±1**（property） |
+| S4 | `test/FieldVocabSpec.hs` | 14 | 綠。**純位置函數**（全 6 種，property）：同位置同加速度、處處有限、疊加律；**零場快路徑逐位元不變**（`fieldAccel [] p ≡ V3 0 0 0`）；既有三種行為不變；**`Spring` 線性律** `a(center+2d) = 2·a(center+d)`（property）、中心處恰為零；`Wind`／`Turbulence` 決定論、有界、隨位置變化、`scale` 越大變化越緩；**`Turbulence` 散度為零**（數值差商，4 個取樣點，\|div\| < 1e-2） |
+| S5 | `test/VocabCodecSpec.hs` | 26 | 綠。18 個新建構子 round-trip（元素／輻射模式逐一列舉，形狀／軌跡／力場為 property）；**14 條參數驗證各一個失敗見證**，訊息含鍵名與 JSON 路徑；四類未知 tag 都列出完整合法清單。`SchemaDocSpec` 連帶全綠（新鍵 `sides`／`amplitude`／`sweep`／`scale`／`turbulence` 已寫入 `docs/spell-schema.md`） |
+| S6 | `test/FlatReadabilitySpec.hs` | 16 | 綠。**零漣漪律**：預設 `fvDepthScale = 1`／`fvOutlineFloor = 0`，四個角逐位元 ≡ `中心 ± size·ppu/2`（對頂點本身斷言，不對重建量）；顯式設為關閉值不改變任何位元；兩個 cue 完全不碰顏色；壓平係數 > 1 時近大遠小、保序、中點恰為原尺寸、係數越大差距越大；**無深度範圍時退回原尺寸**；輪廓下界恆被遵守、恆 > 0、不縮小本來就夠大的粒子；兩個 cue 都不移動粒子中心、不改變 quad 數 |
+| S7 | `test/Acceptance21Spec.hs` | 12 | 綠。**逐位元相容律**：12 個 pre-0021 範例陣全在 golden 網內（見 §8.3），且仍各自只有一種 blend；**複數 blend 批次律**：`castSpells [wuxing-seal, yin-yang]` 的 `FrameOutput` 同時含 `BlendAlpha` 與 `BlendAdditive`、batch 數 > 1，而任一單檔仍只有一種——0015 §8-5 結清；兩個新陣確實用到新形狀／新輻射／新軌跡／三種新場；240 幀決定論；`spellBudget = Σ emCount`；緩衝不超預算；`isFinished` 於 `ppEnd` 翻轉；`magic-validate` exit 0 |
+
+### 8.2 擴充成本實測（§2 要回填的數字）
+
+18 個新建構子，`src/` + `app/` 共 **+545 行 / −13 行**，跨 11 個檔案；新測試 7 個模組共 1407 行、171 條。
+
+**一個新建構子平均觸及 4.0 個檔案**，依 sum type 分佈：
+
+| Sum type | 每個新建構子要改的檔案 | 檔案數 |
+|---|---|---|
+| `Element` | `Rune.hs`、`Compile.hs`（`elementAppearance`）、`Codec.hs`（parse + encode） | **3** |
+| `ForceField` | `Rune.hs`、`Field.hs`（`accelOf`）、`Codec.hs` | **3** |
+| `RadiationMode` | `Rune.hs`、`Analytic.hs`（軸）、`Sigil.hs`（`hcRadiation`）、`Codec.hs` | **4** |
+| `FaceShape` | `Rune.hs`、`Analytic.hs`（`sampleShape`）、`Compile.hs`（`shapeRadius`）、`Sigil.hs`（`hcFaceShape`）、`Codec.hs` | **5** |
+| `Trajectory` | `Rune.hs`、`Analytic.hs`（`trajectoryOffset`）、`Compile.hs`（`trajectoryRadius`）、`Sigil.hs`（`hcTrajectory`）、`Codec.hs` | **5** |
+
+**對照 architecture §10 的「便宜」宣稱**：宣稱成立，但那張表的措辭少講了兩件事，兩者都在本輪實際發生：
+
+1. **§10 說「新屬性元素」只要「顏色/混合對照表加一列」——這是三個擴充點裡唯一真正只有一列的**。`Element` 是 3 個檔案，而且 `Sigil.hs` 完全免費（`hcElement = hcEnum`，`Enum` 自動涵蓋新建構子）。`elementAppearance` 的那句「唯一讓本質影響外觀的地方，封閉影響面」註解，本輪證明它是真的。
+2. **§10 說「新初始面形狀」只要「形狀取樣器加 case」——實際是 5 個檔案，而且其中兩個 GHC 幫不上忙**。`shapeRadius` 給錯太小的界不會被編譯器擋（§2.2），`hcFaceShape` 的 tag 給錯會靜默改變既存法術的陣（§8.4）。這不是「不便宜」，是「便宜但有兩顆地雷」，而地雷的位置在表裡看不出來。
+
+**結論**：§10 那張表的三列宣稱都成立，不需要因為本輪而修訂「便宜」二字；但建議在該表加一欄「編譯器擋不住的地方」，把 `shapeRadius` 的保守界與 `hcFaceShape`／`hcTrajectory` 的 tag 分配寫進去——那才是新增建構子時真正該看的清單。
+
+### 8.3 逐位元相容律的證據鏈（與計畫的差異之一）
+
+計畫把這條律寫成「S7 斷言既有 11 個範例陣 240 幀逐位元不變」。實作時發現**證據不可能由本輪自己產生**：在改動後錄下的 golden 只能證明「改動後很穩定」，不能證明「與改動前相同」。
+
+實際做法：
+
+1. 先 `git stash` 本輪所有改動，把工作樹還原到 pre-0021；
+2. 發現 `PerfGoldenSpec`（0010 建立的 golden 網）只涵蓋 10 個範例，`soft-bloom` 與 `lattice-seal` 從 0015／0016 起一直沒有 golden；把這兩個補進清單，在 **pre-0021 的樹上**執行，讓它把兩份 golden 錄下來並確認 12 個全綠；
+3. 取回本輪改動，再跑一次 —— 12 份 golden 全部比對通過。
+
+所以本輪的逐位元相容律是**對 12 個範例陣、由改動前的建置錄下的 240 幀摘要**成立的（範圍比計畫的 11 個多一個）。順帶把 `PerfGoldenSpec` 的「涵蓋每一個範例」斷言從寫死的數字改成掃描 `assets/spells/`，避免同樣的疏漏再發生。
+
+兩個新範例陣的 golden 只能錄在改動後，因此它們是**留給下一輪的網**，不是本輪的證據——這一點寫在 `PerfGoldenSpec` 的清單註解裡。
+
+### 8.4 與計畫的差異（三項）
+
+1. **`Sigil.hs` 必須修改**（§0.1 寫「唯讀，本 spec 不碰 `Sigil.hs`」，§0.2 把它列進「明文不碰」）。理由：`hcFaceShape`／`hcTrajectory`／`hcRadiation` 是**非窮盡**的 `case`，新建構子會讓它們在執行期 crash（不是編譯警告而已——`Polygon` 形狀配上 `phases` 的法術一取樣就爆）。§0.1 原本推論「新 `FaceShape` 經 0016 §3 的 `ShapeRune` 例外自動參與陣形」是對的，但「自動」的前提正是摘要函數認得它。修法是純加法：新形狀取 tag 4–7、新軌跡取 4–7、新輻射取 2–3，既有 tag 一個不動，所以既有法術的摘要逐位元不變（golden 網已證）。**與 0018／0019 的零交集不受影響**（兩者都不碰 `Sigil.hs`）。
+2. **S6 沒有動 `app/App/Camera.hs`，改動的是 `App/Effects.hs`、`App/Loop.hs`、`App/Hud.hs`、`App/Render/Raylib3D.hs`**。§0.2 把 `Camera.hs` 列進來是誤判：`Camera.hs` 是 3D 軌道相機的純算術，而俯視可讀性整個住在 2D 正交路徑上。兩個新旋鈕是 `FlatView` 的欄位（`fvDepthScale`／`fvOutlineFloor`，比照 0013 的 `fvDepthTint`），所以要動宣告它的 `Effects.hs`、給預設值與切換的 `Loop.hs`、顯示狀態的 `Hud.hs`，以及把 `G` 鍵譯進 `DemoInput` 的 `Raylib3D.hs`。全部仍在 `app/*`，與 0018／0019 無交集。
+3. **`Magic.Compile` 多匯出一個 `shapeRadius`**。S2 的保守界 property 必須在測試裡讀得到它，而它原本只是模組內部函數。純加法匯出。
+
+### 8.5 §1-8 的實作備註：「多元素魔法陣」＝ 0012 的合成陣
+
+§1-8 與 S7 寫的是「`wuxing-seal.json` 產生的 `FrameOutput` 含至少兩個不同 `rbBlend` 的 batch」。**照字面做不到**：blend 由 `Element` 決定（`elementAppearance`），陣形發射器沿用同一個元素的 blend（`formationAppearance`），而一張 `Circle` 只有一個 `core.center.element` —— 所以任何單檔法術結構上都只有一種 blend。
+
+裁決（經開發者確認）：用 **0012 的合成陣**，這也正是 0015 §8-5 原文列的兩條路之一（「要等『多元素魔法陣』**或 0012 的合成陣**」），以及 roadmap §4 記帳明寫的「合成後的 per-component blend …… 素材由 0021 補齊」與 ADR-0012 D5 的原始情境（「把火與水疊起來」）。
+
+因此：
+
+- `wuxing-seal.json` 用**金**（`metal`，Additive），`yin-yang.json` 用**陰**（`yin`，Alpha）；兩張各自仍是單元素範例陣；
+- S7 的複數 blend 律斷言在 `castSpells [wuxing-seal, yin-yang]` 上，並**同時斷言任一單檔只有一種 blend** —— 把「為什麼需要合成」也變成測試而不只是註解；
+- schema 文件 §3.1 加了一段告訴作者這件事，§11 的範例導覽把兩張標為「一組」。
+
+被否決的兩條路，理由記在此供後續參考：**單一 circle 帶多元素**需要 fold 步驟 1 扇出成多個施放發射器，會動到「`spellEmitters` 索引 0 是施放發射器」的 0006 慣例、`spellBlend` 的語意、粒子預算的分配規則，並與 **0025 的 `circleAnchors` 扇出機制正面重疊**，應在 0025 之後另開一輪；**讓陣形粒子改走對比 blend** 會直接違反本輪最強的逐位元相容律。
+
+### 8.6 `Drag` 的排除是否需要修訂 architecture §10
+
+§2.5 預期本輪會發現「第一個不便宜的擴充點」。實作後的判斷：**不需要修訂 §10 的措辭，因為 `Drag` 根本不是 §10 表上的擴充點**。
+
+§10 那一列講的是「新符文／新初始面形狀／新屬性元素」，`ForceField` 加建構子確實便宜（3 個檔案，本輪三種場全部在 `fieldAccel` 既有簽名之內完成）。`Drag`／`Magnetic` 貴是因為它們要求 `fieldAccel` 看得到速度 —— 那不是「加一個建構子」，是**改一個凍結簽名**，屬於 §11（不容易改動的硬點）而非 §10。
+
+建議的文件動作不是修訂 §10，而是往 **§11 加一列**：「`fieldAccel` 的位置-only 簽名 —— 阻尼／磁力等速度相依的場需要它看到速度，等於改熱路徑簽名並重寫 `stepColumns` 的每槽讀取；緩解：新場一律先檢查能否寫成純位置函數，本輪三種都可以」。這件事需要開發者同意才動 architecture.md（燈塔文件），故列為建議而非本輪已做。
+
+### 8.7 順帶修掉的既有測試假設（三處）
+
+都是本輪讓「原本不存在的東西」存在了，屬預期內的連帶更新：
+
+- `test/FieldCodecSpec.hs` 一直拿 `"wind"` 當「未知 kind」的樣本 —— 本輪它變成合法的了，改用 `"magnetism"`（§7-2 明文不做，所以它會長期保持未知）。
+- `test/ValidateSpec.hs`／`test/SchemaDocSpec.hs` 的範例檔數 12 → 14。
+- `test/FlatQuadSpec.hs`／`test/FlatEffectsSpec.hs` 直接建構 `FlatView`，補上兩個新欄位的關閉值。
+
+另外實作中 `FlatReadabilitySpec` 抓到一個真的 bug：深度壓平在「整批粒子同深度」時，`depthFrac` 回 0 被當成「在最近端」，於是整批被放大 `k` 倍。正解是比照 `shadeAt`，在沒有深度範圍時整個 cue 關閉。若沒寫那條 property，這個 bug 會以「俯視時某些法術整批忽然變大」的形式流到 demo 裡。

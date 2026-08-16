@@ -2,9 +2,10 @@
 id: func-0013
 type: spec
 title: visual-expressiveness
+description: 視覺表現力的 app 半場：深度排序、相機與視窗適配
 status: done
 created: 2026-08-14
-updated: 2026-08-15
+updated: 2026-08-16
 depends-on: []
 related-adr: [adr-0009]
 ---

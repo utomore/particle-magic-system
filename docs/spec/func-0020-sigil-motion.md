@@ -2,6 +2,7 @@
 id: func-0020
 type: spec
 title: sigil-motion
+description: 陣形的時間維度：整陣自轉與層間反向轉
 status: done
 created: 2026-08-15
 updated: 2026-08-16

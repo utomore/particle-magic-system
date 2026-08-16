@@ -2,9 +2,10 @@
 id: adr-0009
 type: adr
 title: dynamic-quad-mesh-rendering
+description: 渲染走動態 quad mesh 的單 draw call 路線
 status: accepted
 created: 2026-08-13
-updated: 2026-08-13
+updated: 2026-08-16
 related-adr: [adr-0006]
 related-spec: [func-0005]
 ---

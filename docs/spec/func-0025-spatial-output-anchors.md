@@ -2,9 +2,10 @@
 id: func-0025
 type: spec
 title: spatial-output-anchors
+description: 空間資訊輸出與多發動點錨點
 status: open
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 depends-on: [func-0018]
 related-adr: [adr-0003, adr-0006, adr-0007, adr-0008, adr-0011, adr-0012, adr-0019]
 ---

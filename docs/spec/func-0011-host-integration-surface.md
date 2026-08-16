@@ -2,9 +2,10 @@
 id: func-0011
 type: spec
 title: host-integration-surface
+description: 宿主整合面：投影查詢上 C ABI 與 C# 參考綁定
 status: done
 created: 2026-08-14
-updated: 2026-08-15
+updated: 2026-08-16
 depends-on: []
 related-adr: [adr-0008, adr-0011]
 ---

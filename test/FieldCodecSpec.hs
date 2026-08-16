@@ -154,8 +154,11 @@ spec = describe "Magic.Codec \"fields\" surface (spec 0007 S5)" $ do
 
     it "rejects an unknown field kind and lists the valid ones" $
       shouldFailContaining
-        (withFields "[{\"kind\":\"wind\"}]")
-        ["$.circle.fields[0]", "gravity, attractor, vortex"]
+        -- "wind" was the stand-in for an unknown kind until func-spec
+        -- 0021 made it a real one; "magnetism" is deliberately still
+        -- unknown, and 0021 §7-2 records why it stays that way.
+        (withFields "[{\"kind\":\"magnetism\"}]")
+        ["$.circle.fields[0]", "gravity, attractor, vortex, wind, turbulence, spring"]
 
     it "rejects a vector that is not three numbers" $
       shouldFailContaining
