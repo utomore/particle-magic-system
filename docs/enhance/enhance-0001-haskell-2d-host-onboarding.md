@@ -3,7 +3,7 @@ id: enhance-0001
 type: enhance
 title: haskell-2d-host-onboarding
 description: 補上 Haskell 宿主範例與 2D 像素風接法食譜
-status: open
+status: done
 created: 2026-08-16
 updated: 2026-08-16
 related-adr: [adr-0008]
@@ -12,7 +12,8 @@ related-spec: [func-0008, func-0011, func-0013]
 
 # 改善提案：Haskell 2D／像素風宿主的上手路徑
 
-> 狀態：**提案中，待開發者裁決**（E3 需要一個架構層決定）
+> 狀態：**已落地**（2026-08-16。裁決見 §5，Todo 與測試對照見 §6，偏離與發現見 §8。本輪執行 E1＋E2；E3 取案 B，程式碼未搬家）
+> 驗證：`cabal test` **1273 examples／0 failures**（本輪新增 13）；`examples/haskell` 的 `cabal build` 綠，`cabal run -v0 pm-haskell-host | diff - expected-output.txt` 無差異
 > 性質：改善提案 —— 主體是**文件與範例**，不新增功能、不改既有語意。唯一觸及程式碼的是 E3，而 E3 是**搬家**而非新寫，且它是否該做需要開發者拍板（見 §2.3）。
 > 相關文件：[integration.md](../integration.md)（本提案的主要修改對象）、[roadmap.md](../roadmap.md) §4.4（「文件缺口」的既有記帳位置）、[ADR-0008](../adr/adr-0008-dimension-agnostic-3d-first.md)（維度無關核心、投影屬外殼）、[func-0008](../spec/func-0008-ortho2d-backend.md)（2D 正交後端）、[func-0011](../spec/func-0011-host-integration-surface.md)（宿主整合面）、[func-0013](../spec/func-0013-visual-expressiveness.md)（`fvDepthTint`、flat camera）
 > 起因：開發者提問「其他 Haskell 專案要怎麼引入這套系統？我手上是 2D pixel art 素材的遊戲，套得上嗎？」——查核後**兩個問題的答案都是肯定的，但兩者都缺一段路**。
@@ -122,17 +123,67 @@ related-spec: [func-0008, func-0011, func-0013]
 
 ---
 
-## 5. 待開發者裁決
+## 5. 開發者裁決（2026-08-16）
 
-1. **E1 的範例形態**：獨立 `.cabal`（真的走過外部消費路徑，但落在 `cabal build all` 之外）還是根專案的 executable stanza（好建置，但證明力弱）？本提案建議前者。
-2. **E3 做不做、什麼時候做**：現在就開 ADR 把螢幕映射提升成凍結介面，還是等 E1 實作時的實際需要？本提案建議後者。
-3. **落地方式**：E1＋E2 的工作量不大（一個範例 + 一節文件），是否值得單獨開一份 func-spec，或直接作為本 enhance 的實作輪次執行（`status: in-progress` → `done`）？依 SKILL.md，enhance 可直接由 `spec-impl` 消化，本提案傾向如此。
+三項全數採納本提案的建議：
+
+1. **E1 的範例形態 → 獨立 `.cabal`。** `examples/haskell/` 自帶 `.cabal` 與 `cabal.project`（以相對路徑指回 `../..`），真的走過一次外部消費路徑；代價是它落在根 `cabal build all` 之外，要另一行指令，與 `examples/c/main.c` 需要另外 `gcc` 一次同款。
+2. **E3 → 案 B，暫不做。** 螢幕映射三函數留在 `app/App/Render/Flat.hs`，E2 裡指路並說明「照抄時要保住 zoom 的定點律」。保持 ADR-0008「投影屬外殼」的字面立場；等 E1 或真實宿主證明「不照抄就寫不出來」再開 ADR。
+3. **落地方式 → 直接作為本 enhance 的實作輪次**（不另開 func-spec），依 SKILL.md 由 `spec-impl` 消化。
 
 ---
 
-## 6. 落地後的收尾動作
+## 6. 本輪 TodoList 與 1-to-1 測試對照
 
-- 本檔 `status` → `done`，`updated` 同步。
-- integration.md 版本號與日期上調，§8 限制清單刪掉「沒有 2D 宿主參考實作」那一列。
-- roadmap §4.4 的文件缺口清單勾掉對應條目（比照手性那一條的 `~~刪除線~~ ✅` 寫法）。
-- 若 E1 採獨立 `.cabal`：`particle-magic.cabal` 的 `extra-source-files` 加入該範例，與 `examples/c/main.c`、`bindings/csharp/ParticleMagic.cs` 並列。
+全部測試集中在新檔 `test/ExampleHostSpec.hs`，比照 `test/BindingContractSpec.hs` 的定位：範例不由本專案的 `cabal build all` 編譯，所以沒有文字契約測試守著，它就會在無人察覺的情況下腐爛。
+
+- [x] **S1** 獨立 package 骨架
+- [x] **S2** `Main.hs` 最小宿主
+- [x] **S3** golden 逐幀輸出
+- [x] **S4** 跨宿主等價
+- [x] **S5** `extra-source-files` 收錄
+- [x] **S6** integration.md 的 2D／像素風食譜
+
+| # | Todo | 對應測試（`ExampleHostSpec.hs`） |
+|---|---|---|
+| **S1** | `examples/haskell/` 獨立 package：`particle-magic-example.cabal`＋`cabal.project`（相對路徑指回 `../..`） | 「範例是外部消費者：依賴 `magic-boundary`、碰不到 `magic-core`、不連 renderer」＋「`cabal.project` 指回倉庫根」 |
+| **S2** | `Main.hs`：不畫圖的最小宿主——載入陣、施法、120 幀固定時步、逐幀摘要 | 「範例只 import integration.md §3 列出的 boundary 模組」（白名單雙向：多 import 一個核心模組就紅） |
+| **S3** | 逐幀輸出落成 golden（`examples/haskell/expected-output.txt`），供人工 `diff` | 「in-process 參考路徑（`Magic.Interface`，與範例同一組常數）逐行等於 golden」 |
+| **S4** | 跨宿主等價：同一組輸入下 C ABI 路徑與 Haskell 路徑的每幀數值相同 | 「以 `Magic.FFI` in-process 比照 `examples/c/main.c` 的呼叫序驅動，121 行逐行等於 golden」 |
+| **S5** | `particle-magic.cabal` 的 `extra-source-files` 收錄範例四檔 | 「範例的每一個檔案都在 `extra-source-files` 裡」（缺一即紅） |
+| **S6** | integration.md 新增 §3.3「2D／像素風宿主食譜」六條＋§8 補限制列＋§1／§3 指向新範例 | 「食譜節存在，且視角對照表同時出現 `SideXY`／`TopXZ`／`casterFacing`」＋「§3 的模組清單數字與實際列出的模組數一致」＋「文中指向 `examples/haskell/`」 |
+
+收尾的文檔記帳（roadmap、本檔 `status`、integration.md 版本號）見 §7，不另立 Todo。
+
+---
+
+## 7. 落地後的收尾動作
+
+- [x] 本檔 `status` → `done`，`updated` 同步。
+- [x] integration.md 版本號與日期上調（1.2 → **1.3**）。
+- [x] roadmap 的文件缺口記帳：**§3.3 新增五列**（兩列 `~~刪除線~~ ✅`、三列刻意不做的記帳），版本號 2.0 → **2.1**；§4.4 補一段體例續用的註記（改記位置的理由見 §8.1-3）。
+- [x] `particle-magic.cabal` 的 `extra-source-files` 加入該範例的五個檔案，與 `examples/c/main.c`、`bindings/csharp/ParticleMagic.cs` 並列（`ExampleHostSpec` 逐檔守護，日後新增一個檔案而忘了登記就會紅）。
+
+---
+
+## 8. 實作備註（偏離與實作中的發現）
+
+### 8.1 對提案原文的三處偏離
+
+1. **§2.2 第 6 條的「補一列再刪掉」改判為「收窄後留下」。** 原文說 §8 先補「沒有 2D 宿主的參考實作」，E1 落地後即可刪。但 E1 是**不畫圖**的宿主，它證明的是整合路徑而不是渲染，所以那一列並沒有被 E1 結清。實際寫進 integration.md §8 的是收窄後的版本：**「像素風只有食譜，沒有像素風的參考實作」**，並點名 demo 的 flat view（`App.Render.Flat`）是 2D 但**連續色彩＋64×64 程序貼圖**，食譜第 3、4 條（低解析 render target 整數倍放大、調色盤量化）沒有任何範例走過。誠實清單裡留一列真的，比刪掉一列假的好。
+2. **食譜節首明寫「不分語言」。** 位置照提案放在 §3.3，但那會讓它看起來像 Haskell 專屬——實際上除了第 1 步的程式碼片段，每一條對 C／C# 宿主一字不差適用。因此節首加了這句，並從 §1 的路線表與 §4.5 交叉指路。
+3. **roadmap 的記帳位置從 §4.4 改到 §3.3。** 提案原文說「在 roadmap §4.4 的文件缺口清單加上這四條」，但 §4.4 是 0011 規劃回合的**歷史小節**，而 §3.3「介面／宿主」才是活的欠款總表——當年那兩條缺口也是鏡射到 §3.3 才被劃掉的。四條缺口與兩條「刻意不做」因此記在 §3.3，§4.4 只補一段體例續用的註記。
+
+### 8.2 實作中才浮現的兩條事實（都已回寫文件）
+
+1. **Haskell 宿主的依賴面是四個，不是兩個。** integration.md §3 原本只寫 `build-depends: particle-magic:magic-boundary`，照抄**編不過**：`Magic.Codec.loadCircle` 吃的是原始位元組（要 `bytestring`），而 `ParticleBuffer` 的六條欄是 `Data.Vector.Unboxed`（ADR-0006，要 `vector`）。這是「只有文件片段、沒有東西編譯它」最典型的代價——寫 E1 的第一分鐘就撞到了。已補進 §3 與範例的 `.cabal` 註解。
+2. **`dt` 的寬度是跨宿主等價的前提。** `pm_advance` 收的是 `float`，進來之後才加寬成 double。所以一個在自己原始碼裡寫 `1.0f/60.0f` 的 C 宿主，和一個寫 `1/60 :: Double` 的 Haskell 宿主，**跑的不是同一個模擬**——決定論是 per-input（ADR-0011 D8），而 `dt` 是輸入之一。範例刻意收窄成 `float2Double (1/60 :: Float)` 以換取與 `examples/c/main.c` 的可 diff 性，並在 README、原始碼註解與 `ExampleHostSpec` 檔頭各寫了一次。（`test/FFIHarness.hs` 的 `step` 一直就是這樣做的，所以 S4 的兩條路徑不必額外對齊就對上了。）
+
+### 8.3 E3 的後續判準
+
+實作 E1 的過程中**沒有**出現「不照抄 `Flat.hs` 就寫不出來」的情況——不畫圖的宿主確實不需要 pan／zoom，如 §2.3 所預測。所以案 A 的觸發條件仍未滿足，記帳留在 roadmap §3.3。下一個會觸發它的事件是**真的有人要畫一個 2D 宿主**（食譜第 3 條的低解析 render target 一旦要做，`screenOf` 就免不了）。
+
+### 8.4 未觸及
+
+- **CI**：`examples/haskell/` 落在根 `cabal build all` 之外，要另一行指令；把那一行收進 CI 是 **func-0019** 的地盤，本輪未動 `.github/workflows/ci.yml`。
+- **CHANGELOG.md**：格式規則是「一份 func-spec 一則」（`docs/release.md` §3），本輪不是 func-spec，版本號亦未動，故未加條目。
