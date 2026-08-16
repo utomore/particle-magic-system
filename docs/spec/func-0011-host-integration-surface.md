@@ -2,7 +2,7 @@
 id: func-0011
 type: spec
 title: host-integration-surface
-description: 宿主整合面 —— 投影與上限查詢上 C ABI、C# 參考綁定與 Unity 範例、header 補座標手性與顏色位元組序。
+description: 宿主整合面：投影查詢上 C ABI 與 C# 參考綁定
 status: done
 created: 2026-08-14
 updated: 2026-08-16

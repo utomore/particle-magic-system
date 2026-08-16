@@ -2,7 +2,7 @@
 id: adr-0006
 type: adr
 title: soa-unboxed-buffer
-description: 粒子緩衝採 SoA ＋ unboxed vector,目標量級 10k–100k。
+description: 粒子緩衝採 SoA 加 unboxed vector
 status: accepted
 created: 2026-08-11
 updated: 2026-08-16

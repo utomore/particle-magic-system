@@ -2,7 +2,7 @@
 id: func-0025
 type: spec
 title: spatial-output-anchors
-description: 空間資訊輸出與多發動點 —— 貼合有向盒、spell 級聯集、N³ 佔用格網、陣層級 anchors。
+description: 空間資訊輸出與多發動點錨點
 status: open
 created: 2026-08-15
 updated: 2026-08-16

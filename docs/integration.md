@@ -1,3 +1,15 @@
+---
+id: integration-guide
+type: reference
+title: host-integration-guide
+description: 各語言宿主怎麼接上本系統的整合指南與資料合約
+status: done
+created: 2026-08-14
+updated: 2026-08-16
+related-adr: [adr-0008, adr-0011, adr-0012]
+related-spec: [func-0009, func-0011, func-0018]
+---
+
 # 宿主整合指南
 
 > 版本：1.2（2026-08-16，spec 0018 交付後：場景層整個上 C ABI——新增 §4.6、`PM_ERR_QUOTA` 進 §4.3 的錯誤表、§3.2 與 §8 的「只在 Haskell 面」收窄為「不進場景的合成只在 Haskell 面」。ABI version 仍為 1——全部是加法。1.1 為 spec 0011 交付後：投影三件套上 C ABI、C# 參考綁定與 Unity 範例成為真檔案）

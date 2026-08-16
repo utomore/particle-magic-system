@@ -2,7 +2,7 @@
 id: func-0014
 type: spec
 title: authoring-tools
-description: 作者工具 —— magic-validate 驗證 CLI、作者面 schema 手冊、spell 清單執行中熱掃描。
+description: 作者工具：驗證 CLI、schema 手冊與熱掃描
 status: done
 created: 2026-08-14
 updated: 2026-08-16

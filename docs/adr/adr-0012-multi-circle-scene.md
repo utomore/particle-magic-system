@@ -2,7 +2,7 @@
 id: adr-0012
 type: adr
 title: multi-circle-scene
-description: 多陣合成的代數(Monoid CompiledSpell、逐界標 max)與場景層的全域配額先到先得。
+description: 多陣合成的代數與場景層全域配額的分配政策
 status: accepted
 created: 2026-08-15
 updated: 2026-08-16

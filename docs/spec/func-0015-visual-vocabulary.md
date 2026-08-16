@@ -2,7 +2,7 @@
 id: func-0015
 type: spec
 title: visual-vocabulary
-description: 展現詞彙與多批次輸出 —— 依 blend 與 shape 分批、四種 billboard 形態、外圈 StyleRune。
+description: 展現詞彙與依 blend 與 shape 分批的多批次輸出
 status: done
 created: 2026-08-15
 updated: 2026-08-16

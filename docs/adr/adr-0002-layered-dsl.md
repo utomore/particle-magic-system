@@ -2,7 +2,7 @@
 id: adr-0002
 type: adr
 title: layered-dsl
-description: DSL 分三層(結構 ADT ＋ 參數紀錄 ＋ 小型 Expr AST),不做深度 GADT DSL。
+description: DSL 分三層，不做深度 GADT DSL
 status: accepted
 created: 2026-08-11
 updated: 2026-08-16

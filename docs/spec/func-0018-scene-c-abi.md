@@ -2,7 +2,7 @@
 id: func-0018
 type: spec
 title: scene-c-abi
-description: 場景層上 C ABI —— PmScene handle 與 10 個純增補匯出,非 Haskell 宿主與 Haskell 宿主能力對等。
+description: 場景層上 C ABI：PmScene handle 與純增補匯出
 status: done
 created: 2026-08-15
 updated: 2026-08-16

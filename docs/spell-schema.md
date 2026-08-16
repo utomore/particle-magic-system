@@ -1,3 +1,15 @@
+---
+id: spell-schema
+type: reference
+title: spell-file-schema
+description: 寫魔法陣 JSON 的作者手冊，只講鍵名與值域
+status: done
+created: 2026-08-15
+updated: 2026-08-16
+related-adr: [adr-0005]
+related-spec: [func-0014]
+---
+
 # 法術檔案格式（schema v1）—— 作者手冊
 
 本文是**寫魔法陣 JSON 的人**的參考，不是程式碼說明。全文只講 JSON 鍵名與值域；型別名、模組名一律不出現。

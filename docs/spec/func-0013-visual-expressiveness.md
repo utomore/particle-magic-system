@@ -2,7 +2,7 @@
 id: func-0013
 type: spec
 title: visual-expressiveness
-description: 視覺表現力的 app 半場 —— alpha 深度排序、軌道相機、2D 平移縮放與視窗適配、俯視深度色調。
+description: 視覺表現力的 app 半場：深度排序、相機與視窗適配
 status: done
 created: 2026-08-14
 updated: 2026-08-16

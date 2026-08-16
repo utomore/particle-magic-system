@@ -2,7 +2,7 @@
 id: func-0006
 type: spec
 title: lifecycle-formation
-description: 生命週期四階段(繪陣→收束→發動→消散),陣形發射器由 Circle 幾何直接導出。
+description: 生命週期四階段與由陣形幾何導出的發射器
 status: done
 created: 2026-08-13
 updated: 2026-08-16

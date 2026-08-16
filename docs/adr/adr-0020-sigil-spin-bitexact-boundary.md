@@ -2,7 +2,7 @@
 id: adr-0020
 type: adr
 title: sigil-spin-bitexact-boundary
-description: 陣自轉使逐位元邊界收窄至 t = 0,並終結陣形 golden 每輪重錄的記帳方式。
+description: 陣自轉使逐位元邊界收窄至 t = 0
 status: accepted
 created: 2026-08-16
 updated: 2026-08-16

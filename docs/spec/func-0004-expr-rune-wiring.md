@@ -2,7 +2,7 @@
 id: func-0004
 type: spec
 title: expr-rune-wiring
-description: 四種 Expr 符文與魔法陣完整接線,玩家第一次能用公式描述行為。
+description: 四種 Expr 符文與魔法陣完整接線，能用公式描述行為
 status: done
 created: 2026-08-12
 updated: 2026-08-16

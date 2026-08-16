@@ -2,7 +2,7 @@
 id: adr-0001
 type: adr
 title: hybrid-particle-model
-description: 粒子模型走「解析式為主、力場層可選」的混合路線,不做全域物理模擬。
+description: 粒子模型走解析式為主、力場層可選的混合路線
 status: accepted
 created: 2026-08-11
 updated: 2026-08-16

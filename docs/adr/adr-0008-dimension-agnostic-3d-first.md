@@ -2,7 +2,7 @@
 id: adr-0008
 type: adr
 title: dimension-agnostic-3d-first
-description: 核心在抽象 3D 空間運算、投影是外殼的職責;第一個展示層是 raylib 3D。
+description: 核心在抽象 3D 空間運算，投影是外殼的職責
 status: accepted
 created: 2026-08-11
 updated: 2026-08-16

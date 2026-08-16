@@ -2,7 +2,7 @@
 id: adr-0009
 type: adr
 title: dynamic-quad-mesh-rendering
-description: 渲染走動態 quad mesh 單 draw call,不用 instancing、不自訂 shader。
+description: 渲染走動態 quad mesh 的單 draw call 路線
 status: accepted
 created: 2026-08-13
 updated: 2026-08-16

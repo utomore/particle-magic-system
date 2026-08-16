@@ -2,7 +2,7 @@
 id: adr-0005
 type: adr
 title: json-hot-reload-interface
-description: 系統的輸入介面定為 JSON(Aeson)＋執行中熱重載。
+description: 輸入介面定為 JSON 加執行中熱重載
 status: accepted
 created: 2026-08-11
 updated: 2026-08-16

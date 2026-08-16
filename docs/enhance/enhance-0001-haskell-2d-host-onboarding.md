@@ -1,8 +1,8 @@
 ---
-id: enhance-2026-08-16-haskell-2d-host-onboarding
+id: enhance-0001
 type: enhance
 title: haskell-2d-host-onboarding
-description: 補上 Haskell 宿主的可執行範例與 2D 像素風接法食譜,並評估螢幕映射是否該提升到 boundary。
+description: 補上 Haskell 宿主範例與 2D 像素風接法食譜
 status: open
 created: 2026-08-16
 updated: 2026-08-16

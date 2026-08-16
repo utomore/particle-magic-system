@@ -11,21 +11,23 @@
 | `docs/adr/adr-NNNN-*.md` | 架構決策紀錄（ADR）：一份一決策，含背景/決策/後果/被否決方案 | 違反前必先修訂；新的架構級決策新增一份 |
 | `docs/spec/func-NNNN-*.md` | **功能規格書（function spec）**：一份對應一個模組或一次程式設計迭代的實作細節 | 每輪實作**動工前**寫定；實作中回填驗收紀錄 |
 | `docs/bugfix/bug-NNNN-*.md` | 缺陷紀錄：一份一缺陷，含重現、根因、修法、回歸測試 | 發現缺陷時新增；修好且回歸測試綠後結案 |
-| `docs/enhance/enhance-YYYY-MM-DD-*.md` | 改善提案：非新功能的體質改善（重構、效能、可讀性、依賴升級） | 提出時新增；落地後結案 |
+| `docs/enhance/enhance-NNNN-*.md` | 改善提案：非新功能的體質改善（重構、效能、可讀性、依賴升級） | 提出時新增；落地後結案 |
 | `docs/analysis/report-YYYY-MM-DD-*.md` | 分析報告：文檔對照程式碼的健檢結果（穩健性、解耦、資安、效能、過時套件） | 做專案健檢時產出，只讀不改 |
 | `docs/roadmap.md` | **路線圖與完整度盤點**：還差什麼、下一輪該蓋哪一個。內容由各 spec 的 §9 非目標與驗收紀錄盤點而來，不引入新決策 | 決定下一份 spec 主題時讀；每次 func-spec 驗收後更新 |
 | `docs/integration.md` | **宿主整合指南**：Haskell／C／C++／Unity／自製前端各自怎麼接，資料合約速查、限制與相容性承諾 | 對外介面（`Magic.Interface`／`Magic.Codec`／`Magic.Projection`／C ABI header）變動時同步更新 |
+| `docs/spell-schema.md` | **法術檔案作者手冊**：魔法陣 JSON 的鍵名與值域 | JSON schema 變動時同步更新 |
+| `docs/release.md` | **發布流程**：發一版要做什麼、版本號怎麼跳、承諾到哪裡為止 | 發版流程或相容性承諾變動時更新 |
 
 ## 文檔 metadata 標準（YAML frontmatter）
 
-spec／bugfix／enhance／adr／report 五類文件的**第一行必須**是 YAML frontmatter，狀態掃描腳本（`dev-flow` skill 的 `scan-status.mjs`，只讀每檔開頭 2KB）只解析這一段：
+本節對齊 `dev-flow` skill v0.3.0 的共用慣例（`skills/_shared/conventions.md`）。spec／bugfix／enhance／adr／report 五類文件的**第一行必須**是 YAML frontmatter，狀態掃描腳本（`dev-flow` skill 的 `scan-status.mjs`，只讀每檔開頭 2KB）只解析這一段：
 
 ```yaml
 ---
-id: func-0003            # func-NNNN | bug-NNNN | enhance-<date>-<slug> | adr-NNNN | report-<date>-<slug>
+id: func-0003            # func-NNNN | bug-NNNN | enhance-NNNN | adr-NNNN | report-<date>-<slug>
 type: spec               # spec | bug | enhance | adr | report
 title: expr-subsystem    # 檔名去掉編號前綴與副檔名的 slug
-description: Expr 數學式子系統本身 —— 封閉一階 AST、全函數求值器、megaparsec 文字語法、渲染器。
+description: Expr 數學式子系統：AST、求值器與文字語法
 status: open             # open | in-progress | done | closed；ADR 改用 proposed | accepted | superseded
 created: 2026-08-12
 updated: 2026-08-13
@@ -38,8 +40,17 @@ related-spec: []         # bug/enhance/adr 回鏈到 spec id
 規則：
 
 - **檔名一律英文 kebab-case，內文一律繁體中文**；編號四位數遞增不重用（建檔前先掃該資料夾取最大編號 +1）；日期一律 `YYYY-MM-DD`。
+- **檔名以編號優先，不放日期**（日期在 `created`／`updated`）；`docs/analysis/report-*` 是唯一以日期命名的類型。
 - 修改任何文檔內容時，同步更新 frontmatter 的 `updated`。
-- `description` 是**一行**繁中摘要：這份文件決定了什麼／交付了什麼，讓人不打開檔案就能從清單裡認出它。寫「做了什麼」而不是「屬於哪一類」。兩個機械限制來自掃描腳本——值裡**不得出現 `: `(冒號加空白)或 ` #`(空白加井號)**，前者不是合法的 YAML 純量、後者會被當成註解截掉；且 frontmatter 整段必須留在檔頭 2KB 內。
+
+### `description` 欄位（必填）
+
+- **每一份文檔都要寫**，architecture／adr／spec／bug／enhance／report 與本專案自有的 `reference` 類（`integration.md`、`roadmap.md`、`release.md`、`spell-schema.md`）一個都不能少。缺少時視同 metadata 不合規，`/code-audit status` 會列進「缺少 description／主軸」並以 exit code 1 收場。
+- **一句話講主軸**：這份文檔在講什麼、要達成什麼。不寫實作細節、不列步驟、不寫理由——那些屬於內文。
+- **繁體中文、40 字以內、不加句號**。超過 40 字就是寫太細，砍掉細節只留主軸。
+- 建檔時就要寫；除非文檔主題本身改變，否則後續修改不動這欄。
+- 各類型的描述對象：architecture 寫「專案在做什麼」、adr 寫「決定了什麼」、spec 寫「這個功能做什麼」、bug 寫「什麼壞了」、enhance 寫「要改善什麼」、report 寫「分析了什麼」。
+- 兩個機械限制來自掃描腳本——值裡**不得出現 `: `(冒號加空白)或 ` #`(空白加井號)**，前者不是合法的 YAML 純量、後者會被當成註解截掉（要用冒號請用全形 `：`）；且 frontmatter 整段必須留在檔頭 2KB 內。
 - frontmatter 的 `status` 是**機器讀的真相**，文件開頭的中文狀態句（`設計中`／`設計定案，待實作`／`實作中`／`已完成`）是人讀的說明；兩者必須同時更新。對應關係：`設計中`／`設計定案，待實作` → `open`，`實作中` → `in-progress`，`已完成` → `done`，廢棄 → `closed`。
 - 狀態總覽：`node <dev-flow>/skills/code-audit/scripts/scan-status.mjs ./docs`（exit 0 = 全部 done/closed；exit 1 = 有未完成或缺 metadata）。
 

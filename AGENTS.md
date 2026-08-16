@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## Project Status
 
@@ -11,7 +11,7 @@ This is a **greenfield project with a completed architecture design, but no code
 - `docs/spec/func-NNNN-*.md` — function specs, one per module/implementation iteration: ADTs, techniques, data structures, pipeline, build order, and a Todo list with 1-to-1 test mapping. Write the spec BEFORE implementing an iteration; a Todo is only done when its paired test is green. First one: `func-0001-framework-skeleton.md` (package boundaries, IO/core boundary, walking skeleton).
 - `docs/bugfix/bug-NNNN-*.md`, `docs/enhance/enhance-NNNN-*.md`, `docs/analysis/report-YYYY-MM-DD-*.md` — defect records, improvement proposals, and health-check reports. Created on demand; only `analysis/report-*` is date-named, everything else is four-digit numbered.
 - Every doc starts with YAML frontmatter (`id`, `type`, `title`, `description`, `status`, `created`, `updated`, `depends-on`, `related-adr`, `related-spec`) — see SKILL.md 「文檔 metadata 標準」. `description` is mandatory on every doc: one Traditional-Chinese sentence, max 40 characters, no trailing period, stating the document's theme (not its details). The `dev-flow` skill's `scan-status.mjs` reads only that block, so keep `status` and `updated` current whenever a doc changes.
-- `SKILL.md` — the documentation system and work cycle rules (doc types, metadata standard, func-spec template, Todo↔test discipline, multi-collaborator mode). Follow it when adding docs or starting an implementation round. Key rules: one Claude session owns at most ONE func-spec; specs must be decoupled (depend only on permanent interfaces and completed specs); specs marked **重大基建功能** (critical infrastructure) must be fully accepted before dependent specs start, and their permanent interfaces are frozen once delivered.
+- `SKILL.md` — the documentation system and work cycle rules (doc types, metadata standard, func-spec template, Todo↔test discipline, multi-collaborator mode). Follow it when adding docs or starting an implementation round. Key rules: one Codex session owns at most ONE func-spec; specs must be decoupled (depend only on permanent interfaces and completed specs); specs marked **重大基建功能** (critical infrastructure) must be fully accepted before dependent specs start, and their permanent interfaces are frozen once delivered.
 - `Init.md` — the original vision notes (superseded in detail by the architecture doc).
 
 Key settled decisions (see ADRs for rationale): hybrid particle model, analytic-first with optional force-field layer (ADR-0001); three-layer DSL — circle structure ADT + parameter records + small math `Expr` AST, no deep GADT DSL (ADR-0002); fixed-role slots with runes, interpreted inside-out: core=essence, inner=behavior, bridge=modulation, outer=presentation (ADR-0003); dataflow architecture, no ECS (ADR-0004); JSON + hot reload as the input interface (ADR-0005); SoA + unboxed vectors, target 10k–100k particles (ADR-0006); effectful only in the `App.*` shell, `Magic.*` core has zero IO and no `Eff` in signatures (ADR-0007); dimension-agnostic core in abstract 3D space, raylib 3D backend first (ADR-0008).

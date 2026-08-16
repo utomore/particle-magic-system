@@ -2,7 +2,7 @@
 id: func-0001
 type: spec
 title: framework-skeleton
-description: 走骨架 —— 套件邊界、IO 與核心邊界、端到端資料流;先立輪廓,不做魔法語意。
+description: 走骨架：套件邊界、IO 與核心邊界、端到端資料流
 status: done
 created: 2026-08-12
 updated: 2026-08-16

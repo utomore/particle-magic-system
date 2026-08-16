@@ -2,7 +2,7 @@
 id: func-0023
 type: spec
 title: production-visuals
-description: 產品級視覺 —— 速度驅動拖尾、bloom 後處理、軟粒子、跨 batch 深度交錯。
+description: 產品級視覺：拖尾、bloom、軟粒子與深度交錯
 status: open
 created: 2026-08-15
 updated: 2026-08-16

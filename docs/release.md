@@ -2,6 +2,7 @@
 id: release-policy
 type: reference
 title: release-and-compatibility
+description: 發一版的流程、版本語意與對外相容性承諾
 status: done
 created: 2026-08-16
 updated: 2026-08-16

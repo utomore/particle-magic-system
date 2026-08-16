@@ -2,7 +2,7 @@
 id: adr-0014
 type: adr
 title: sigil-from-circle-hash
-description: 陣形幾何由 Circle 的結構摘要導出 —— 摘要即合約,並劃定逐位元豁免的邊界。
+description: 陣形幾何由 Circle 的結構摘要導出，摘要即合約
 status: accepted
 created: 2026-08-15
 updated: 2026-08-16

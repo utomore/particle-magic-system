@@ -2,7 +2,7 @@
 id: adr-0003
 type: adr
 title: fixed-role-slots
-description: 槽位職責固定(核心=本質、內圈=行為、橋接=調變、外圈=展現),變化交給符文。
+description: 槽位職責固定，變化交給符文
 status: accepted
 created: 2026-08-11
 updated: 2026-08-16

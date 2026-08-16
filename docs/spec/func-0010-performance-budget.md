@@ -2,7 +2,7 @@
 id: func-0010
 type: spec
 title: performance-budget
-description: 效能與粒子預算治理 —— 熱路徑端到端 unboxed、結構化 ParticleBudget,實測 100k 粒取樣 6.5 ms。
+description: 效能與粒子預算治理：熱路徑 unboxed 與結構化預算
 status: done
 created: 2026-08-14
 updated: 2026-08-16
