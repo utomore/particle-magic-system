@@ -17,16 +17,31 @@ module App.Render.Order
   ( viewOrder
   , identityOrder
   , orderedQuads
+
+    -- * Cross-batch interleaving (func-spec 0023 S9)
+  , DrawGroup (..)
+  , crossBatchPicks
+  , frameDraws
   ) where
 
 import Data.List (sortOn)
 import Data.Ord (Down (..))
+import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
 
 import App.Effects (Camera (..))
-import App.Render.Quads (QuadBatch, buildQuads, buildQuadsOrdered)
+import App.Render.Post (VisualSettings (..))
+import App.Render.Quads
+  ( QuadBatch
+  , QuadSource (..)
+  , buildMergedQuads
+  , buildQuads
+  , buildQuadsOrdered
+  )
+import App.Render.Sprite (atlasRect)
 import Magic.Interface
-  ( BlendMode (..)
+  ( BillboardShape (..)
+  , BlendMode (..)
   , ParticleBuffer
   , RenderBatch (..)
   , V3 (..)
@@ -59,13 +74,7 @@ identityOrder n = U.enumFromN 0 (max 0 n)
 viewOrder :: Camera -> ParticleBuffer -> U.Vector Int
 viewOrder cam pb = U.fromList (map fst (sortOn (Down . snd) keyed))
   where
-    keyed = [(i, depthAt i) | i <- [0 .. pbCount pb - 1]]
-    V3 fx fy fz = viewDirection cam
-    V3 ex ey ez = camPos cam
-    depthAt i =
-      (pbPosX pb U.! i - ex) * fx
-        + (pbPosY pb U.! i - ey) * fy
-        + (pbPosZ pb U.! i - ez) * fz
+    keyed = [(i, depthOf cam pb i) | i <- [0 .. pbCount pb - 1]]
 
 -- | Unit vector from the camera towards its target, with the same
 -- fallback 'App.Render.Quads.billboardBasis' uses so the two agree on
@@ -95,3 +104,103 @@ orderedQuads cam batch
   where
     pb = rbParticles batch
     (pos, target, up) = (camPos cam, camTarget cam, camUp cam)
+
+-- Cross-batch interleaving (func-spec 0023 S9) --------------------------------
+
+-- | One draw call: a vertex stream and the blend state it needs.
+--
+-- A frame is at most two of these — the alpha particles and the additive
+-- ones — however many batches 'Magic.Interface.observeSpell' produced.
+-- That is fewer draw calls than before this round, not more, so
+-- ADR-0009's "draw calls = batches, never particles" is kept with room to
+-- spare.
+data DrawGroup = DrawGroup
+  { dgQuads :: !QuadBatch
+  , dgBlend :: !BlendMode
+  }
+
+-- | The frame's alpha particles as @(batch, particle)@ pairs, sorted far
+-- to near across every batch at once.
+--
+-- __The problem.__ Since func-spec 0015 one spell can produce several
+-- batches, and 'orderedQuads' sorts each on its own. Two alpha batches
+-- therefore composite in /batch/ order regardless of depth: a far trail
+-- drawn after a near light point covers it. Sorting inside each batch
+-- cannot fix that, because the comparison that matters is between
+-- particles of different batches.
+--
+-- __Why per-batch permutations are not enough.__ Func-spec 0023 §2.7
+-- proposed pooling, sorting, and splitting back into one permutation per
+-- batch. That does not deliver the ordering: a batch still draws
+-- contiguously, so the frame is still "all of batch 0, then all of batch
+-- 1", whatever order the particles take /within/ each. The global order
+-- can only be realized by a single draw — which is what the sprite atlas
+-- (func-spec 0023 S9, 'App.Render.Sprite.atlasRect') makes possible, and
+-- why this returns picks rather than permutations (§10 records the
+-- deviation).
+--
+-- Stable: equal depths keep pool order, which is batch order then index
+-- order — the order the frame would have had with no sorting at all. That
+-- is what keeps the frame a function of the simulation state alone.
+crossBatchPicks :: Camera -> [RenderBatch] -> [(Int, Int)]
+crossBatchPicks cam bs = map fst (sortOn (Down . snd) pooled)
+  where
+    pooled =
+      [ ((k, i), depthOf cam (rbParticles b) i)
+      | (k, b) <- zip [0 :: Int ..] bs
+      , rbBlend b /= BlendAdditive
+      , i <- [0 .. pbCount (rbParticles b) - 1]
+      ]
+
+-- | The whole frame as draw groups: the alpha particles depth-sorted into
+-- one, the additive ones concatenated into another.
+--
+-- __Additive is not sorted.__ Addition is commutative, so the order of an
+-- additive batch is not the image, and the 3D backend already draws them
+-- with the depth mask off. Sorting them would be an @O(n log n)@ pass to
+-- produce an identical picture. They are still /merged/, because merging
+-- costs nothing and saves a draw call.
+--
+-- Each particle carries its own shape (as an atlas rectangle) and its own
+-- stretch (from the trail switch and its batch's shape), so nothing that
+-- used to force a draw-call boundary survives.
+frameDraws :: VisualSettings -> Camera -> [RenderBatch] -> [DrawGroup]
+frameDraws settings cam bs =
+  [ DrawGroup (build alphaPicks) BlendAlpha
+  , DrawGroup (build additivePicks) BlendAdditive
+  ]
+  where
+    sources =
+      V.fromList
+        [ QuadSource
+            { qsBuffer = rbParticles b
+            , qsRect = atlasRect (rbShape b)
+            , qsStretch = vsTrails settings && rbShape b == BillboardTrail
+            }
+        | b <- bs
+        ]
+
+    alphaPicks = crossBatchPicks cam bs
+
+    -- Input order, which for an additive group is as good as any other.
+    additivePicks =
+      [ (k, i)
+      | (k, b) <- zip [0 :: Int ..] bs
+      , rbBlend b == BlendAdditive
+      , i <- [0 .. pbCount (rbParticles b) - 1]
+      ]
+
+    build = buildMergedQuads (camPos cam) (camTarget cam) (camUp cam) sources
+
+-- | Depth of one particle of a buffer along the view axis — the key
+-- 'viewOrder' sorts on, lifted out so the cross-batch pool computes it
+-- the same way rather than a second way.
+depthOf :: Camera -> ParticleBuffer -> Int -> Float
+depthOf cam pb i =
+  (pbPosX pb U.! i - ex) * fx
+    + (pbPosY pb U.! i - ey) * fy
+    + (pbPosZ pb U.! i - ez) * fz
+  where
+    V3 fx fy fz = viewDirection cam
+    V3 ex ey ez = camPos cam
+

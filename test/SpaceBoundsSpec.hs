@@ -157,7 +157,15 @@ spec = describe "fitted oriented boxes (func-spec 0025 S1)" $ do
       -- circle without "anchors" takes the same single-emitter path it
       -- always did — the 172 rows recorded before the merge are
       -- bit-identical after it, which is what these two rows lean on.
-      spells <- filter ((/= "twin-lance.json") . fst) <$> exampleSpells
+      --
+      -- comet-trail.json is func-spec 0023's own example and is excluded
+      -- for the same reason twin-lance.json is: a spell that did not
+      -- exist on the pre-0025 build has no pre-0025 value to be frozen
+      -- against. 0023 does not touch 'emitterBounds' at all — velocity is
+      -- a new column, not a new position — so every row below is
+      -- unaffected by it.
+      spells <-
+        filter ((`notElem` ["twin-lance.json", "comet-trail.json"]) . fst) <$> exampleSpells
       let produced =
             [ unwords
                 ( [name, show e, show h]

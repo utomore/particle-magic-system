@@ -62,6 +62,9 @@ import Test.Hspec
 examples :: [String]
 examples =
   [ "bare-sigil"
+  , -- func-spec 0023's example: the first spell in the net whose golden
+    -- covers nine columns rather than six.
+    "comet-trail"
   , "converge-flame"
   , "empty"
   , "grand-sigil"

@@ -72,7 +72,7 @@ spellDir = "assets/spells"
 -- func-spec 0025 line and was merged in afterwards. Neither existed
 -- before 0021, so neither can witness anything about it.
 newSpells :: [String]
-newSpells = ["wuxing-seal", "yin-yang", "twin-lance"]
+newSpells = ["wuxing-seal", "yin-yang", "twin-lance", "comet-trail"]
 
 -- | Everything that existed before this round — the population the
 -- compatibility law is stated over.

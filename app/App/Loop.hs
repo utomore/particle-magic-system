@@ -70,8 +70,8 @@ import App.Effects
   , ViewMode (..)
   , checkChanged
   , drawFlat
+  , drawFrame
   , drawHud
-  , drawScene
   , now
   , pollInput
   , readBytes
@@ -83,6 +83,7 @@ import App.Effects
   )
 import App.Hud (fpsEma)
 import App.Render.Flat (panBy, resizeTo, zoomAt)
+import App.Render.Post (VisualSettings (..), noEffects)
 
 data LoopConfig = LoopConfig
   { lcSimDt :: !Double
@@ -188,11 +189,20 @@ data ViewState = ViewState
   -- ^ Remembered across backends, so the plane can be chosen in 3D.
   , vsCamera :: !Camera
   , vsFlat :: !FlatView
+  , vsVisual :: !VisualSettings
+  -- ^ Which of func-spec 0023's effects are on. Observation-side state
+  -- like everything else in this record: it selects how the frame is
+  -- drawn and never what is simulated.
   }
   deriving (Eq, Show)
 
 -- | The state a demo starts in: 'defaultCamera', side view, no pan, no
--- zoom, no tint.
+-- zoom, no tint — and, since func-spec 0023, no effects.
+--
+-- Starting with them off is not timidity. It makes the demo's opening
+-- frame the frame func-spec 0015 delivered, so the zero-ripple law is
+-- what a fresh run actually exercises rather than a case somebody has to
+-- remember to test.
 defaultViewState :: (Int, Int) -> Camera -> ViewState
 defaultViewState size cam =
   ViewState
@@ -200,6 +210,7 @@ defaultViewState size cam =
     , vsPlane = SideXY
     , vsCamera = cam
     , vsFlat = flatViewFor size SideXY
+    , vsVisual = noEffects
     }
 
 -- | The view state machine: the discrete switches (Tab, V, T) first,
@@ -217,8 +228,33 @@ defaultViewState size cam =
 -- of 'orbit', 'dolly', 'panBy', 'zoomAt' is), which is what makes a demo
 -- nobody touches render exactly what func-spec 0008 delivered.
 applyViewInput :: DemoInput -> ViewState -> ViewState
-applyViewInput input = steer . toggleReadability . toggleTint . togglePlane . toggleBackend
+applyViewInput input =
+  steer
+    . toggleEffects
+    . toggleReadability
+    . toggleTint
+    . togglePlane
+    . toggleBackend
   where
+    -- Func-spec 0023's four, each on its own key: the completion
+    -- definition asks for them to be independently switchable, because
+    -- judging whether an effect earns its cost means seeing the same
+    -- frame with and without it and nothing else different.
+    toggleEffects vs =
+      vs
+        { vsVisual =
+            VisualSettings
+              { vsTrails = flip' (diToggleTrails input) (vsTrails visual)
+              , vsBloom = flip' (diToggleBloom input) (vsBloom visual)
+              , vsSoftParticles = flip' (diToggleSoft input) (vsSoftParticles visual)
+              , vsScene = flip' (diToggleScene input) (vsScene visual)
+              }
+        }
+      where
+        visual = vsVisual vs
+
+    flip' pressed on = if pressed then not on else on
+
     toggleBackend vs
       | not (diToggleBackend input) = vs
       | otherwise = case vsMode vs of
@@ -323,6 +359,10 @@ data LoopState = LoopState
   -- running spell.
   , stFlat :: !FlatView
   -- ^ The live 2D view — pan, zoom, screen size, depth tint.
+  , stVisual :: !VisualSettings
+  -- ^ Which of func-spec 0023's effects are on. Same observation-side
+  -- status as 'stView' and 'stCamera': switching one cannot disturb a
+  -- running spell, and it survives reloads and re-casts.
   }
 
 runLoop
@@ -357,6 +397,7 @@ runLoop cfg =
         , stPlane = vsPlane view0
         , stCamera = vsCamera view0
         , stFlat = vsFlat view0
+        , stVisual = vsVisual view0
         }
   where
     view0 = defaultViewState (lcWindowSize cfg) (lcCamera cfg)
@@ -415,6 +456,7 @@ frameLoop cfg st = do
                 , vsPlane = stPlane st
                 , vsCamera = stCamera st
                 , vsFlat = resizeTo size (stFlat st)
+                , vsVisual = stVisual st
                 }
 
       st1 <-
@@ -457,6 +499,7 @@ frameLoop cfg st = do
               , hvView = vsMode view'
               , hvCamera = vsCamera view'
               , hvFlat = vsFlat view'
+              , hvVisual = vsVisual view'
               }
 
       withFrame $ do
@@ -465,7 +508,12 @@ frameLoop cfg st = do
         -- orthographic projection. Neither the sampling above nor the
         -- output itself knows which.
         case vsMode view' of
-          View3D -> drawScene (vsCamera view') (batches output')
+          -- Func-spec 0023: 'drawFrame' rather than 'drawScene', and it
+          -- carries the effect settings as well as the camera. With all
+          -- four off the plan it produces is one pass straight to the
+          -- screen — the func-spec 0015 draw — so this substitution is
+          -- not a behaviour change for a demo nobody has touched.
+          View3D -> drawFrame (vsCamera view') (vsVisual view') (batches output')
           View2D _ -> drawFlat (vsFlat view') (batches output')
         drawHud hud
 
@@ -482,6 +530,7 @@ frameLoop cfg st = do
           , stPlane = vsPlane view'
           , stCamera = vsCamera view'
           , stFlat = vsFlat view'
+          , stVisual = vsVisual view'
           }
 
 -- | @n@ pure time advances, no sampling.

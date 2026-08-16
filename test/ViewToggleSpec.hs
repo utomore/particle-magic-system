@@ -26,6 +26,7 @@ import App.Effects
   , noInput
   )
 import App.Hud (formatHud)
+import App.Render.Post (noEffects)
 import App.Loop
   ( LoopConfig (..)
   , LoopStats (..)
@@ -241,4 +242,5 @@ baseHud =
     , hvView = View3D
     , hvCamera = defaultCamera
     , hvFlat = flatViewFor (1280, 720) SideXY
+    , hvVisual = noEffects
     }
