@@ -23,6 +23,7 @@ extra-doc-files:    README.md
 -- the header).
 extra-source-files: include/particle_magic.h
                     examples/c/main.c
+                    examples/c/scene.c
                     bindings/csharp/ParticleMagic.cs
 
 source-repository head
@@ -271,6 +272,9 @@ test-suite spec
                     , PersistEnvelopeSpec
                     , PersistWiringSpec
                     , Acceptance17Spec
+                    , FFISceneSpec
+                    , FFISceneCastSpec
+                    , Acceptance18Spec
                     , App.Effects
                     , App.HotReload
                     , App.Loop

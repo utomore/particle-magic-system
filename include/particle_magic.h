@@ -27,6 +27,38 @@
  *   pm_free(s);
  *   pm_shutdown();
  *
+ * Scenes:
+ *
+ * The loop above drives ONE cast. A host that wants several alive at once
+ * -- a fireball still burning while a shield goes up -- opens a scene
+ * instead (func-spec 0018, ADR-0012):
+ *
+ *   PmScene* sc = pm_scene_new(8192);
+ *   int id;
+ *   if (pm_scene_cast(sc, json, pos, facing, 42, err, sizeof err, &id) != PM_OK)
+ *       fprintf(stderr, "%s\n", err);
+ *   for (;;) {
+ *       pm_scene_advance(sc, 1.0f / 60.0f);
+ *       int n = pm_scene_observe(sc, px, py, pz, size, life, color,
+ *                                MY_CAPACITY, info, MY_MAX_BATCHES);
+ *       ...  same six columns, same batch_info layout as pm_observe ...
+ *   }
+ *   pm_scene_free(sc);
+ *
+ * Two things to get right:
+ *
+ *   * Size your columns from the scene's own global_cap, NOT from
+ *     pm_max_particles(). The query bounds ONE spell; a scene may hold
+ *     several, so its total is whatever cap you asked for. Getting this
+ *     backwards shows up as PM_ERR_CAPACITY on the second cast, not the
+ *     first.
+ *   * Pick one mode per cast and stay in it. A spell inside a scene has
+ *     no PmSpell* of its own -- there is no way to hand one to pm_free,
+ *     and no way to move an existing PmSpell* into a scene. Single cast:
+ *     pm_cast + pm_free. Several: pm_scene_cast + pm_scene_dismiss.
+ *
+ * Threading is per handle here too: one scene is owned by one thread.
+ *
  * Coordinate system: the abstract space is right-handed, OpenGL style --
  * X to the right, Y up, +Z towards the viewer. Lengths are whatever world
  * unit the magic circle's JSON is written in; time is seconds.
@@ -75,6 +107,11 @@ extern "C" {
 #define PM_ERR_BUDGET (-2)
 #define PM_ERR_CAPACITY (-3)
 #define PM_ERR_ARGS (-4)
+
+/* Scene quota refusal: the spell itself compiles, but the scene's
+   global_cap has no room left for it (func-spec 0018). Only the
+   pm_scene_cast* entry points can return it. */
+#define PM_ERR_QUOTA (-5)
 
 /* Which axis the orthographic camera looks along, for pm_project and
    pm_depth_order (ADR-0008: "2D = drop one axis and pick a depth-sorting
@@ -196,6 +233,75 @@ int pm_depth_order(int plane,
 /* Release a handle. Freeing NULL is a no-op; freeing twice is undefined
    behaviour, as in any C API. */
 void pm_free(PmSpell* spell);
+
+/* --- Scenes (func-spec 0018, ADR-0012) ---------------------------------
+ *
+ * Several casts alive at once under one global particle quota. Every
+ * entry point below tolerates a NULL scene (no-op or neutral value), as
+ * the single-spell ones tolerate a NULL PmSpell*.
+ */
+
+/* A scene: several casts alive at once under one global particle quota
+   (func-spec 0012, ADR-0012). Opaque; created by pm_scene_new, released
+   by pm_scene_free. A spell inside a scene has no PmSpell* of its own --
+   pick one mode or the other, never both for the same cast. */
+typedef struct PmScene PmScene;
+
+/* global_cap = total particles the scene may hold across every live
+   spell. Size YOUR six columns from this, not from pm_max_particles()
+   (which bounds one spell). A negative cap is legal and means a scene
+   that admits nothing. Never returns NULL in this generation. */
+PmScene* pm_scene_new(int global_cap);
+
+/* Release a scene and everything still live inside it. Freeing NULL is a
+   no-op; freeing twice is undefined behaviour. */
+void pm_scene_free(PmScene* scene);
+
+/* Cast one circle into the scene. Returns PM_OK (with *out_id set to the
+   new spell's id), PM_ERR_JSON, PM_ERR_BUDGET, PM_ERR_QUOTA or
+   PM_ERR_ARGS, writing the reason into err_buf. On every failure path the
+   scene is left exactly as it was. */
+int pm_scene_cast(PmScene* scene, const char* circle_json,
+                  const float caster_pos[3], const float caster_facing[3],
+                  uint64_t seed, char* err_buf, int err_len, int* out_id);
+
+/* The same, for `count` circles composed into ONE spell (the Monoid of
+   func-spec 0012: emitters concatenated, budgets summed, phase landmarks
+   maxed). circle_jsons is an array of `count` NUL-terminated UTF-8
+   strings; count == 0 casts the empty composition. */
+int pm_scene_cast_many(PmScene* scene, const char* const* circle_jsons, int count,
+                       const float caster_pos[3], const float caster_facing[3],
+                       uint64_t seed, char* err_buf, int err_len, int* out_id);
+
+/* Remove a spell early. Unknown or already-finished ids are a no-op, so a
+   host may dismiss without checking whether the spell outlived itself. */
+void pm_scene_dismiss(PmScene* scene, int spell_id);
+
+/* Advance every live spell by dt seconds and drop the ones that finished
+   -- which is also how their share of the quota is released. */
+void pm_scene_advance(PmScene* scene, float dt);
+
+/* Sample every live spell into the caller's six columns, exactly as
+   pm_observe does for one spell; batches are concatenated in spell-id
+   order and are NOT merged across spells. Same batch_info layout, same
+   PM_BATCH_INFO_STRIDE, same all-or-nothing error path. Which spell a
+   batch came from is not reported (func-spec 0018 section 8). */
+int pm_scene_observe(PmScene* scene,
+                     float* pos_x, float* pos_y, float* pos_z,
+                     float* size, float* life, uint32_t* color,
+                     int capacity, int* batch_info, int max_batches);
+
+/* *out_used = particles committed by the live spells, *out_cap =
+   global_cap. Either pointer may be NULL. Returns PM_OK or PM_ERR_ARGS. */
+int pm_scene_budget(const PmScene* scene, int* out_used, int* out_cap);
+
+/* How many spells are live. 0 for a NULL scene. */
+int pm_scene_count(const PmScene* scene);
+
+/* The live spells' ids in admission order, into a caller-owned array.
+   Returns the number written, or PM_ERR_CAPACITY (nothing written) when
+   they do not fit in max_ids -- ask pm_scene_count first. */
+int pm_scene_spells(const PmScene* scene, int* out_ids, int max_ids);
 
 #ifdef __cplusplus
 }

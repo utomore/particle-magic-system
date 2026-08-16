@@ -18,3 +18,13 @@ EXPORTS
     pm_max_particles
     pm_project
     pm_depth_order
+    pm_scene_new
+    pm_scene_free
+    pm_scene_cast
+    pm_scene_cast_many
+    pm_scene_dismiss
+    pm_scene_advance
+    pm_scene_observe
+    pm_scene_budget
+    pm_scene_count
+    pm_scene_spells

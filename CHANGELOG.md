@@ -164,3 +164,29 @@ delivered function spec (details in `docs/spec/`).
   and matched frame for frame; the second term caught a pre-existing bug
   where a circle with `phConverge < formLife` (bare-sigil) started fading
   before it had finished being drawn. (delivered)
+- **0018 the scene layer on the C ABI** — ADR-0012 D8 lifted: its condition
+  was that the scene API be used for a round on the Haskell side before
+  being frozen into a C contract, and spec 0012 met it. A non-Haskell host
+  now gets the same multi-spell capability a Haskell one has — several
+  casts alive under one global particle quota, first-come-first-served
+  admission, quota released the moment a spell ends — instead of keeping
+  its own book of `PmSpell*` handles and their sizes. Ten purely additive
+  exports (`pm_scene_new` / `_free` / `_cast` / `_cast_many` / `_dismiss` /
+  `_advance` / `_observe` / `_budget` / `_count` / `_spells`), one opaque
+  `PmScene*`, one new error code `PM_ERR_QUOTA` (−5) — the one failure a
+  host can act on rather than only log, since the spell compiled and the
+  scene is merely full. `PM_ABI_VERSION` stays 1; the frozen entry-point
+  list grows 11 → 21 and nothing in it changes. The C surface is the
+  item-for-item image of `Magic.Scene`'s export list and adds no semantics
+  of its own: `Acceptance18Spec` states that as an equivalence over
+  generated histories of interleaved casts, dismissals and frames, checking
+  the six columns, the batch descriptors, the admission verdict and the
+  quota ledger after every single step. `pm_scene_observe` shares
+  `pm_observe`'s copy-out verbatim, so the layout, the capacity rule and
+  the all-or-nothing error path are the same code rather than merely alike.
+  Which spell a batch came from is deliberately not reported — `observeScene`
+  does not know either, and the C side is not allowed to know more. A scene
+  owns its spells outright (they have no `PmSpell*`), which is what keeps
+  `pm_free` and `pm_scene_dismiss` from ever naming the same cast. C#
+  binding and a C example (`examples/c/scene.c`) follow. `src/core` and
+  `src/boundary` untouched. (delivered)
