@@ -205,9 +205,39 @@ examples 數雙平台相同（**1174**＝交付前的 1156 ＋ 本輪三個新�
 7. **CI 的 GHC 版本收斂為單一來源**：yml 的 `env.GHC_VERSION`，setup 步驟與快取 key 都引用它，`CIWorkflowSpec` 另有一條「不得出現第二份字面版本」的斷言。
 8. **`CHANGELOG.md` 的格式規則**寫成檔頭的三條，權威指向 `docs/release.md` §3（§0.2 原本只說「補格式規則說明」）。
 
-### 8.3 未能在本輪驗證的一項
+### 8.3 本輪未能驗證、已於整合時回填的一項
 
-**CI 首次全綠的 run 連結：無。** GitHub Actions 只有在 push 到 GitHub 之後才會跑，本輪在本機完成，沒有推送。可以確定的是**工作流所執行的三個指令在兩個平台上都實測綠**（上表），且 yml 的結構由 `CIWorkflowSpec` 8 條斷言守護；不能確定的是 runner 環境本身（`haskell-actions/setup@v2` 取得 GHC 9.14.1、apt 套件名、快取 key 的行為）。**第一次 push 之後應回填 run 連結，並確認冷快取的建置時間**——若 `haskell-actions/setup@v2` 尚未提供 9.14.1，退場方案是改用 `ghcup` 直接安裝，屬 yml 的一行變更，不影響任何政策。
+**原記載（2026-08-16 交付當下）**：CI 首次全綠的 run 連結：無。GitHub Actions 只有在 push 到 GitHub 之後才會跑，本輪在本機完成，沒有推送。可以確定的是**工作流所執行的三個指令在兩個平台上都實測綠**（上表），且 yml 的結構由 `CIWorkflowSpec` 8 條斷言守護；不能確定的是 runner 環境本身（`haskell-actions/setup@v2` 取得 GHC 9.14.1、apt 套件名、快取 key 的行為）。
+
+**回填（2026-08-16，第六波整合分支首次 push）**——不確定的那一半全部落地，**兩個平台皆綠，退場方案未動用**：
+
+- **首次全綠的 run**：<https://github.com/utomore/particle-magic-system/actions/runs/31924068533>（`integrate/2026-08-16-spec-0018-0019-0020`，sha `164db2a`，2026-08-16 03:22–03:38 UTC）
+- **`haskell-actions/setup@v2` 取得了 GHC 9.14.1**（log：`Installing ghc version 9.14.1`，Windows 35 s／Linux 21 s）。**§8.3 原本預備的 ghcup 退場方案不需要動用。**
+- **apt 套件名正確**：Linux 的 raylib 系統依賴步驟 11 s 通過。
+- **快取 key 行為正確**：首跑 restore 為 miss（0 s，如預期的冷快取），job 結束時 save 成功（Windows 30 s／Linux 4 s）；下一次 push 才驗得到 hit。
+
+**冷快取的建置時間**（§8.3 明文要求確認的第二項）：
+
+| 步驟 | windows-latest | ubuntu-latest |
+|---|---|---|
+| 安裝 GHC ＋ cabal | 35 s | 21 s |
+| raylib 系統依賴（apt） | —（跳過） | 11 s |
+| 解析 build plan | 10 s | 8 s |
+| `cabal build all`（**冷快取**） | **10 m 54 s** | **9 m 11 s** |
+| `cabal test` | 3 m 14 s | 2 m 14 s |
+| `magic-validate assets/spells` | 2 s | 0 s |
+| **job 總計** | **15 m 50 s** | **12 m 16 s** |
+
+冷快取近 16 分鐘的主因是 h-raylib 在 Windows 上要編譯 raylib 的 C 原始碼（`cabal build all` 佔全程 69%）。有快取之後只有本專案的模組要重編，這個數字不代表日常成本；真正的數字要等下一次 push 的 cache hit 才量得到，屆時再補一行即可。**若冷快取時間成為問題，第一手是把依賴建置與專案建置拆成兩步（依賴層的快取命中率遠高於專案層），不必動政策。**
+
+**兩平台的測試結果與 ADR-0016 D4 的預測完全一致**：
+
+| | 例數 | 失敗 | pending |
+|---|---|---|---|
+| windows-latest（參考平台） | 1258 | 0 | 0 |
+| ubuntu-latest | 1258 | 0 | **9** |
+
+Linux 的 9 個 pending 就是 §8.2-3 記的那一組（`FieldPlumbingSpec` 的 9 個範例陣歷史基線，在非參考平台上報 pending 而非重錄）。**這是設計，不是漏測**——而且它現在是被 CI 每次 push 檢查的設計。
 
 ### 8.4 本輪凍結的東西（政策，非型別）
 
