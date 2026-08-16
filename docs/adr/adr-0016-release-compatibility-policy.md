@@ -29,7 +29,7 @@ related-spec: [func-0019]
 
 | 級別 | 意義 | 成員 |
 |---|---|---|
-| **Tier 1** | CI 每次 push 驗證 build＋test＋validate；回歸視為缺陷 | `windows-latest`（x86_64）、`ubuntu-latest`（x86_64） |
+| **Tier 1** | 進 main 之前由 CI 驗證 build＋test＋validate（觸發時機見 D5）；回歸視為缺陷 | `windows-latest`（x86_64）、`ubuntu-latest`（x86_64） |
 | **Tier 2** | 預期可用但無 CI；壞了修，但不擋發布 | macOS、其他 Linux 發行版 |
 | **未支援** | 沒有人試過 | ARM、WASM、行動平台 |
 
@@ -79,7 +79,27 @@ ADR-0011 D8 的條文是「FFI 路徑 ≡ Haskell 路徑」，那是同一個行
 
 **新增參考平台的成本**：錄一份該平台的 golden，並放寬 `referencePlatform`。三個 golden spec 的其他部分不動。
 
-## 後果
+### D5（CI 的觸發時機：**閘門設在併入 main，不是設在每次 push**）
+
+本 repo 是 **private**，所以 GitHub Actions 的分鐘數會計費（Free 方案含 2,000 分鐘／月），而且 **Windows runner 以 2× 計費、Linux 1×**。這使「什麼時候跑」變成預算決定，不是細節。
+
+實測基礎上的估算（含 setup）：
+
+| | Linux | Windows（2×） | 單次矩陣 |
+|---|---|---|---|
+| 冷快取（h-raylib 從頭編 raylib 的 C 原始碼） | ~20 分 | ~40 分 | **~60 計費分** |
+| 熱快取 | ~5 分 | ~10 分 | **~15 計費分** |
+
+因此：
+
+- **`pull_request` 到 `main`**——閘門設在真正的決策點。日常在分支上推進度不花錢，那個階段由開發者自己的 `cabal test` 覆蓋（本輪之前十八輪都是這樣做的，而且有效）。
+- **`push` 到 `v*` tag**——把 `docs/release.md` §4 第 3 步（「CI 兩平台全綠」）從「人記得跑」變成機器保證。一年幾次。
+- **`workflow_dispatch`**——不開 PR 也想跑一次時的入口。
+- **不設分支 push 觸發。** 除了成本，它與 `pull_request` 併用時會讓 PR 分支的每一次 push **跑兩遍同樣的工作**，買不到任何東西。`CIWorkflowSpec` 明文斷言它不存在——重新加回來必須是一個決定，不能是一次手滑。
+
+**兩個平台都留在矩陣裡。** 砍掉 Windows 可以省一半帳單，但 Windows 是**參考平台**——D4 的逐位元 golden 只在它上面被斷言，Linux 那份只剩每幀粒子數。省掉它等於把本輪最強的守護關掉，方向錯了；正確的省法是降低**跑的次數**，不是降低**每次跑的強度**。
+
+
 
 **正面**：
 
@@ -102,6 +122,9 @@ ADR-0011 D8 的條文是「FFI 路徑 ≡ Haskell 路徑」，那是同一個行
 - **把 `sin`／`cos` 換成自製的正確捨入實作**：可以讓逐位元跨平台成立，代價是熱路徑上最貴的兩個函數換成慢好幾倍的版本（0010 把取樣常數因子壓到 65 ns/粒，這會直接吐回去），換到的是一個沒有任何宿主要求過的保證。若日後真有「跨機逐位元」的需求（網路對戰同步、跨平台錄影驗證），這是正解的所在地，屆時另開一輪。
 - **調大 golden 的容差直到綠**（§2.1 第三條路的誤用）：差異若是結構性的，調容差是掩蓋；本輪已量到它是 1 ulp 級，才有資格收窄而不是掩蓋。這兩者的差別是量測，不是判斷。
 - **把套件版本與 `PM_ABI_VERSION` 綁定**：見 D3，會逼出假的 bump。
-- **macOS 進 Tier 1**：GitHub 的 macOS runner 貴，且 h-raylib 在其上的建置未驗過。等有實際需求（D1 的 Tier 2 就是為此存在）。
+- **每次 push（所有分支）都跑 CI**（本輪初版即如此，交付當天由使用者指出並改掉）：private repo ＋ Windows 2× 倍率下，熱快取每次 push 約 30 計費分鐘（`push` 與 `pull_request` 各跑一遍），2,000 分鐘的月額度約 60–70 次 push 就見底，冷快取更快。以本專案每輪 spec 數十次 commit 的節奏，這個設計會在第一個月內撞牆。**教訓**：CI 的觸發條件是成本決定，設計時要把帳算出來，而不是照抄「on: push」的預設姿勢。
+- **從矩陣移除 Windows 以省 2× 帳單**：Windows 是 D4 的參考平台，逐位元 golden 只在它上面被斷言。降低每次跑的強度換帳單，方向錯了——正確的省法是 D5 的「降低跑的次數」。
+- **改用 self-hosted runner**（開發機同時有 Windows 與 WSL Debian，恰好就是兩個 Tier 1 平台，且 GitHub 對 self-hosted 不計分鐘）：帳單為零且快取永遠是熱的，但要求該機器常駐開機並維護 runner 服務，關機時 CI 直接排隊。POC 階段不值得這個維運面；若日後 CI 頻率提高，這是第一個該重新評估的選項。
+- **macOS 進 Tier 1**：GitHub 的 macOS runner 貴（10× 倍率），且 h-raylib 在其上的建置未驗過。等有實際需求（D1 的 Tier 2 就是為此存在）。
 - **上 Hackage／自動 release**：上 Hackage 是對 API 穩定度的承諾，本專案仍是 POC（roadmap §6）。tag 讓 `source-repository-package` 的使用者有東西可釘，這已經解決眼前的問題。
 - **bench 進 CI 並比較基線**：runner 的效能噪音使數字不可比，會製造假警報。bench 維持本機執行（0010 §9.2 的作法）。

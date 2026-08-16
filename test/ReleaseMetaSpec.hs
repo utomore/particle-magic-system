@@ -35,8 +35,10 @@ changelogPath = "CHANGELOG.md"
 workflowPath :: FilePath
 workflowPath = ".github/workflows/ci.yml"
 
+-- | UTF-8 bytes, carriage returns dropped — see "CIWorkflowSpec" for why
+-- (a Windows checkout is CRLF, a Linux one is LF, and both run in CI).
 readUtf8 :: FilePath -> IO String
-readUtf8 path = T.unpack . TE.decodeUtf8 <$> BS.readFile path
+readUtf8 path = filter (/= '\r') . T.unpack . TE.decodeUtf8 <$> BS.readFile path
 
 -- | Value of a top-level @field: value@ line.
 fieldValue :: String -> String -> Maybe String

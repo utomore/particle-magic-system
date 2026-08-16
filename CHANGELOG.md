@@ -174,9 +174,12 @@ Format rules (the authority is [docs/release.md](docs/release.md) §3, and
   where a circle with `phConverge < formLife` (bare-sigil) started fading
   before it had finished being drawn. (delivered)
 - **0019 engineering: CI, release policy, the second platform** — ADR-0016.
-  "This commit is good" stops depending on one Windows machine:
-  `.github/workflows/ci.yml` runs build → test → `magic-validate` on every
-  push, on `windows-latest` and `ubuntu-latest`, and four text-contract
+  "This branch is good to merge" stops depending on one Windows machine:
+  `.github/workflows/ci.yml` runs build → test → `magic-validate` on
+  `windows-latest` and `ubuntu-latest` for every pull request into `main`
+  (plus `v*` tags and on demand — this repository is private, so runner
+  minutes are billed and Windows costs double, and the gate belongs at the
+  merge rather than at every push; ADR-0016 D5). Four text-contract
   tests keep the workflow, the cabal metadata, `README.md` and
   `docs/release.md` from drifting apart (support tiers ≡ CI matrix, the
   declared `tested-with` ≡ the compiler CI installs, every dependency

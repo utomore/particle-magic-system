@@ -15,7 +15,7 @@ related-adr: [adr-0005, adr-0010, adr-0011, adr-0012, adr-0013, adr-0016]
 > 性質：一般 —— 交付後凍結的是**政策**而非型別：支援平台分級、版本語意、tag 格式（同輪 ADR-0016）。程式碼面只加 CI 設定與文件。
 > 前置依賴：**無**。**與所有進行中的 spec 平行**：本 spec 觸 `.github/`（新目錄）、`README.md`、`docs/release.md`（新）、cabal 的 `version:`／`tested-with:` 兩行——與 0016（`src/core`）、0018（`src/ffi`＋`include`＋`bindings`）逐檔交集 = ∅（§0.2）。
 > 依據：[roadmap.md](../roadmap.md) §3.5（「CI——未記帳」「release tag／版本發布流程——未記帳」「只有 win64 實測過」三條）；0014 §9（`magic-validate` 的 exit code＝失敗檔數，「資產檢查已可一行進 CI」）；[ADR-0011](../adr/adr-0011-ffi-c-abi-boundary.md) **D8**（決定論「在每個平台上」都成立——本 spec 是這句話第一次被實際檢驗）；ADR-0005（JSON 可攜性）。政策屬架構級決定 → **本輪同步交付 ADR-0016**（先例：0007↔ADR-0010、0009↔ADR-0011、0012↔ADR-0012、0015↔ADR-0013）。
-> 範圍：把「全靠本機 `cabal test`」變成「每次 push 都有機器驗證，而且驗兩個平台」。三件事：CI 工作流、發布與相容性政策（含 ADR）、**Linux 上的第一次實測**——後者同時是 ADR-0011 D8 跨平台決定論宣稱的第一個真實測試。
+> 範圍：把「全靠本機 `cabal test`」變成「併入 main 之前有機器驗證，而且驗兩個平台」。三件事：CI 工作流、發布與相容性政策（含 ADR）、**Linux 上的第一次實測**——後者同時是 ADR-0011 D8 跨平台決定論宣稱的第一個真實測試。
 
 ---
 
@@ -59,7 +59,7 @@ related-adr: [adr-0005, adr-0010, adr-0011, adr-0012, adr-0013, adr-0016]
 
 **完成定義**（全部可驗證）：
 
-1. `.github/workflows/ci.yml` 在 push 與 PR 上執行 **build → test → validate** 三步，平台矩陣含 `windows-latest` 與 `ubuntu-latest`（S1）。
+1. `.github/workflows/ci.yml` 執行 **build → test → validate** 三步，平台矩陣含 `windows-latest` 與 `ubuntu-latest`（S1）。**觸發時機於實作時修正為「PR 到 main ＋ `v*` tag ＋ 手動」**——原文寫「在 push 與 PR 上」，但本 repo 是 private 且 Windows runner 2× 計費，見 §8.2-10 與 ADR-0016 D5。
 2. `test/CIWorkflowSpec.hs` 剖析該 yml，斷言三個指令都在、矩陣涵蓋兩個 OS、且 CI 用的 GHC 版本 ≡ cabal `tested-with:` 宣告的版本——**設定檔與宣稱不得漂移**（S1）。
 3. **Linux 上 `cabal build all` 與 `cabal test` 全綠**，且 examples 數與 win64 相同（S2，手動 smoke ＋ 之後由 CI 持續守護）。若不綠，§8-1 的裁決路徑生效。
 4. `docs/release.md` 定義：tag 格式、版本號語意、CHANGELOG 規則、發布前檢查清單、支援平台分級（S3／S4）。
@@ -99,7 +99,7 @@ ADR-0011 D8 與 `include/particle_magic.h` 的檔頭都寫著決定論「**on ev
 
 | 級別 | 意義 | 本輪的成員 |
 |---|---|---|
-| **Tier 1** | CI 每次 push 驗證 build＋test＋validate；回歸視為缺陷 | `windows-latest` (x86_64)、`ubuntu-latest` (x86_64) |
+| **Tier 1** | 進 main 之前由 CI 驗證 build＋test＋validate（觸發時機見 ADR-0016 D5）；回歸視為缺陷 | `windows-latest` (x86_64)、`ubuntu-latest` (x86_64) |
 | **Tier 2** | 預期可用但無 CI；壞了修，但不擋發布 | macOS、其他 Linux 發行版 |
 | **未支援** | 沒有人試過 | ARM、WASM、行動平台 |
 
@@ -126,7 +126,7 @@ ADR-0011 D8 與 `include/particle_magic.h` 的檔頭都寫著決定論「**on ev
 
 ```mermaid
 flowchart LR
-  Push["push / PR"] --> M{"matrix"}
+  Push["PR → main<br/>／ v* tag ／ 手動"] --> M{"matrix"}
   M --> W["windows-latest"]
   M --> L["ubuntu-latest<br/>(+ apt: X11/GL dev)"]
   W --> C1["restore cache<br/>(cabal store + dist-newstyle)"]
@@ -142,7 +142,7 @@ CI 全程無 IO 以外的新語意——它只是把開發者本機的三個指�
 ## 5. 搭建方式（風險優先）
 
 1. **S2 先做**（順序上例外，因為它是唯一可能推翻設計的一步）：在 Linux 上手動把 `cabal build all` ＋ `cabal test` 跑完，看 §2.1 的三條路走哪一條。這一步的結果決定 ADR-0016 要不要修訂 ADR-0011 D8。
-2. **S1 CI 工作流＋守護測試**——把 S2 手動做過的事變成每次 push 都做。
+2. **S1 CI 工作流＋守護測試**——把 S2 手動做過的事變成每次要併進 main 時都做。
 3. **S3 版本 metadata＋守護測試**——`tested-with:`、PVP 上界、CHANGELOG 對應。
 4. **S4 `docs/release.md` ＋ ADR-0016 ＋ README 兩節**——政策落文，含 S2 的實測結論。
 
@@ -150,7 +150,7 @@ CI 全程無 IO 以外的新語意——它只是把開發者本機的三個指�
 
 | # | Todo | 測試 |
 |---|---|---|
-| S1 ✅ | `.github/workflows/ci.yml`：push／PR 觸發、`{windows-latest, ubuntu-latest}` 矩陣、Linux 的 apt 系統相依、cabal store＋dist-newstyle 快取、build → test → validate 三步 | `test/CIWorkflowSpec.hs`（剖析 yml：三個指令字串都在、矩陣含兩個 OS、CI 的 GHC 版本 ≡ cabal `tested-with:`、`magic-validate` 那步存在且吃 `assets/spells`） |
+| S1 ✅ | `.github/workflows/ci.yml`：PR 到 main ＋ `v*` tag ＋ 手動觸發（§8.2-10）、`{windows-latest, ubuntu-latest}` 矩陣、Linux 的 apt 系統相依、cabal store＋dist-newstyle 快取、build → test → validate 三步 | `test/CIWorkflowSpec.hs`（剖析 yml：三個指令字串都在、矩陣含兩個 OS、CI 的 GHC 版本 ≡ cabal `tested-with:`、`magic-validate` 那步存在且吃 `assets/spells`） |
 | S2 ✅ | Linux（ubuntu-latest）上 `cabal build all` ＋ `cabal test` ＋ `magic-validate` 實測；依 §2.1 三條路擇一並回填 §9 | **手動 smoke**（第一次由人在 Linux 上跑；此後由 S1 的 CI 持續守護）。回填內容：examples 數、與 win64 的差異、golden 是否逐位元相同、若不同則 ulp 級距 |
 | S3 ✅ | cabal `tested-with:` 行、`version:` 政策化、PVP 上界檢查、CHANGELOG 對應段落 | `test/ReleaseMetaSpec.hs`（`version:` 在 CHANGELOG 有對應段落標題、`tested-with:` 非空且格式合法且 ≡ CI 用的 GHC、**每個 `build-depends` 條目帶 `^>=` 上界**（全 stanza 掃描，這是 §3.2 政策的機械化）） |
 | S4 ✅ | `docs/release.md`（tag 格式、版本語意、發布檢查清單、平台分級表）＋`docs/adr/adr-0016-release-compatibility-policy.md`＋README 兩節 | `test/ReleaseDocSpec.hs`（**三向一致**：`docs/release.md` 的平台分級表 ≡ README 的平台表 ≡ CI 矩陣的 OS 清單（雙向集合相等）；tag 格式規則存在且**依該規則由 cabal `version:` 導出的 tag 字串**出現在 release.md 的範例中（規則與現況不得漂移）；ADR-0016 存在且其 frontmatter `status` 為 `accepted`；release.md 的檢查清單涵蓋 CI 三步指令的哨兵字串） |
@@ -171,10 +171,10 @@ CI 全程無 IO 以外的新語意——它只是把開發者本機的三個指�
 
 | | 平台 | `cabal build all` | `cabal test` | `magic-validate` |
 |---|---|---|---|---|
-| 參考平台 | Windows 11 x86_64 | ✅ | ✅ **1174 examples, 0 failures** | ✅ exit 0 |
-| 第二平台 | Debian 13 (trixie) x86_64（WSL2） | ✅ | ✅ **1174 examples, 0 failures, 9 pending** | ✅ exit 0 |
+| 參考平台 | Windows 11 x86_64 | ✅ | ✅ **1176 examples, 0 failures** | ✅ exit 0 |
+| 第二平台 | Debian 13 (trixie) x86_64（WSL2） | ✅ | ✅ **1176 examples, 0 failures, 9 pending** | ✅ exit 0 |
 
-examples 數雙平台相同（**1174**＝交付前的 1156 ＋ 本輪三個新模組的 18 條）。9 個 pending 全部來自 `FieldPlumbingSpec` 的歷史基線，理由見 §8.2-3。
+examples 數雙平台相同（**1176**＝交付前的 1156 ＋ 本輪三個新模組的 20 條）。9 個 pending 全部來自 `FieldPlumbingSpec` 的歷史基線，理由見 §8.2-3。
 
 ### 8.1 S2 的實測結果：走 §2.1 的**第二條路**
 
@@ -204,6 +204,10 @@ examples 數雙平台相同（**1174**＝交付前的 1156 ＋ 本輪三個新�
 6. **`magic-validate` 的 CI 呼叫用目錄而非 glob**：§0.1 寫 `assets/spells/*.json`，實作用 `assets/spells`（0014 已支援目錄）。理由是 glob 展開在 PowerShell 與 bash 上行為不同，而矩陣同時有兩者；哨兵字串 `assets/spells` 與 S1 的測試一致。
 7. **CI 的 GHC 版本收斂為單一來源**：yml 的 `env.GHC_VERSION`，setup 步驟與快取 key 都引用它，`CIWorkflowSpec` 另有一條「不得出現第二份字面版本」的斷言。
 8. **`CHANGELOG.md` 的格式規則**寫成檔頭的三條，權威指向 `docs/release.md` §3（§0.2 原本只說「補格式規則說明」）。
+9. **改觸發時機時，`CIWorkflowSpec` 自己被抓到兩個缺陷**——都是「守護測試沒有真的在守護」這一類，值得記下來：
+    - **它把註解當成內容**。原本三個指令的存在與順序是 `isInfixOf` 整份 yml，所以我新加的政策註解裡一句「covered by the developer's own `cabal test`」就讓順序斷言紅了。真正的問題不是註解，是**把某一步註解掉也能通過**——而那正是這個模組的檔頭寫著要防的事。改為先把註解行抹白再比對，並實測驗證：把 `magic-validate` 那步加上 `#` 之後，該模組確實紅 2 條。
+    - **它假設了行尾字元**。本 repo 的 `core.autocrlf=true` 且無 `.gitattributes`，所以**同一個 commit 在 Windows runner 上是 CRLF、在 Linux runner 上是 LF**；任何逐行相等比較都會一邊過一邊紅。三個新模組的 `readUtf8` 統一在讀入時濾掉 `\r`，並以「把檔案轉成 CRLF 再跑一遍」實測確認。**這正是雙平台矩陣要抓的那一類 bug，而它第一個抓到的是我自己寫的測試。**
+10. **CI 的觸發時機改掉了**（交付當天由使用者指出，2026-08-16）。§1 完成定義第 1 條與初版實作都是「push（所有分支）＋ pull_request」——**這是一個成本上的錯誤，而且我在交付時沒有把帳算出來**。本 repo 是 **private**，Actions 分鐘數計費，且 **Windows runner 以 2× 計費**（Linux 1×）：熱快取單次矩陣約 15 計費分鐘、冷快取約 60；更糟的是 `push: branches: ['**']` 與 `pull_request:` 併用會讓 PR 分支的**每次 push 跑兩遍同樣的工作**，合計約 30 計費分鐘／次，2,000 分鐘的月額度約 60–70 次 push 見底。改為 **`pull_request` → `main` ＋ `push` tag `v*` ＋ `workflow_dispatch`**，日常分支推進零成本，閘門設在真正的決策點；兩個平台都留（砍 Windows 等於關掉 D4 唯一的逐位元守護，方向錯了）。`CIWorkflowSpec` 同步改為斷言新形狀，**並明文斷言分支 push 觸發不存在**——重新加回來必須是一個決定。理由與被否決的方案入 **ADR-0016 D5**。
 
 ### 8.3 未能在本輪驗證的一項
 
