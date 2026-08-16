@@ -290,6 +290,10 @@ test-suite spec
                     , CIWorkflowSpec
                     , ReleaseMetaSpec
                     , ReleaseDocSpec
+                    , SigilSpinSpec
+                    , SigilMotionSpec
+                    , SigilMotionWiringSpec
+                    , Acceptance20Spec
                     , App.Effects
                     , App.HotReload
                     , App.Loop

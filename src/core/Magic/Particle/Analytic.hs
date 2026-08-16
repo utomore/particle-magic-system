@@ -64,7 +64,7 @@ import Magic.Compile
   )
 import Magic.Expr (ExprEnv (..), evalFinite, evalFiniteV3)
 import Magic.Rune (FaceShape (..), RadiationMode (..), Trajectory (..))
-import Magic.Sigil (sampleStroke)
+import Magic.Sigil (SigilStroke (..), sampleStroke, spinAngle)
 import Magic.Types
   ( CastContext (..)
   , Seconds (..)
@@ -410,6 +410,8 @@ positionIn frame ctx t em i ageD = position
   where
     Motion spawnPattern trajectory radiation _drift mRange mConverge = emMotion em
     age = realToFrac ageD :: Float
+    -- The modulation layer's clock: seconds since the cast started.
+    Time tCast = t
 
     anchorW = efAnchorW frame
     faceNormal = efNormal frame
@@ -432,7 +434,17 @@ positionIn frame ctx t em i ageD = position
       -- Func-spec 0016: the index is a position along the curve, not a
       -- hash channel — which is the whole difference between a sigil
       -- being drawn and a sigil fading in.
-      SpawnOnStroke stroke -> vscale2 rangeScale (sampleStroke stroke i)
+      --
+      -- Func-spec 0020 turns the sampled point about the face origin. The
+      -- angle is a function of the /cast/ clock, never of the particle's
+      -- age: a rigid rotation is "every point at the same angle at the
+      -- same instant", and the sigil respawns cyclically, so ages differ
+      -- across the figure at every moment. Driving it by age would smear
+      -- the sigil into a spiral instead of turning it (§2.1). That makes
+      -- this a modulation-layer term, and the modulation layer's clock is
+      -- seconds since the cast (spec 0004 §4.7).
+      SpawnOnStroke stroke ->
+        vscale2 rangeScale (rotate2 (spinAngle (skSpin stroke) tCast) (sampleStroke stroke i))
     spawnW = anchorW + vscale sx u + vscale sy w
 
     -- 'AlongNormal' takes the face normal, whose plane basis is the
@@ -508,6 +520,20 @@ frameEnvFor ctx (Time seconds) em i ageD =
 
 vscale2 :: Float -> V2 -> V2
 vscale2 s (V2 x y) = V2 (s * x) (s * y)
+
+-- | Rotate a face-plane point about the face origin (func-spec 0020).
+--
+-- About the /origin/ specifically: that is what makes it an isometry of
+-- the face plane, so @|rotate2 th p| == |p|@ and every bound the compiler
+-- derived from 'Magic.Sigil.strokeRadius' survives untouched. Spinning a
+-- stroke about its own center instead would have broken that and dragged
+-- 'Magic.Compile.emitterBounds' along with it (§2.2).
+rotate2 :: Float -> V2 -> V2
+rotate2 th (V2 x y) = V2 (x * c - y * s) (x * s + y * c)
+  where
+    c = cos th
+    s = sin th
+{-# INLINE rotate2 #-}
 
 -- | Linear interpolation of a packed 0xRRGGBBAA ramp over life ∈ [0, 1].
 --
