@@ -15,14 +15,23 @@ module App.HotReload
   , newWatchState
   , checkStampIO
   , scanDirIO
+  , writeBytesIO
   ) where
 
+import Control.Monad (when)
+import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as Map
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.List (isSuffixOf, sort)
 import Data.Time.Clock (UTCTime)
 import GHC.Clock (getMonotonicTime)
-import System.Directory (getModificationTime, listDirectory)
+import System.Directory
+  ( doesFileExist
+  , getModificationTime
+  , listDirectory
+  , removeFile
+  , renameFile
+  )
 import System.IO.Error (catchIOError)
 
 -- | @stampChanged lastSeen current@: has the file changed?
@@ -117,3 +126,33 @@ scanDirIO st dir = do
 
     isSpellFile = isSuffixOf ".json"
     under name = if dir == "." then name else dir ++ "/" ++ name
+
+-- | Write a file without ever leaving a half-written one behind
+-- (func-spec 0024 S5): the bytes go to a sibling @.tmp@ first, and only a
+-- complete one is renamed over the target.
+--
+-- This is the panel's save, and the file it is saving over is the
+-- author's spell — the one artefact in this repository that a tool has no
+-- business damaging. A plain 'BS.writeFile' truncates first, so a failure
+-- half way through (a full disk, a lock, a crash) would leave the author
+-- with neither the old file nor the new one. Cleaning the temp file up on
+-- failure matters for the same reason: a directory the demo scans is not
+-- a place to litter, and @spell.json.tmp@ is not a spell.
+--
+-- 'renameFile' replaces an existing destination on both platforms this
+-- project ships on. When it cannot — a read-only target, most likely —
+-- the original is still exactly as it was, which is the outcome this
+-- whole dance exists to guarantee.
+writeBytesIO :: FilePath -> BS.ByteString -> IO (Either String ())
+writeBytesIO path bytes =
+  ( do
+      BS.writeFile tmp bytes
+      renameFile tmp path
+      pure (Right ())
+  )
+    `catchIOError` \e -> do
+      leftover <- doesFileExist tmp
+      when leftover (removeFile tmp `catchIOError` \_ -> pure ())
+      pure (Left (show e))
+  where
+    tmp = path ++ ".tmp"

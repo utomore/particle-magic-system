@@ -11,7 +11,13 @@ import Text.Printf (printf)
 import Magic.Projection (ViewPlane (..))
 
 import App.Camera (Orbit (..), toOrbit)
-import App.Effects (FlatView (..), HudView (..), ReloadStatus (..), ViewMode (..))
+import App.Effects
+  ( FlatView (..)
+  , HudView (..)
+  , PanelView (..)
+  , ReloadStatus (..)
+  , ViewMode (..)
+  )
 import App.Render.Post (VisualSettings (..))
 
 -- | One string per HUD line. A failed load contributes its full error
@@ -30,8 +36,41 @@ formatHud v =
     ++ reloadLines (hvReload v)
     ++ [ "[<-] [->] switch spell   [R] recast   [Tab] 2D/3D   [V] plane   [T] depth tint"
        , "[1] trails   [2] bloom   [3] soft particles   [4] test scene"
-       , "[drag] orbit / pan   [wheel] zoom"
+       , "[drag] orbit / pan   [wheel] zoom   [P] parameter panel"
        ]
+    ++ panelLines (hvPanel v)
+
+-- | The parameter panel (func-spec 0024 S4), when it is open.
+--
+-- Nothing at all when it is closed — not even a placeholder. The HUD is
+-- already eleven lines and a demo nobody has opened the panel in should
+-- read exactly as it did before the panel existed; the one-key hint above
+-- is what makes it findable.
+--
+-- The selected row is marked with @>@ and the others with a space, so the
+-- block's column layout does not shift as the selection moves.
+panelLines :: PanelView -> [String]
+panelLines panel
+  | not (pvOpen panel) = []
+  | otherwise =
+      ("panel: " ++ show (length params) ++ " parameters" ++ dirtyMark)
+        : noteLines
+        ++ rows
+        ++ ["[[] []] select   [-] [=] adjust   [S] save (rewrites the file in canonical form)"]
+  where
+    params = pvParams panel
+    dirtyMark = if pvDirty panel then "   * unsaved" else ""
+
+    noteLines = case pvNote panel of
+      Nothing -> []
+      Just note -> ["  " ++ note]
+
+    rows =
+      [ printf "%s %-28s %10.3f" (marker i) label value
+      | (i, (label, value)) <- zip [0 :: Int ..] params
+      ]
+
+    marker i = if i == pvIndex panel then ">" :: String else " "
 
 -- | Which of func-spec 0023's effects are on.
 --

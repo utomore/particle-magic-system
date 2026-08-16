@@ -129,9 +129,17 @@ executable particle-magic
                     , App.Render.Post
                     , App.Scene
                     , App.Hud
+                    , App.Panel
     build-depends:    base       ^>=4.22
                     , particle-magic:magic-boundary
                     , h-raylib   ^>=5.6
+                    -- func-spec 0024 S4: the parameter panel edits a
+                    -- circle through its canonical JSON, because this
+                    -- layer cannot see the ADT -- magic-core is out of
+                    -- reach by design and Magic.Interface exports Circle
+                    -- opaquely. App.Panel's haddock argues that this is
+                    -- the better of the two designs, not a workaround.
+                    , aeson      ^>=2.3
                     , effectful  ^>=2.6
                     , bytestring ^>=0.12
                     , vector     ^>=0.13
@@ -414,6 +422,10 @@ test-suite spec
                     , App.Render.Post
                     , App.Scene
                     , App.Hud
+                    , App.Panel
+                    , ParamPanelSpec
+                    , PanelWriteBackSpec
+                    , Acceptance24Spec
     build-depends:    base       ^>=4.22
                     , particle-magic:magic-core
                     , particle-magic:magic-boundary

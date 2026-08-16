@@ -12,6 +12,8 @@ module App.TestInterp
   , runFileWatchScript
   , runFileWatchScriptMap
   , runFileWatchScriptDirs
+  , runFileWatchScriptWrites
+  , WriteLog
   , HeadlessLog (..)
   , runRaylibHeadless
   , runRaylibHeadlessWith
@@ -63,6 +65,10 @@ runFileWatchScript bytes script =
         (c : cs) -> put cs >> pure c
     ReadBytes _ -> pure (Right bytes)
     ScanDir _ -> pure []
+    -- Accepted and dropped: a run driven by this interpreter is testing
+    -- something that is not the panel, and refusing the write would make
+    -- it test the failure path instead.
+    WriteBytes _ _ -> pure (Right ())
 
 -- | Multi-file scripted watch (func-spec 0005 §4.3): each path serves its
 -- own bytes and its own per-path change script, so spell switching can be
@@ -103,12 +109,57 @@ runFileWatchScriptDirs table0 dirScript0 =
         [] -> pure []
         [listing] -> pure listing
         (listing : rest) -> put (scripts, rest) >> pure listing
+    WriteBytes _ _ -> pure (Right ())
   where
     scripts0 = M.map snd table0
 
 -- | The scripted watch's carried state: the per-path change scripts, and
 -- the remaining directory listings.
 type ScriptState = (Map FilePath [Bool], [[FilePath]])
+
+-- | Every write the run performed, in order.
+type WriteLog = [(FilePath, BS.ByteString)]
+
+-- | As 'runFileWatchScriptDirs', but writes are real: a 'WriteBytes' is
+-- recorded /and/ becomes what the next 'ReadBytes' of that path returns
+-- (func-spec 0024 S5).
+--
+-- Serving the written bytes back is the whole point. The confluence rule
+-- being tested is "the panel saves, the watcher notices, the reload lands
+-- on the same circle", and an interpreter that kept answering with the
+-- original file would make the last step vacuously true.
+runFileWatchScriptWrites
+  :: Map FilePath (BS.ByteString, [Bool])
+  -> [[FilePath]]
+  -> Eff (FileWatch : es) a
+  -> Eff es (a, WriteLog)
+runFileWatchScriptWrites table0 dirScript0 =
+  reinterpret (fmap unpack . runState initial) $ \_ -> \case
+    CheckChanged path ->
+      get @WriteState >>= \(scripts, dirs, written, log') -> case M.lookup path scripts of
+        Just (c : cs) -> put (M.insert path cs scripts, dirs, written, log') >> pure c
+        _ -> pure False
+    ReadBytes path ->
+      get @WriteState >>= \(_, _, written, _) -> pure $ case M.lookup path written of
+        Just bytes -> Right bytes
+        Nothing -> case M.lookup path table0 of
+          Just (bytes, _) -> Right bytes
+          Nothing -> Left ("no such file (test script): " ++ path)
+    ScanDir _ ->
+      get @WriteState >>= \(scripts, dirs, written, log') -> case dirs of
+        [] -> pure []
+        [listing] -> pure listing
+        (listing : rest) -> put (scripts, rest, written, log') >> pure listing
+    WriteBytes path bytes -> do
+      (scripts, dirs, written, log') <- get @WriteState
+      put (scripts, dirs, M.insert path bytes written, (path, bytes) : log')
+      pure (Right ())
+  where
+    initial :: WriteState
+    initial = (M.map snd table0, dirScript0, M.empty, [])
+    unpack (a, (_, _, _, log')) = (a, reverse log')
+
+type WriteState = (Map FilePath [Bool], [[FilePath]], Map FilePath BS.ByteString, WriteLog)
 
 -- | What the headless renderer observed (assertions for T7/T8 and for
 -- func-spec 0005 §8).

@@ -48,12 +48,18 @@ import Raylib.Types
   , ConfigFlag (WindowResizable)
   , Image (..)
   , KeyboardKey
-      ( KeyFour
+      ( KeyEqual
+      , KeyFour
       , KeyG
       , KeyLeft
+      , KeyLeftBracket
+      , KeyMinus
       , KeyOne
+      , KeyP
       , KeyR
       , KeyRight
+      , KeyRightBracket
+      , KeyS
       , KeyT
       , KeyTab
       , KeyThree
@@ -821,6 +827,17 @@ pollInputIO = do
   bloom <- RL.isKeyPressed KeyTwo
   soft <- RL.isKeyPressed KeyThree
   scene <- RL.isKeyPressed KeyFour
+  -- Func-spec 0024 S4. Held keys, not pressed ones, for the two nudges:
+  -- an author looking for the right number wants to hold [=] and watch it
+  -- move, and one step per press would make that a hundred presses.
+  -- Everything else here stays edge-triggered, because everything else
+  -- here toggles.
+  panel <- RL.isKeyPressed KeyP
+  panelPrev <- RL.isKeyPressed KeyLeftBracket
+  panelNext <- RL.isKeyPressed KeyRightBracket
+  panelDec <- RL.isKeyDown KeyMinus
+  panelInc <- RL.isKeyDown KeyEqual
+  panelSave <- RL.isKeyPressed KeyS
   dragging <- RL.isMouseButtonDown MouseButtonLeft
   Vector2 dx dy <- RL.getMouseDelta
   wheel <- RL.getMouseWheelMove
@@ -845,4 +862,10 @@ pollInputIO = do
       , diPanDrag = drag
       , diWheel = wheel
       , diCursor = (mx, my)
+      , diTogglePanel = panel
+      , diPanelPrev = panelPrev
+      , diPanelNext = panelNext
+      , diPanelDec = panelDec
+      , diPanelInc = panelInc
+      , diPanelSave = panelSave
       }

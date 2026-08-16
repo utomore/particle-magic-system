@@ -5,7 +5,14 @@
 module HudSpec (spec) where
 
 import Data.List (isInfixOf)
-import App.Effects (FlatView (..), HudView (..), ReloadStatus (..), ViewMode (..))
+import App.Effects
+  ( FlatView (..)
+  , HudView (..)
+  , PanelView (..)
+  , ReloadStatus (..)
+  , ViewMode (..)
+  , panelViewClosed
+  )
 import App.Hud (formatHud, fpsEma)
 import App.Loop (defaultCamera, flatViewFor)
 import App.Render.Post (noEffects)
@@ -26,6 +33,7 @@ baseView =
     , hvCamera = defaultCamera
     , hvFlat = flatViewFor (1280, 720) SideXY
     , hvVisual = noEffects
+    , hvPanel = panelViewClosed
     }
 
 hudText :: HudView -> String
