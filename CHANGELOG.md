@@ -164,3 +164,26 @@ delivered function spec (details in `docs/spec/`).
   and matched frame for frame; the second term caught a pre-existing bug
   where a circle with `phConverge < formLife` (bare-sigil) started fading
   before it had finished being drawn. (delivered)
+- **0020 the sigil's time dimension (it turns)** — ADR-0020: a magic circle
+  now reads as running machinery rather than a decal. The whole figure
+  rotates about its face centre, neighbouring rings counter-rotate, and
+  each stroke winds up while the spell charges and then holds that speed.
+  `SigilSpin` (rate, charge-up acceleration, charge-up end) rides inside
+  `SigilStroke`; `spinAngle` is a piecewise closed form of the cast clock
+  — quadratic to `castStart`, linear after — whose angular speed is
+  bounded by `|rate| + |accel|·castStart` no matter how long the spell
+  runs, which is what a sigil that now lives for the entire cast (0017)
+  requires. The rotation is applied about the face origin, so it is an
+  isometry: func-spec 0016's three laws hold word for word,
+  `strokeRadius` and `emitterBounds` are unchanged, and `Magic.Compile`
+  needed no edit at all — one case of `positionIn` and the derivation in
+  `Magic.Sigil` are the entire change. The starting phase stays in
+  0016's `skPhase`, so `spinAngle sp 0 = 0`: the sigil at `t = 0` is
+  bit-for-bit the figure 0016 drew, and the derived geometry of every
+  shipped spell is byte-identical (the new digest bits do not collide
+  with 0016's). `Magic.Codec`, the schema, the C ABI, the particle budget
+  and the dependency list are all untouched, and no cross-frame state is
+  added — the angle is a pure function of `t`. Casting particles and
+  spells without `phases` are bit-for-bit unaffected at every instant;
+  ADR-0020 also rules that this is the last round the two formation
+  goldens are re-recorded bit-exactly. (delivered)

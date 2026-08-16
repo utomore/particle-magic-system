@@ -17,6 +17,14 @@
 --   slots are filled" stays readable while every spell still gets its
 --   own figure.
 --
+-- Func-spec 0020 adds a third, smaller thing on top of the second:
+-- 'SigilSpin', the angular motion a stroke carries. It is a rotation
+-- /about the face origin/ applied after 'sampleStroke', which is what
+-- keeps it orthogonal to everything else here — the six closed forms are
+-- untouched, and because a rotation preserves length, 'strokeRadius' and
+-- every bound built on it (@Magic.Compile.emitterBounds@, spec 0010's
+-- culling) are untouched too.
+--
 -- Strokes are /curves walked at a constant pace/, not clouds: index @i@
 -- maps to a point that advances monotonically along the curve
 -- ('strokeParam'). Combined with the frozen spawn schedule
@@ -38,6 +46,11 @@ module Magic.Sigil
   , StrokeKind (..)
   , sigilPlan
   , sigilBudget
+
+    -- * Angular motion (func-spec 0020 — frozen once delivered)
+  , SigilSpin (..)
+  , spinAngle
+  , staticSpin
 
     -- * Closed-form stroke sampling
   , sampleStroke
@@ -258,8 +271,72 @@ data SigilStroke = SigilStroke
   -- ^ Particle count; the unit the budget is settled in. Always a
   -- multiple of 'skSymmetry' as produced by 'sigilPlan', so every arm
   -- gets the same number of points and the curve parameter closes at 1.
+  , skSpin :: !SigilSpin
+  -- ^ How the stroke turns about the face origin (func-spec 0020). The
+  -- starting angle is /not/ here: it lives in 'skPhase', which already
+  -- means exactly that (§2.4), and keeping it there is what makes
+  -- @spinAngle sp 0 == 0@ — the sigil at @t = 0@ is bit-for-bit the
+  -- figure 0016 drew.
   }
   deriving (Eq, Show)
+
+-- | One stroke's angular motion, all of it relative to the face-plane
+-- origin (func-spec 0020 §3.1). Frozen once 0020 delivers.
+--
+-- Two coefficients and a landmark, in that order: a base angular speed, a
+-- charge-up angular acceleration, and the moment the charge-up stops.
+-- 'ssRampEnd' is @castStart@, baked in at compile time — the same trick
+-- spec 0006 used for the phase staging and 0017 for @ppEnd@: /a phase
+-- landmark crosses into the sampler as data, never as a query/. The
+-- sampler still knows nothing about phases.
+data SigilSpin = SigilSpin
+  { ssRate :: !Float
+  -- ^ Base angular speed, rad\/s. Negative = the other way round.
+  , ssAccel :: !Float
+  -- ^ Angular acceleration during the charge-up, rad\/s². Same sign as
+  -- 'ssRate' as produced by 'sigilPlan' (a stroke speeds up, it never
+  -- turns around mid-cast).
+  , ssRampEnd :: !Float
+  -- ^ End of the charge-up, in seconds since the cast started
+  -- (= @castStart@). Past it the angular speed is held constant, which
+  -- is what keeps @|ω|@ bounded no matter how long the spell runs.
+  }
+  deriving (Eq, Show)
+
+-- | A stroke that does not turn. @spinAngle staticSpin ≡ 0@.
+staticSpin :: SigilSpin
+staticSpin = SigilSpin {ssRate = 0, ssAccel = 0, ssRampEnd = 0}
+
+-- | Seconds since the cast started → the angle the stroke has turned
+-- through (func-spec 0020 §2.3).
+--
+-- Piecewise: quadratic while the sigil is charging, linear once it has
+-- fired.
+--
+-- > t <= r:  rate·t + ½·accel·t²
+-- > t >  r:  rate·r + ½·accel·r² + (rate + accel·r)·(t − r)
+--
+-- The two branches agree in value /and/ in derivative at @t = r@, so the
+-- angular speed is continuous (C¹) and never jumps. It is also
+-- /bounded/: @|ω(t)| <= |rate| + |accel|·r@ for every @t@, independent
+-- of how long the spell lasts. That bound is the whole reason the
+-- function is piecewise rather than a plain quadratic — a sigil now
+-- lives for the entire cast (ADR-0015 D1), and a constant angular
+-- acceleration over 8 seconds turns it into a blurred disc.
+--
+-- Total: negative times (which only a test ever asks for) clamp to 0, so
+-- the bound holds on the whole real line and @spinAngle sp 0 == 0@ is
+-- also the value at every @t <= 0@.
+spinAngle :: SigilSpin -> Double -> Float
+spinAngle sp tCast
+  | t <= r = rate * t + 0.5 * accel * t * t
+  | otherwise = rate * r + 0.5 * accel * r * r + (rate + accel * r) * (t - r)
+  where
+    t = max 0 (realToFrac tCast) :: Float
+    r = max 0 (ssRampEnd sp)
+    rate = ssRate sp
+    accel = ssAccel sp
+{-# INLINE spinAngle #-}
 
 -- | The stroke vocabulary. Each kind is a closed-form @(arm, s) -> point@
 -- with no allocation and no state; @s@ always advances monotonically with
@@ -303,6 +380,39 @@ tau :: Float
 tau = 2 * pi
 
 -- | @bitsAt w off n@: the @n@ bits of @w@ starting at @off@, as an 'Int'.
+--
+-- == The digest's bit allocation
+--
+-- Every direct @bitsAt@ read in this module, so a later round can pick
+-- free bits instead of quietly restyling every spell in existence
+-- (func-spec 0020 §3.2 — this table is the thing that stops a fourth
+-- round from colliding).
+--
+-- From the top-level digest @d = hashCircle circle@:
+--
+-- > bits  0.. 1   0016  symmetry order, ±1 around the structural center
+-- > bits 40..47   0016  the boundary tick group's starting phase
+--
+-- From a layer's own word @dl = mixW d layerIndex@:
+--
+-- > bits  3.. 5   0016  which of the six stroke kinds
+-- > bits  8..17   0016  starting phase (skPhase)
+-- > bits 18..26   0016  ArcRing sweep
+-- > bits 21..23   0016  Polygram step k        (kind-exclusive with the above)
+-- > bits 24..27   0016  Spokes length          (kind-exclusive)
+-- > bits 28..31   0016  Ticks length           (kind-exclusive)
+-- > bits 32..33   0016  Rose petal count       (kind-exclusive)
+-- > bits 34..40   0020  |ssRate|   — angular speed
+-- > bits 41..47   0020  |ssAccel|  — charge-up angular acceleration
+-- > bits 48..59   0016  GlyphBand mask
+-- > bits  0.. 2   free
+-- > bits  6.. 7   free
+-- > bits 60..63   free
+--
+-- 0020 reads no new bits of @d@ itself: the boundary group's spin is
+-- fixed by the structure (outermost ⇒ positive, slowest of the band), and
+-- so is every stroke's /direction/ (layer parity). Only the two
+-- magnitudes come from the digest.
 bitsAt :: Word64 -> Int -> Int -> Int
 bitsAt w off n = fromIntegral ((w `shiftR` off) .&. ((1 `shiftL` n) - 1))
 
@@ -372,9 +482,27 @@ sigilPlan circle =
 
     shapes = [(s, shapePreviewCount) | (_, _, Drawn s) <- layers]
 
+    -- The charge-up landmark, read straight off the structure: it is
+    -- castStart = phDraw + phConverge (spec 0006 §4.3). Without 'phases'
+    -- there are no formation emitters at all, so the value is unobservable
+    -- and 0 is as good as anything.
+    ramp = case circlePhases circle of
+      Nothing -> 0
+      Just (PhaseConfig (Seconds drawS) (Seconds convergeS)) ->
+        max 0 (realToFrac (drawS + convergeS))
+
+    -- The occupied layers, outside in. The ordinal (1, 2, 3, ...) is
+    -- their position in /draw order/, which is what sets the turn
+    -- direction: counter-rotation has to be visible between neighbouring
+    -- drawn rings, and a vacant slot in the middle must not silently make
+    -- two of them turn the same way (func-spec 0020 §3.2, 實作備註-3).
+    -- The layer's own index still picks the digest word, so the geometry
+    -- 0016 derives is untouched.
+    occupied = [(idx, r) | (idx, r, Filled) <- layers]
+
     raw =
-      boundaryGroup sym d
-        ++ [layerStroke sym d idx r | (idx, r, Filled) <- layers]
+      boundaryGroup sym d ramp
+        ++ [layerStroke sym d ramp ord idx r | (ord, (idx, r)) <- zip [1 :: Int ..] occupied]
 
     total = sum (map skCount raw) + sum (map snd shapes)
 
@@ -392,8 +520,11 @@ sigilPlan circle =
 -- circle, including the all-empty one — the one stroke group the
 -- structure grants unconditionally, and the reason a slot maps to a
 -- /group/ of strokes rather than to exactly one.
-boundaryGroup :: Int -> Word64 -> [SigilStroke]
-boundaryGroup sym d =
+-- The silhouette is layer index 0, which is what gives it the positive
+-- turn direction func-spec 0020 §3.2 asks for and makes the whole draw
+-- order alternate: the frame turns one way, the first ring the other.
+boundaryGroup :: Int -> Word64 -> Float -> [SigilStroke]
+boundaryGroup sym d ramp =
   [ SigilStroke
       { skKind = ArcRing 1
       , skRadius = 1.5
@@ -401,6 +532,7 @@ boundaryGroup sym d =
       , skPhase = 0
       , skJitter = defaultJitter
       , skCount = 192
+      , skSpin = boundarySpin ramp
       }
   , SigilStroke
       { skKind = Ticks 0.09
@@ -409,13 +541,14 @@ boundaryGroup sym d =
       , skPhase = tau * fromIntegral (bitsAt d 40 8) / 256
       , skJitter = defaultJitter
       , skCount = 10 * sym
+      , skSpin = boundarySpin ramp
       }
   ]
 
 -- | One occupied ring layer: radius from the structure, everything else
 -- from the layer's own slice of the digest.
-layerStroke :: Int -> Word64 -> Int -> Float -> SigilStroke
-layerStroke sym d idx radius =
+layerStroke :: Int -> Word64 -> Float -> Int -> Int -> Float -> SigilStroke
+layerStroke sym d ramp ord idx radius =
   SigilStroke
     { skKind = kind
     , skRadius = radius
@@ -423,6 +556,7 @@ layerStroke sym d idx radius =
     , skPhase = tau * fromIntegral (bitsAt dl 8 10) / 1024
     , skJitter = defaultJitter
     , skCount = perArm * arms
+    , skSpin = layerSpin dl ord ramp
     }
   where
     dl = mixW d (fromIntegral idx)
@@ -447,6 +581,49 @@ layerStroke sym d idx radius =
       Ticks _ -> 8
       Rose _ -> 168
       GlyphBand _ -> 24
+
+-- Angular motion (func-spec 0020 §3.2) ----------------------------------------
+
+-- | The angular-speed band, rad\/s: one turn per 125 s at the bottom, one
+-- per 14 s at the top. Slow enough not to read as spinning-for-the-sake-
+-- of-it, fast enough that a viewer can tell it is moving.
+spinRateMin, spinRateMax :: Float
+spinRateMin = 0.05
+spinRateMax = 0.45
+
+-- | Ceiling on the charge-up acceleration, rad\/s². With the shipped
+-- sigils' @castStart <= 2.4 s@ this caps the held speed at
+-- @0.45 + 0.30·2.4 = 1.17 rad\/s@ — about 5.4 s a turn, still a figure
+-- rather than a blur.
+spinAccelMax :: Float
+spinAccelMax = 0.30
+
+-- | Which way the @n@-th stroke group in draw order turns: the skeleton
+-- decides, so /adjacent rings counter-rotate/ reads as a rule rather than
+-- as noise. Ordinal 0 is the silhouette, and it turns positively (§3.2).
+spinSign :: Int -> Float
+spinSign ord = if even ord then 1 else -1
+
+-- | The silhouette's motion: outermost, positive, at the bottom of the
+-- band and with no charge-up — the frame turns slowly while the works
+-- inside it speed up.
+boundarySpin :: Float -> SigilSpin
+boundarySpin ramp =
+  SigilSpin {ssRate = spinRateMin, ssAccel = 0, ssRampEnd = ramp}
+
+-- | A ring layer's motion. Direction from the structure (its ordinal in
+-- draw order), both magnitudes from the layer's own digest word
+-- (bits 34..47 — see 'bitsAt').
+layerSpin :: Word64 -> Int -> Float -> SigilSpin
+layerSpin dl ord ramp =
+  SigilSpin
+    { ssRate = sgn * (spinRateMin + (spinRateMax - spinRateMin) * unit (bitsAt dl 34 7))
+    , ssAccel = sgn * (spinAccelMax * unit (bitsAt dl 41 7))
+    , ssRampEnd = ramp
+    }
+  where
+    sgn = spinSign ord
+    unit n = fromIntegral n / 127
 
 -- Sampling ---------------------------------------------------------------------
 

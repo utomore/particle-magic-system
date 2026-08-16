@@ -15,14 +15,16 @@ module SigilStrokeSpec (spec) where
 import Data.Bits (popCount, testBit, (.&.))
 import Data.Word (Word16)
 import Magic.Sigil
-  ( SigilStroke (..)
+  ( SigilSpin (..)
+  , SigilStroke (..)
   , StrokeKind (..)
   , sampleStroke
+  , staticSpin
   , strokeParam
   , strokeRadius
   )
 import Magic.Types (V2 (..))
-import SigilGen (allKindsOf, genStroke, genStrokeOfKind)
+import SigilGen (allKindsOf, genSpin, genStroke, genStrokeOfKind)
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck hiding ((.&.))
@@ -56,6 +58,7 @@ crisp sym kind steps =
     , skPhase = 0.3
     , skJitter = 0
     , skCount = steps * sym
+    , skSpin = staticSpin
     }
 
 spec :: Spec
@@ -177,6 +180,24 @@ spec = describe "sigil strokes (func-spec 0016 S2)" $ do
       forAll genStroke $ \sk ->
         map (sampleStroke sk) [0 .. skCount sk - 1]
           === map (sampleStroke sk) [0 .. skCount sk - 1]
+
+    -- Func-spec 0020 §2.1: the time term multiplies the sample, it does
+    -- not change how the sample is taken. So every claim above is stated
+    -- about a function 'skSpin' cannot reach — which is exactly why the
+    -- six closed forms did not have to be reopened to make the sigil turn.
+    prop "sampleStroke ignores skSpin entirely (0016 and 0020 are orthogonal)" $
+      forAll genStroke $ \sk ->
+        forAll genSpin $ \sp ->
+          let points s = map (sampleStroke sk {skSpin = s}) [0 .. skCount sk - 1]
+           in points sp === points staticSpin
+
+    prop "so do strokeParam and strokeRadius" $
+      forAll genStroke $ \sk ->
+        forAll genSpin $ \sp ->
+          let spun = sk {skSpin = sp}
+           in strokeRadius spun === strokeRadius sk
+                .&&. map (strokeParam spun) [0 .. skCount sk - 1]
+                  === map (strokeParam sk) [0 .. skCount sk - 1]
 
     it "jitter actually moves the points off the crisp curve" $
       let plain = crisp 1 (ArcRing 1) 32

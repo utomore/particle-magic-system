@@ -271,6 +271,10 @@ test-suite spec
                     , PersistEnvelopeSpec
                     , PersistWiringSpec
                     , Acceptance17Spec
+                    , SigilSpinSpec
+                    , SigilMotionSpec
+                    , SigilMotionWiringSpec
+                    , Acceptance20Spec
                     , App.Effects
                     , App.HotReload
                     , App.Loop

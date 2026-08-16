@@ -157,6 +157,7 @@ stateDiagram-v2
 
 - `CompiledSpell` 內含各階段的發射器與時間包絡（`Envelope`）；階段切換由**時間**驅動，不是狀態機事件——整個生命週期仍是 `t` 的純函數。
 - **陣不是被消耗掉的**（spec 0017／ADR-0015）：陣形發射器的生存窗延到 `ppEnd`，所以魔法陣從畫出來的那一刻起持續存在到法術結束，法術是**從陣裡射出來**而不是把陣燒掉。`Converging` 這個階段名稱保留（它是 C 線碼的一部分），語意為「畫完後原地蓄力」。陣形發射器維持 `emPhase = Drawing`，於是力場只作用於施放粒子（ADR-0010 D6）——重力井吸得動法術，吸不動陣。
+- **陣會轉**（spec 0020／ADR-0020）：整陣繞面心自轉、相鄰環反向、`Converging` 期間轉速攀升（「原地蓄力」的視覺兌現），`castStart` 之後維持恆速直到法術結束。轉角是施法秒數的分段閉式函數（`Magic.Sigil.spinAngle`），屬**調變層**語意故吃施法時鐘而非粒子年齡；旋轉繞面平面原點因而保長，`emitterBounds` 與剔除邏輯不受影響。逐位元邊界為 `t = 0`：靜態的陣沒有被改變，只有時間讓它轉。
 - **無魔法陣的施法**（Init.md：「沒有魔法陣就是單純的魔力放出」）：全空的 `Circle`（所有槽位 `Nothing`）編譯為一個跳過 Drawing/Converging、只有預設放出發射器的 `CompiledSpell`。空陣即素放——不需特例分支。
 
 ---
@@ -548,4 +549,5 @@ void     pm_free(PmSpell*);
 | [ADR-0012](adr/adr-0012-multi-circle-scene.md) | 多陣合成與場景層配額 |
 | [ADR-0013](adr/adr-0013-billboard-vocabulary.md) | 告示板詞彙：無參數列舉、型別落點遷移、程序生成貼圖 |
 | [ADR-0014](adr/adr-0014-sigil-from-circle-hash.md) | 符文陣由魔法陣資料導出：摘要即合約、混合導出、逐位元豁免只到 Drawing／Converging（D5 已由 ADR-0015 取代） |
-| [ADR-0015](adr/adr-0015-sigil-persists-through-cast.md) | 陣駐留到法術結束：取消陣形收束、逐位元邊界收窄 |
+| [ADR-0015](adr/adr-0015-sigil-persists-through-cast.md) | 陣駐留到法術結束：取消陣形收束、逐位元邊界收窄（D4 已由 ADR-0020 取代） |
+| [ADR-0020](adr/adr-0020-sigil-spin-bitexact-boundary.md) | 陣會自轉：逐位元邊界收窄至 `t = 0`、兩條零影響律（主效果／無 `phases`）、陣形 golden 改結構性斷言 |

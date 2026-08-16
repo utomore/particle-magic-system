@@ -8,6 +8,7 @@ module SigilGen
   ( genAnyCircle
   , genStroke
   , genStrokeOfKind
+  , genSpin
   , allKindsOf
   ) where
 
@@ -27,7 +28,7 @@ import Magic.Rune
   , RadiationMode (..)
   , Trajectory (..)
   )
-import Magic.Sigil (SigilStroke (..), StrokeKind (..))
+import Magic.Sigil (SigilSpin (..), SigilStroke (..), StrokeKind (..))
 import Magic.Types (Seconds (..), V2 (..), V3 (..))
 import Test.QuickCheck
 
@@ -178,6 +179,7 @@ genStrokeOfKind sym kind = do
   phase <- realToFrac <$> choose (0 :: Double, 6.28)
   jitter <- elements [0, 0.015, 0.05]
   steps <- chooseInt (4, 40)
+  spin <- genSpin
   pure
     SigilStroke
       { skKind = kind
@@ -186,4 +188,20 @@ genStrokeOfKind sym kind = do
       , skPhase = phase
       , skJitter = jitter
       , skCount = steps * sym
+      , skSpin = spin
       }
+
+-- | Angular motion, generated the way 'Magic.Sigil.sigilPlan' produces it
+-- (func-spec 0020 §3.2): the acceleration carries the rate's sign, the
+-- charge-up ends at a non-negative landmark, and a standing-still stroke
+-- is always in the sample.
+genSpin :: Gen SigilSpin
+genSpin = do
+  sgn <- elements [-1, 1 :: Float]
+  rate <- realToFrac <$> choose (0.05 :: Double, 0.45)
+  accel <- realToFrac <$> choose (0 :: Double, 0.30)
+  ramp <- realToFrac <$> choose (0 :: Double, 2.4)
+  frequency
+    [ (1, pure (SigilSpin 0 0 ramp))
+    , (6, pure (SigilSpin (sgn * rate) (sgn * accel) ramp))
+    ]
