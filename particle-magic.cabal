@@ -20,12 +20,14 @@ description:
     renderer- and engine-agnostic; this repo's executable is an h-raylib
     demo shell. Host games depend on particle-magic:magic-boundary and
     consume Magic.Interface / Magic.Codec only.
--- Not MIT: the MIT text plus two conditions -- credit the author and do
--- not claim the work as your own (2), and tell the author before you
--- release something built on it (3). Condition 3 makes it
--- source-available rather than open source, so the field carries an SPDX
--- LicenseRef instead of an SPDX id; LICENSE is the operative text.
-license:            LicenseRef-ParticleMagic
+-- A licence of this project's own, not a variant of MIT or of anything
+-- else: use, modification, commercial use and redistribution are free,
+-- on two conditions -- credit the author and do not claim the work as
+-- your own (2), and tell the author before releasing something built on
+-- it (3). Section 3 makes it source-available rather than open source,
+-- so the field carries an SPDX LicenseRef rather than an SPDX id;
+-- LICENSE is the operative text.
+license:            LicenseRef-ParticleMagic-1.0
 license-file:       LICENSE
 maintainer:         utomore@outlook.com
 category:           Graphics

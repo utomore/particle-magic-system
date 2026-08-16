@@ -39,8 +39,10 @@ Format rules (the authority is [docs/release.md](docs/release.md) §3, and
   system's first cross-frame state (`FieldState`), reset on every cast;
   fieldless spells branch around the whole layer and render bit-for-bit
   what they rendered before. `app/*` untouched. Packaging debt from the
-  same round: MIT license, public sublibraries, PVP bounds, this
-  README/CHANGELOG. (delivered)
+  same round: MIT license (superseded on 2026-08-16 by the Particle Magic
+  System License 1.0 — see LICENSE; this line records what 0007 shipped,
+  not what the project is under now), public sublibraries, PVP bounds,
+  this README/CHANGELOG. (delivered)
 - **0008 2D orthographic backend** — ADR-0008 made executable: `ViewPlane` /
   `orthographic` / `depthOrder` (stable painter permutation) in
   `Magic.Project`, re-exported through `Magic.Projection`; a real 2D draw

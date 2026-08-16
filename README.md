@@ -224,12 +224,13 @@ are in [docs/release.md](docs/release.md); the reasoning is in
 
 ## License
 
-See [LICENSE](LICENSE). It is the MIT License plus two conditions, so it
-is **not** MIT and should not be described as such — the project is
-source-available rather than open source in the OSI sense.
+The **Particle Magic System License 1.0** — see [LICENSE](LICENSE). It is
+this project's own licence, not MIT, BSD, Apache or a variant of any of
+them, and the project is source-available rather than open source in the
+OSI sense. Please don't describe it as open source.
 
-Use, modification, commercial use and redistribution are all permitted,
-free of charge. The two conditions are:
+Use, study, modification, commercial use and redistribution are all
+permitted, free of charge and without royalty. The two conditions are:
 
 1. **Credit, and no claim of authorship.** You may not present this
    software, or a substantial portion of it, as your own original work.

@@ -1,72 +1,119 @@
 Particle Magic System License
+Version 1.0, 2026-08-16
 
-Copyright (c) 2026 utomore
+Copyright (c) 2026 utomore. All rights reserved except as granted below.
 
-This license is the MIT License with two added conditions, numbered 2 and
-3 below. It is therefore NOT the MIT License and must not be described as
-such: a work under it is source-available rather than open source in the
-OSI sense, because condition 3 requires you to tell the author.
+This is a source-available licence, not an open source licence in the OSI
+sense, and it is not a variant of any other licence. Section 3 requires
+you to tell the author before you release something built on this
+software, and no OSI-approved licence asks that. Do not describe a work
+under this licence as MIT, BSD, Apache or "open source".
 
-Permission is hereby granted, free of charge, to any person obtaining a
-copy of this software and associated documentation files (the
-"Software"), to deal in the Software without restriction, including
-without limitation the rights to use, copy, modify, merge, publish,
-distribute, sublicense, and/or sell copies of the Software, and to permit
-persons to whom the Software is furnished to do so, subject to the
-following conditions:
+0. DEFINITIONS
 
-1. COPYRIGHT NOTICE
+   "The Software" means this software and its accompanying files,
+   including source code, documentation and data.
 
-   The above copyright notice and this permission notice shall be
-   included in all copies or substantial portions of the Software.
+   "The Author" means utomore, the copyright holder.
 
-2. ATTRIBUTION, AND NO CLAIM OF AUTHORSHIP
+   "You" means the person or organisation exercising the rights granted
+   in section 1.
 
-   You may not present the Software, or any substantial portion of it, as
-   your own original work, whether by claiming authorship of it, by
-   removing or obscuring the copyright notice, by relicensing it under
-   your own name, or by any other means.
+   "Release" means to publish, distribute, offer for download, sell,
+   license, or otherwise make available to anyone other than you or your
+   organisation — including as part of a larger work, and including in
+   compiled, embedded or otherwise transformed form.
 
-   If you distribute the Software or a work derived from or incorporating
-   it, that work must credit the original author (utomore) and name this
-   project as its origin. For an application, a game, or anything else
-   with a user-visible surface, credit in the documentation, the about
-   screen, or the credits is enough; it does not have to appear during
-   normal use.
+   A "Substantial Portion" of the Software is any part of it whose use
+   saves you work you would otherwise have had to do yourself. A handful
+   of lines is not; a module, a subsystem, or the design of the interpreter
+   is.
 
-   Your own contributions remain yours. This condition constrains what
-   you may claim about the parts that are not.
+1. GRANT
 
-3. NOTIFICATION OF THE AUTHOR
+   The Author grants you, free of charge and without royalty, a
+   worldwide, non-exclusive, perpetual right to use, study, modify, and
+   Release the Software and works derived from it, for any purpose,
+   including commercial purposes, subject to sections 2 and 3.
 
-   Before you publicly release, publish, distribute, or offer for sale a
-   work that incorporates the Software or a substantial portion of it,
-   you must notify the copyright holder, by either:
+   No trademark rights are granted. This licence says nothing about
+   patents.
+
+2. CONDITION — ATTRIBUTION, AND NO CLAIM OF AUTHORSHIP
+
+   You may not present the Software, or a Substantial Portion of it, as
+   your own original work. In particular you may not claim authorship of
+   it, remove or obscure the copyright notice, relicense it under your own
+   name, or state or imply that you created it.
+
+   Anything you Release that contains the Software or a Substantial
+   Portion of it must credit the Author by name and identify this project
+   as its origin. For software with a user-visible surface — a game, an
+   application — placing that credit in the documentation, an about
+   screen, or a credits list is sufficient; it need not appear during
+   normal use. For source distributions, a copy of this licence file
+   alongside the code is sufficient.
+
+   Work you write yourself remains yours, and you may license your own
+   contributions as you see fit. This section limits only what you may
+   claim about the parts you did not write.
+
+3. CONDITION — NOTIFY THE AUTHOR BEFORE YOU RELEASE
+
+   Before you Release anything containing the Software or a Substantial
+   Portion of it, you must notify the Author, by either:
 
      * opening an issue at
        https://github.com/utomore/particle-magic-system/issues , or
      * sending an email to utomore@outlook.com
 
-   naming the work and where it can be found.
+   The notice must name the work and say where it can be found.
 
-   Private use, internal use, evaluation, study, and modification you do
-   not release require no notification.
+   This is a notification, not a request for permission. Sending it
+   satisfies this section; you do not need a reply and you do not need to
+   wait for one.
 
-   This is notification, not permission. You do not need a reply, and you
-   do not need to wait for one; sending the notice satisfies this
-   condition.
+   Nothing outside a Release requires notice: private use, use inside
+   your organisation, evaluation, study, and modifications you never
+   Release are all free of this condition.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+4. IF YOU BREACH THESE CONDITIONS
+
+   The rights granted in section 1 end automatically if you fail to
+   comply with section 2 or section 3. They are reinstated as soon as you
+   come into compliance — for section 3, by sending the notice you owed —
+   unless the Author notifies you otherwise in writing.
+
+5. NO WARRANTY
+
+   The Software is provided as is, without warranty of any kind. The
+   Author makes no promise that it is fit for any purpose, that it works,
+   that it is free of defects, or that it does not infringe anyone's
+   rights. You bear the entire risk of using it.
+
+6. LIMITATION OF LIABILITY
+
+   To the fullest extent permitted by applicable law, the Author is not
+   liable for any claim, damages, loss, or other liability arising from
+   the Software or from anything done with it, whether in contract, tort
+   or otherwise, and whether or not the Author was advised of the
+   possibility.
+
+7. GENERAL
+
+   If any part of this licence is held unenforceable, the rest remains in
+   force. Failure to enforce a condition is not a waiver of it. Later
+   versions of this licence, if any, will be numbered; a work may be used
+   under the version distributed with it.
 
 ---
 
-以下為條件 2 與 3 的中文摘要，僅供閱讀方便；發生歧義時以上方英文條文為準。
+以下為中文摘要，僅供閱讀方便；發生歧義時以上方英文條文為準。
 
-- **條件 2（署名，不得宣稱是自己的）**：不得把本軟體或其中相當部分當成你自己的原創作品——不得宣稱著作權、不得移除或遮蔽著作權聲明、不得以自己的名義重新授權。散布時（含衍生作品）必須標明原作者 utomore 與本專案出處；遊戲或應用程式放在文件、about 畫面或製作名單即可，不必在遊玩過程中出現。你自己寫的部分仍然是你的，本條只限制你對「不是你寫的那部分」能怎麼宣稱。
-- **條件 3（必須通知作者）**：公開發行、發布、散布或販售含有本軟體（或其相當部分）的作品**之前**，必須以 GitHub issue 或 email（utomore@outlook.com）通知著作權人，說明作品名稱與取得位置。私下使用、內部使用、評估、研究、以及沒有發布的修改，都不需要通知。這是**告知而非申請**：不需要得到回覆，寄出通知即滿足本條件。
+**這份授權不是 MIT，也不是任何既有授權的變體**，因為第 3 條要求你在發布前告知作者，而沒有任何 OSI 授權有這種條件——本專案是 source-available，不是 OSI 意義下的 open source，請勿以「MIT」或「開源」描述它。
+
+- **第 1 條（授予）**：免費、永久、全球、非專屬地允許使用、研究、修改、發布本軟體與其衍生作品，**含商業用途**，但受第 2、3 條拘束。不授予商標權，亦不涉及專利。
+- **第 2 條（署名，不得宣稱是自己的）**：不得把本軟體或其中相當部分當成你自己的原創作品——不得宣稱著作權、移除或遮蔽著作權聲明、以自己的名義重新授權，或明示暗示是你做的。發布時必須具名標示原作者 utomore 與本專案出處；遊戲或應用程式放在文件、about 畫面或製作名單即可，不必在遊玩過程中出現；原始碼散布則附上本授權檔即可。你自己寫的部分仍然是你的，本條只限制你對「不是你寫的那部分」能怎麼宣稱。
+- **第 3 條（發布前必須通知）**：在**發布**（公開、散布、提供下載、販售、再授權，含併入更大的作品、含編譯或嵌入後的形式）之前，須以 GitHub issue 或 email（utomore@outlook.com）通知作者，說明作品名稱與取得位置。**這是告知不是申請**：寄出即滿足條件，不需要回覆也不必等待。私下使用、組織內部使用、評估、研究、以及沒有發布的修改，一律不需要通知。
+- **第 4 條（違反的效果）**：違反第 2 或 3 條時，第 1 條的授權自動終止；恢復合規（第 3 條即補寄通知）後自動回復，除非作者另以書面告知。
+- **第 5、6 條**：不附任何擔保；在法律允許的最大範圍內，作者不承擔任何責任。
