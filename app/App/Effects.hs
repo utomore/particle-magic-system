@@ -99,6 +99,16 @@ data FlatView = FlatView
   -- shading by depth is the cheapest cue that needs no new geometry
   -- (func-spec 0013 §2). Presentation state, so it lives here with the
   -- origin and the scale.
+  , fvDepthScale :: !Float
+  -- ^ How strongly depth is allowed to change a particle's on-screen
+  -- size (func-spec 0021 S6, the second cue after the tint). 1 = off and
+  -- the default; at @k@ the nearest particle of the batch is drawn @k@
+  -- times its size and the furthest @1/k@ times, restoring the size
+  -- gradient an orthographic projection deletes by definition.
+  , fvOutlineFloor :: !Float
+  -- ^ Smallest on-screen quad edge, in pixels (0 = off, the default).
+  -- Shrinking the far end is only readable if the near end keeps an edge
+  -- to read; this is the floor that guarantees one.
   }
   deriving (Eq, Show)
 
@@ -210,6 +220,10 @@ data DemoInput = DemoInput
   -- ^ V: switch the orthographic plane (side ↔ top).
   , diToggleTint :: !Bool
   -- ^ T: switch the 2D depth tint on and off (func-spec 0013 §4).
+  , diToggleReadability :: !Bool
+  -- ^ G: switch the 2D depth flattening and outline floor on and off
+  -- (func-spec 0021 S6) — the second-tier top-view cues, kept on their
+  -- own key so the first-tier tint can still be judged alone.
   , diOrbitDrag :: !(Maybe (Float, Float))
   -- ^ Mouse drag while the left button is held, in pixels, or 'Nothing'
   -- when nothing is being dragged. Drives the 3D orbit; the pixels are
@@ -236,6 +250,7 @@ noInput =
     , diToggleBackend = False
     , diTogglePlane = False
     , diToggleTint = False
+    , diToggleReadability = False
     , diOrbitDrag = Nothing
     , diPanDrag = Nothing
     , diWheel = 0

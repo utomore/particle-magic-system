@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "name": "yin-yang",
+  "circle": {
+    "phases": { "draw": 1.0, "converge": 0.5 },
+    "outer": [
+      { "rune": "shape", "shape": { "kind": "sector", "inner": 0.3, "outer": 1.6, "sweep": 3.14159 } },
+      { "rune": "radiate", "mode": "radial-inward" }
+    ],
+    "bridge": { "rune": "converge", "expr": "1 - life * 0.5" },
+    "inner": [
+      { "rune": "trajectory", "kind": "pulse", "speed": 2.0, "freq": 1.2 },
+      { "rune": "timing", "delay": 0.0, "duration": 4.0, "lifetime": 1.8 }
+    ],
+    "core": {
+      "center": { "element": "yin", "power": 1.0 },
+      "nodes": {
+        "north": null,
+        "south": { "rune": "dir-bias", "strength": 0.25 },
+        "east": null,
+        "west": null
+      }
+    },
+    "fields": [
+      { "kind": "spring", "center": [0.0, 1.5, 0.0], "k": 2.5 }
+    ]
+  }
+}

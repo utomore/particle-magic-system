@@ -86,8 +86,24 @@ related-spec: [func-0014]
 
 | 鍵 | 值 | 說明 |
 |---|---|---|
-| `element` | `"neutral"` / `"fire"` / `"water"` / `"lightning"` | 決定顏色漸層與混色模式。`fire`、`lightning` 用加色（發光感），`neutral`、`water` 用一般 alpha 混色。 |
+| `element` | 九種之一，見下表 | 決定顏色漸層與混色模式。 |
 | `power` | 數字，**必須 > 0** | 粒子數 = `round(256 × power)`，下限 1。`power` 太大會編譯失敗（見 §9）。 |
+
+九種元素——四種基本加上五行的金木土與陰陽：
+
+| `element` | 感覺 | 混色 |
+|---|---|---|
+| `"neutral"` | 素白，不上色（不寫 `center` 就是它） | alpha |
+| `"fire"` | 橘紅、燒盡 | 加色 |
+| `"water"` | 水藍、透 | alpha |
+| `"lightning"` | 慘白、刺眼 | 加色 |
+| `"metal"` | 金 —— 銳利反光，交疊處爆白 | 加色 |
+| `"wood"` | 木 —— 生長的綠，會遮蔽 | alpha |
+| `"earth"` | 土 —— 厚重不透光 | alpha |
+| `"yin"` | 陰 —— 暗紫，像把光吸掉 | alpha |
+| `"yang"` | 陽 —— 暖白放光，與陰成對 | 加色 |
+
+**一張陣只有一種混色模式**，因為混色由元素決定而一張陣只有一個元素。想在同一畫面同時看到兩種混色，要把兩張陣**疊起來施放**（宿主端一次送多張陣；`wuxing-seal` 與 `yin-yang` 就是為此準備的一組）。
 
 `center` 留空 = `neutral`、`power` 1（即 256 顆）。
 
@@ -109,15 +125,23 @@ related-spec: [func-0014]
 
 ### 4.1 `"trajectory"`：軌跡
 
-用 `kind` 分三種：
+用 `kind` 分七種。全部都是**粒子年齡的閉式函數**——同一顆粒子在同一個年齡永遠算出同一個位置，所以法術可重播。
 
 | `kind` | 額外的鍵 | 說明 |
 |---|---|---|
 | `"forward"` | `speed`（數字） | 沿法線直線前進。 |
 | `"spiral"` | `speed`、`radius`（**> 0**）、`freq` | 邊前進邊繞圈。`freq` 是每秒圈數。 |
 | `"orbit"` | `radius`（**> 0**）、`freq` | 只繞圈不前進。 |
+| `"wave"` | `speed`、`amplitude`、`freq`（**≥ 0**） | 邊前進邊左右擺（正弦）。`amplitude` 是擺幅，`freq` 是每秒幾個週期。 |
+| `"ballistic"` | `speed`、`gravity` | 拋物線：以 `speed` 射出，被 `gravity` 拉回。最高點在 `speed / gravity` 秒。**不需要力場**，這是解析算出來的。 |
+| `"pulse"` | `speed`、`freq`（**≥ 0**） | 一衝一緩地前進。`speed` 是平均速度，`freq` 是每秒脈動幾次。**永遠不會倒退**。 |
+| `"zigzag"` | `speed`、`amplitude`、`freq`（**≥ 0**） | 和 `wave` 一樣但轉折是硬的（三角波）。`freq` 是**每秒轉幾次向**。 |
 
 不放 `trajectory` 時的預設：`forward`，`speed` 4。
+
+```json
+{ "rune": "trajectory", "kind": "zigzag", "speed": 4.0, "amplitude": 0.6, "freq": 6.0 }
+```
 
 ```json
 { "rune": "trajectory", "kind": "spiral", "speed": 6.0, "radius": 0.4, "freq": 2.0 }
@@ -165,16 +189,27 @@ related-spec: [func-0014]
 
 ### 6.1 `"shape"`：粒子從哪個圖形上生出來
 
-`shape` 鍵下是一個物件，用 `kind` 分四種：
+`shape` 鍵下是一個物件，用 `kind` 分八種：
 
-| `kind` | 額外的鍵 | 限制 |
-|---|---|---|
-| `"ring"` | `rInner`、`rOuter` | 兩者 **> 0** 且 **`rInner` < `rOuter`** |
-| `"hollow-square"` | `size` | **> 0**（正方形邊長） |
-| `"rect"` | `w`、`h` | 兩者 **> 0** |
-| `"diamond"` | `size` | **> 0** |
+| `kind` | 額外的鍵 | 限制 | 樣子 |
+|---|---|---|---|
+| `"ring"` | `rInner`、`rOuter` | 兩者 **> 0** 且 **`rInner` < `rOuter`** | 圓環帶 |
+| `"hollow-square"` | `size` | **> 0**（正方形邊長） | 方框（中心空） |
+| `"rect"` | `w`、`h` | 兩者 **> 0** | 實心矩形 |
+| `"diamond"` | `size` | **> 0** | 實心菱形 |
+| `"polygon"` | `sides`、`radius` | `sides` **≥ 3**、`radius` **> 0** | 正 n 邊形（實心）。`radius` 是外接圓半徑。 |
+| `"star"` | `points`、`outer`、`inner` | `points` **≥ 2**、`outer` **> 0**、`inner` **≥ 0** 且 **`inner` < `outer`** | 星形（實心）。`points` 是尖角數。 |
+| `"cross"` | `length`、`width` | 兩者 **> 0** | 十字。`length` 是單臂長（從中心算），`width` 是臂寬。 |
+| `"sector"` | `inner`、`outer`、`sweep` | `inner` **≥ 0**、`outer` **> 0** 且 **`inner` < `outer`**；`sweep` **> 0 且 ≤ 2π**（約 6.283） | 扇形環帶。`sweep` 是張角（弧度），以陣面 +x 方向為中線左右對開。 |
 
 不放 `shape` 時，粒子從陣心附近（半徑 1.6 的散佈）生出。
+
+```json
+{ "rune": "shape", "shape": { "kind": "polygon", "sides": 5, "radius": 1.4 } }
+{ "rune": "shape", "shape": { "kind": "star", "points": 6, "outer": 1.5, "inner": 0.6 } }
+{ "rune": "shape", "shape": { "kind": "cross", "length": 1.6, "width": 0.3 } }
+{ "rune": "shape", "shape": { "kind": "sector", "inner": 0.3, "outer": 1.6, "sweep": 3.14159 } }
+```
 
 ```json
 { "rune": "shape", "shape": { "kind": "ring", "rInner": 1.0, "rOuter": 1.5 } }
@@ -186,6 +221,10 @@ related-spec: [func-0014]
 |---|---|
 | `"along-normal"` | 全部沿陣面法線同向前進（預設）。 |
 | `"radial-outward"` | 各自從陣心往外放射。 |
+| `"radial-inward"` | 各自往陣心收束（`radial-outward` 的反向）。 |
+| `"tangential-swirl"` | 沿陣面切線走，也就是繞著陣心轉。 |
+
+後三種都以粒子的**生成位置**決定方向，所以要搭配 `shape` 才看得出來；生在正中心的粒子沒有方向可言，會退回沿法線。
 
 ### 6.3 `"range"`：生成半徑的時間曲線
 
@@ -261,17 +300,22 @@ related-spec: [func-0014]
 
 ### 8.2 `fields`：力場（陣級陣列）
 
-在解析式軌跡之上疊加的位移層。`fields` 是陣列，每個元素用 `kind` 分三種：
+在解析式軌跡之上疊加的位移層。`fields` 是陣列，每個元素用 `kind` 分六種：
 
 | `kind` | 鍵 | 限制 | 說明 |
 |---|---|---|---|
 | `"gravity"` | `accel` | 3 個數字的陣列 `[x,y,z]` | 等加速度。 |
 | `"attractor"` | `center`、`strength`、`softening` | `center` 為 `[x,y,z]`；`softening` **> 0** | 點吸引（`strength` 可負＝排斥）；`softening` 讓中心不發散。 |
 | `"vortex"` | `center`、`axis`、`strength`、`falloff` | `axis` 為**非零**的 `[x,y,z]`；`falloff` ≥ 0 | 繞軸渦流；`falloff` 是隨距離的衰減，不可為負（力場不會越遠越強）。 |
+| `"wind"` | `dir`、`strength`、`turbulence` | `dir` 為**非零**的 `[x,y,z]`；`turbulence` **≥ 0** | 定向的風，外加一層依位置而定的擾動。`turbulence` 為 0 就是純粹的等速吹拂。 |
+| `"turbulence"` | `strength`、`scale` | `scale` **> 0** | 只有擾動沒有方向的亂流。`scale` 是空間尺度：越大，變化越緩、渦越大。 |
+| `"spring"` | `center`、`k` | `k` **> 0** | 往 `center` 拉的線性回復力。與 `attractor` 不同：不隨距離衰減、中心不發散，粒子會**繞著中心來回振盪**而不是掉進去。 |
+
+`wind` 與 `turbulence` 的擾動只看**位置**、不帶任何狀態，所以同一份法術每次施放都吹成一模一樣的形狀。
 
 力場只作用於**施放階段**的粒子——畫陣階段的粒子要保持可讀，不被吹走。
 
-`gravity-well.json` 同時示範了三種。
+`gravity-well.json` 示範前三種；`wuxing-seal.json` 示範 `wind` 與 `turbulence`，`yin-yang.json` 示範 `spring`。
 
 ---
 
@@ -353,6 +397,15 @@ OK assets/spells/grand-sigil.json
 | `grand-sigil.json` | `phases` + 全部槽位都有東西：畫陣階段會逐槽位畫筆畫。 |
 | `lattice-seal.json` | `phases` + 雷元素 + 四節點：另一組槽位組合畫出另一個符文陣。 |
 | `gravity-well.json` | `fields` 三種力場同時作用在施放階段的粒子上。 |
+
+**新語彙**
+
+| 檔案 | 看什麼 |
+|---|---|
+| `wuxing-seal.json` | 金元素（加色）＋五邊形生成面＋切線放射＋`wave` 軌跡＋`wind`／`turbulence` 力場。 |
+| `yin-yang.json` | 陰元素（alpha）＋扇形生成面＋向心收束＋`pulse` 軌跡＋`spring` 力場。 |
+
+> 上面兩張是**一組**：它們的混色模式相反（金加色、陰 alpha），所以把兩張疊起來施放時，同一畫面會同時出現兩種混色的批次——單獨施放任何一張都做不到這件事（見 §3.1 的說明）。
 
 > **陣長什麼樣，由陣的內容決定**（func-spec 0016）。畫陣階段的幾何不是固定的同心圓，而是從這份 JSON 解出的魔法陣**自己**導出的：佔用了哪些槽位決定有幾層、半徑落在哪；魔法陣整體的結構摘要決定每一層用哪種筆畫（弧環／星形多邊形／輻條／刻度／玫瑰線／符文帶）、起始角與參數。所以同一份檔案永遠畫出同一個陣，改動任何一個符文都會畫出看得出差異的陣。這不需要任何新的 JSON 鍵——schema 一字未變。
 >

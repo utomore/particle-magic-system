@@ -73,6 +73,7 @@ import Magic.Types
   , V2 (..)
   , V3 (..)
   , basisFromNormal
+  , cross
   , dot
   , hashChan
   , norm
@@ -124,11 +125,48 @@ trajectoryOffset trajectory phase age = case trajectory of
     (realToFrac speed * age, circleAt radius freq)
   Orbit radius freq -> (0, circleAt radius freq)
   Formula _ -> (0, V2 0 0)
+  -- Func-spec 0021. All four stay what every built-in trajectory has
+  -- always been: a closed-form function of the particle's age alone, with
+  -- no state to carry and nothing to integrate — which is what keeps
+  -- 'sample' a pure function of @t@ (architecture §4.6).
+  Wave speed amplitude freq ->
+    ( realToFrac speed * age
+    , V2 (realToFrac amplitude * sin (phase + 2 * pi * realToFrac freq * age)) 0
+    )
+  -- The analytic parabola. A force field could produce this too, but only
+  -- by paying for cross-frame state; as a trajectory it costs nothing.
+  Ballistic speed gravity ->
+    (realToFrac speed * age - 0.5 * realToFrac gravity * age * age, V2 0 0)
+  Pulse meanSpeed freq ->
+    -- ∫₀ᵃ mean·(1 − cos(φ + ωs)) ds in closed form. The integrand is
+    -- never negative, so the displacement is monotone: a pulsing spell
+    -- surges and coasts, it never reverses.
+    let m = realToFrac meanSpeed :: Float
+        w = 2 * pi * realToFrac freq
+     in ( if w == 0
+            then m * (1 - cos phase) * age
+            else m * (age - (sin (phase + w * age) - sin phase) / w)
+        , V2 0 0
+        )
+  Zigzag speed amplitude freq ->
+    -- 'Wave' with a triangle wave: the corners are what make it read as a
+    -- zigzag rather than as a weave. @freq@ counts direction reversals per
+    -- second, and the triangle has two per period, hence the halving.
+    ( realToFrac speed * age
+    , V2 (realToFrac amplitude * triangleWave (phase / (2 * pi) + realToFrac freq * age / 2)) 0
+    )
   where
     circleAt radius freq =
       let theta = phase + 2 * pi * realToFrac freq * age
           r = realToFrac radius
        in V2 (r * cos theta) (r * sin theta)
+
+-- | Unit triangle wave of period 1: @0 ↦ 1@, @0.5 ↦ −1@, linear between,
+-- range @[−1, 1]@.
+triangleWave :: Float -> Float
+triangleWave s = 4 * abs (u - 0.5) - 1
+  where
+    u = s - fromIntegral (floor s :: Int)
 
 -- Shape sampling --------------------------------------------------------------
 
@@ -165,10 +203,55 @@ sampleShape shape i c = case shape of
         x = (fromIntegral gx - 1) * cell + (u1 - 0.5) * cell
         y = (fromIntegral gy - 1) * cell + (u2 - 0.5) * cell
      in V2 x y
+  -- Func-spec 0021's four. Polygon and Star share one construction: pick
+  -- a wedge of the triangle fan, then a uniform point inside it. Every
+  -- sample is therefore a convex combination of the origin and two
+  -- vertices, which is exactly why @|p| <= shapeRadius@ holds by
+  -- construction rather than by inspection (§2.2).
+  Polygon sides radius ->
+    let n = max 3 sides
+        k = min (n - 1) (floor (u0 * fromIntegral n)) :: Int
+        r = realToFrac radius :: Float
+        vertexAt j = polar r (2 * pi * fromIntegral j / fromIntegral n)
+     in inWedge (vertexAt k) (vertexAt (k + 1))
+  Star points rOuter rInner ->
+    -- 2n vertices alternating outer/inner; index parity picks which, and
+    -- 2n being even keeps index n consistent with index 0.
+    let n = 2 * max 2 points
+        k = min (n - 1) (floor (u0 * fromIntegral n)) :: Int
+        radiusAt j = if even j then realToFrac rOuter else realToFrac rInner :: Float
+        vertexAt j = polar (radiusAt j) (2 * pi * fromIntegral j / fromIntegral n)
+     in inWedge (vertexAt k) (vertexAt (k + 1))
+  Cross len width ->
+    -- Two crossed bars; the overlap at the center is sampled by both,
+    -- which reads as a brighter hub and is what a cross wants anyway.
+    let l = realToFrac len :: Float
+        halfW = realToFrac width / 2 :: Float
+        along = (u1 - 0.5) * 2 * l
+        across = (u2 - 0.5) * 2 * halfW
+     in if u0 < 0.5 then V2 along across else V2 across along
+  Sector rInner rOuter sweep ->
+    -- Area-uniform annular sector (same radius trick as 'Ring'), centered
+    -- on the face's +x axis so the sweep is symmetric about it.
+    let rIn = realToFrac rInner :: Float
+        rOut = realToFrac rOuter
+        theta = (u0 - 0.5) * realToFrac sweep
+        r = sqrt (rIn * rIn + u1 * (rOut * rOut - rIn * rIn))
+     in polar r theta
   where
     u0 = hashChan shapeSeed i c
     u1 = hashChan shapeSeed i (c + 1)
     u2 = hashChan shapeSeed i (c + 2)
+
+    polar r theta = V2 (r * cos theta) (r * sin theta)
+
+    -- Uniform point in the triangle (origin, a, b), by folding the unit
+    -- square onto its lower half. The two barycentric weights are
+    -- non-negative and sum to at most 1, so the result is inside the
+    -- triangle — and inside the disc through a and b.
+    inWedge (V2 ax ay) (V2 bx by) =
+      let (s, u) = if u1 + u2 > 1 then (1 - u1, 1 - u2) else (u1, u2)
+       in V2 (s * ax + u * bx) (s * ay + u * by)
 
 -- | The 3×3 grid cells minus the center.
 bandCells :: [(Int, Int)]
@@ -456,6 +539,20 @@ positionIn frame ctx t em i ageD = position
       RadialOutward ->
         let outward = vscale sx u + vscale sy w
             ax = if norm outward < 1e-6 then faceNormal else normalize outward
+            (bu, bw) = basisFromNormal ax
+         in (ax, bu, bw)
+      -- Func-spec 0021's two, written out rather than folded together
+      -- with the branch above: 'RadialOutward' is a pre-0021 code path
+      -- and the bit-for-bit compatibility law (§1-1) is worth more than
+      -- the three lines the three branches could have shared.
+      RadialInward ->
+        let inward = vscale (negate sx) u + vscale (negate sy) w
+            ax = if norm inward < 1e-6 then faceNormal else normalize inward
+            (bu, bw) = basisFromNormal ax
+         in (ax, bu, bw)
+      TangentialSwirl ->
+        let tangent = cross faceNormal (vscale sx u + vscale sy w)
+            ax = if norm tangent < 1e-6 then faceNormal else normalize tangent
             (bu, bw) = basisFromNormal ax
          in (ax, bu, bw)
 
