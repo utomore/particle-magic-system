@@ -232,7 +232,7 @@ examples 數雙平台相同（**1176**＝交付前的 1156 ＋ 本輪三個新�
 | `magic-validate assets/spells` | 2 s | 0 s |
 | **job 總計** | **15 m 50 s** | **12 m 16 s** |
 
-冷快取近 16 分鐘的主因是 h-raylib 在 Windows 上要編譯 raylib 的 C 原始碼（`cabal build all` 佔全程 69%）。有快取之後只有本專案的模組要重編，這個數字不代表日常成本；真正的數字要等下一次 push 的 cache hit 才量得到，屆時再補一行即可。**若冷快取時間成為問題，第一手是把依賴建置與專案建置拆成兩步（依賴層的快取命中率遠高於專案層），不必動政策。**
+冷快取近 16 分鐘的主因是 h-raylib 在 Windows 上要編譯 raylib 的 C 原始碼（`cabal build all` 佔全程 69%）。有快取之後只有本專案的模組要重編，這個數字不代表日常成本；**熱快取的數字已於同日量到**（PR #30 的 run [31926223993](https://github.com/utomore/particle-magic-system/actions/runs/31926223993)，快取命中）：job 總計 **windows-latest 3 m 46 s／ubuntu-latest 2 m 10 s**，對照冷快取的 15 m 50 s／12 m 16 s。命中後 cabal build all 降為 1–2 秒的 no-op，剩下的時間幾乎都在 cabal test（它要編本輪改動的測試模組）。**日常一次 PR 驗證約 10 個計費分鐘**（Linux 1× ＋ Windows 2×），這是 ADR-0016 D5 那筆帳的實測依據。**若冷快取時間成為問題，第一手是把依賴建置與專案建置拆成兩步（依賴層的快取命中率遠高於專案層），不必動政策。**
 
 **兩平台的測試結果與 ADR-0016 D4 的預測完全一致**：
 
