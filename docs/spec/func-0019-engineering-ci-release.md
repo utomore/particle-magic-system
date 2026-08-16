@@ -2,16 +2,16 @@
 id: func-0019
 type: spec
 title: engineering-ci-release
-status: open
+status: done
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 depends-on: []
 related-adr: [adr-0005, adr-0010, adr-0011, adr-0012, adr-0013, adr-0016]
 ---
 
 # Func-Spec 0019：工程化（CI、發布流程、跨平台實測）
 
-> 狀態：**設計定案，待實作**
+> 狀態：**已完成**（2026-08-16 交付，見 §8。S2 走 §2.1 第二條路——決定論的範圍首次被實測收窄）
 > 性質：一般 —— 交付後凍結的是**政策**而非型別：支援平台分級、版本語意、tag 格式（同輪 ADR-0016）。程式碼面只加 CI 設定與文件。
 > 前置依賴：**無**。**與所有進行中的 spec 平行**：本 spec 觸 `.github/`（新目錄）、`README.md`、`docs/release.md`（新）、cabal 的 `version:`／`tested-with:` 兩行——與 0016（`src/core`）、0018（`src/ffi`＋`include`＋`bindings`）逐檔交集 = ∅（§0.2）。
 > 依據：[roadmap.md](../roadmap.md) §3.5（「CI——未記帳」「release tag／版本發布流程——未記帳」「只有 win64 實測過」三條）；0014 §9（`magic-validate` 的 exit code＝失敗檔數，「資產檢查已可一行進 CI」）；[ADR-0011](../adr/adr-0011-ffi-c-abi-boundary.md) **D8**（決定論「在每個平台上」都成立——本 spec 是這句話第一次被實際檢驗）；ADR-0005（JSON 可攜性）。政策屬架構級決定 → **本輪同步交付 ADR-0016**（先例：0007↔ADR-0010、0009↔ADR-0011、0012↔ADR-0012、0015↔ADR-0013）。
@@ -150,10 +150,10 @@ CI 全程無 IO 以外的新語意——它只是把開發者本機的三個指�
 
 | # | Todo | 測試 |
 |---|---|---|
-| S1 | `.github/workflows/ci.yml`：push／PR 觸發、`{windows-latest, ubuntu-latest}` 矩陣、Linux 的 apt 系統相依、cabal store＋dist-newstyle 快取、build → test → validate 三步 | `test/CIWorkflowSpec.hs`（剖析 yml：三個指令字串都在、矩陣含兩個 OS、CI 的 GHC 版本 ≡ cabal `tested-with:`、`magic-validate` 那步存在且吃 `assets/spells`） |
-| S2 | Linux（ubuntu-latest）上 `cabal build all` ＋ `cabal test` ＋ `magic-validate` 實測；依 §2.1 三條路擇一並回填 §9 | **手動 smoke**（第一次由人在 Linux 上跑；此後由 S1 的 CI 持續守護）。回填內容：examples 數、與 win64 的差異、golden 是否逐位元相同、若不同則 ulp 級距 |
-| S3 | cabal `tested-with:` 行、`version:` 政策化、PVP 上界檢查、CHANGELOG 對應段落 | `test/ReleaseMetaSpec.hs`（`version:` 在 CHANGELOG 有對應段落標題、`tested-with:` 非空且格式合法且 ≡ CI 用的 GHC、**每個 `build-depends` 條目帶 `^>=` 上界**（全 stanza 掃描，這是 §3.2 政策的機械化）） |
-| S4 | `docs/release.md`（tag 格式、版本語意、發布檢查清單、平台分級表）＋`docs/adr/adr-0016-release-compatibility-policy.md`＋README 兩節 | `test/ReleaseDocSpec.hs`（**三向一致**：`docs/release.md` 的平台分級表 ≡ README 的平台表 ≡ CI 矩陣的 OS 清單（雙向集合相等）；tag 格式規則存在且**依該規則由 cabal `version:` 導出的 tag 字串**出現在 release.md 的範例中（規則與現況不得漂移）；ADR-0016 存在且其 frontmatter `status` 為 `accepted`；release.md 的檢查清單涵蓋 CI 三步指令的哨兵字串） |
+| S1 ✅ | `.github/workflows/ci.yml`：push／PR 觸發、`{windows-latest, ubuntu-latest}` 矩陣、Linux 的 apt 系統相依、cabal store＋dist-newstyle 快取、build → test → validate 三步 | `test/CIWorkflowSpec.hs`（剖析 yml：三個指令字串都在、矩陣含兩個 OS、CI 的 GHC 版本 ≡ cabal `tested-with:`、`magic-validate` 那步存在且吃 `assets/spells`） |
+| S2 ✅ | Linux（ubuntu-latest）上 `cabal build all` ＋ `cabal test` ＋ `magic-validate` 實測；依 §2.1 三條路擇一並回填 §9 | **手動 smoke**（第一次由人在 Linux 上跑；此後由 S1 的 CI 持續守護）。回填內容：examples 數、與 win64 的差異、golden 是否逐位元相同、若不同則 ulp 級距 |
+| S3 ✅ | cabal `tested-with:` 行、`version:` 政策化、PVP 上界檢查、CHANGELOG 對應段落 | `test/ReleaseMetaSpec.hs`（`version:` 在 CHANGELOG 有對應段落標題、`tested-with:` 非空且格式合法且 ≡ CI 用的 GHC、**每個 `build-depends` 條目帶 `^>=` 上界**（全 stanza 掃描，這是 §3.2 政策的機械化）） |
+| S4 ✅ | `docs/release.md`（tag 格式、版本語意、發布檢查清單、平台分級表）＋`docs/adr/adr-0016-release-compatibility-policy.md`＋README 兩節 | `test/ReleaseDocSpec.hs`（**三向一致**：`docs/release.md` 的平台分級表 ≡ README 的平台表 ≡ CI 矩陣的 OS 清單（雙向集合相等）；tag 格式規則存在且**依該規則由 cabal `version:` 導出的 tag 字串**出現在 release.md 的範例中（規則與現況不得漂移）；ADR-0016 存在且其 frontmatter `status` 為 `accepted`；release.md 的檢查清單涵蓋 CI 三步指令的哨兵字串） |
 
 ## 7. 非目標
 
@@ -167,4 +167,53 @@ CI 全程無 IO 以外的新語意——它只是把開發者本機的三個指�
 
 ## 8. 驗收紀錄
 
-（實作時回填：日期、環境、S2 的 Linux 實測結果與 §2.1 三條路的裁決、CI 首次全綠的 run 連結、examples 數的雙平台對照、與計畫的差異。）
+**日期**：2026-08-16　**環境**：GHC 9.14.1 / cabal 3.16.1.0，兩個平台皆是
+
+| | 平台 | `cabal build all` | `cabal test` | `magic-validate` |
+|---|---|---|---|---|
+| 參考平台 | Windows 11 x86_64 | ✅ | ✅ **1174 examples, 0 failures** | ✅ exit 0 |
+| 第二平台 | Debian 13 (trixie) x86_64（WSL2） | ✅ | ✅ **1174 examples, 0 failures, 9 pending** | ✅ exit 0 |
+
+examples 數雙平台相同（**1174**＝交付前的 1156 ＋ 本輪三個新模組的 18 條）。9 個 pending 全部來自 `FieldPlumbingSpec` 的歷史基線，理由見 §8.2-3。
+
+### 8.1 S2 的實測結果：走 §2.1 的**第二條路**
+
+第一次在 win64 之外跑完整套測試，**1156 examples / 23 failures**，且失敗全部集中在逐位元 golden：`Acceptance10Spec` 8、`FieldPlumbingSpec` 7、`PerfGoldenSpec` 8。`ExprGoldenSpec`、FFI 跨界等價律（`Acceptance9Spec`）與其餘 1133 條全綠。
+
+**差異的量級**（逐欄位比對兩平台的原始位元：12 個範例陣 × 40 幀 × 六欄，每欄 100 164 個值）：
+
+| 欄 | 相異數 | 最壞 ULP |
+|---|---|---|
+| `pbPosX` | 1183 / 100164 | 8 |
+| `pbPosZ` | 1274 / 100164 | 289 |
+| `pbPosY`／`pbSize`／`pbLife`／`pbColor` | **0** | 0 |
+
+最大**絕對**差 **`1.79e-07`**（約 1.5 個 1.0 的 ulp）；最大相對差 `2.9e-05`，且落在一個接近零的值上——消去誤差放大既有的最後一位差異，不是新的誤差來源。`pbPosY` 全同是因為量測用的 `casterFacing = V3 0 1 0`，三角函數只落在 X／Z 兩軸。
+
+**根因直接量測，非推論**：對 4096 個 `Float` 角度逐點比較 `sin`／`cos`——**sin 63/4096 相異、cos 46/4096 相異，最壞皆 1 ulp**。IEEE-754 保證 `sqrt` 正確捨入，**不保證** `sin`／`cos`；mingw 的 libm 與 glibc 的都合法。§2.1 第三條路（結構性差異）**不成立**，不需要停下來查未定義行為。
+
+裁決依 §2.1 第二條路，寫進 **ADR-0016 D4**：逐位元決定論收窄為「同一平台上」，跨平台保證改為「結構相同（粒子、順序、每幀數量）＋位置欄至多 2 ulp」。
+
+### 8.2 與計畫的差異（實作備註）
+
+1. **golden 的處理方式與 §2.1 的字面不同**（開發者裁決，2026-08-16）。§2.1 寫的是「golden 改為跨平台跑 ULP 容差版」，實際做的是**平台分級的逐位元律**：摘要半場只在錄製它的平台斷言，平台無關的半場（每幀粒子數，golden 檔裡本來就有、且實測兩平台完全相同）到處斷言。**golden 檔零重錄。** 否決字面方案的理由記在 ADR-0016 §被否決：容差版要把 FNV 摘要換成量化值或原始欄位，量化的邊界值可能在兩平台落到不同格 ⇒ CI 偶發紅，等於用 flaky 換更弱的斷言。
+2. **因此動到三個既有測試模組**，與 §0.2「明文不碰既有測試模組」相牴觸——但 §0.2 是在「S2 全綠」的前提下寫的，§2.1 第二條路本來就預告了要改 golden。改動範圍：`PerfGoldenSpec`／`Acceptance10Spec`／`FieldPlumbingSpec` 各一處比較邏輯 ＋ 檔頭註解。
+3. **新增第 7 個檔案 `test/GoldenPlatform.hs`**（§0.2 只列 6 個）：三個模組共用同一條平台判準與同一段說明文字。把 2 行定義複製三份、附三份解釋，比集中一份差；新增參考平台時也只有一個地方要改。`FieldPlumbingSpec` 的歷史基線是整段 80 步走訪的**單一摘要**，旁邊沒有可退守的逐幀結構，故在非參考平台報 pending（9 個範例陣）而非改寫——重錄它只會斷言「這台機器同意它自己」。
+4. **動到 `include/particle_magic.h`**（§0.2 列在「明文不碰」）：檔頭那句 `bit-identical output, on every platform` 已被實測證偽，經開發者裁決修正。**這是註解變更，不是宣告變更**，`PM_ABI_VERSION` **不 +1**（ADR-0011 D7 約束的是宣告；合約檔上留一句已知為假的話更違背 D7 的用意）。`FFIContractSpec` 照常全綠。README 的兩處決定論措辭同步收窄。
+5. **PVP 上界不是「現況已如此」**（§3.2 的認知有誤）：只有兩個 library stanza 有上界，`executable`／`foreign-library`／`test-suite`／`benchmark` 四個 stanza 的依賴全部裸寫。本輪補齊 **43 個外部依賴條目**的 `^>=`，值取兩平台實際解析到的版本（兩邊逐項相同，已核對）。同套件子庫依賴（`particle-magic:magic-*`）豁免，理由入 `docs/release.md` §2。
+6. **`magic-validate` 的 CI 呼叫用目錄而非 glob**：§0.1 寫 `assets/spells/*.json`，實作用 `assets/spells`（0014 已支援目錄）。理由是 glob 展開在 PowerShell 與 bash 上行為不同，而矩陣同時有兩者；哨兵字串 `assets/spells` 與 S1 的測試一致。
+7. **CI 的 GHC 版本收斂為單一來源**：yml 的 `env.GHC_VERSION`，setup 步驟與快取 key 都引用它，`CIWorkflowSpec` 另有一條「不得出現第二份字面版本」的斷言。
+8. **`CHANGELOG.md` 的格式規則**寫成檔頭的三條，權威指向 `docs/release.md` §3（§0.2 原本只說「補格式規則說明」）。
+
+### 8.3 未能在本輪驗證的一項
+
+**CI 首次全綠的 run 連結：無。** GitHub Actions 只有在 push 到 GitHub 之後才會跑，本輪在本機完成，沒有推送。可以確定的是**工作流所執行的三個指令在兩個平台上都實測綠**（上表），且 yml 的結構由 `CIWorkflowSpec` 8 條斷言守護；不能確定的是 runner 環境本身（`haskell-actions/setup@v2` 取得 GHC 9.14.1、apt 套件名、快取 key 的行為）。**第一次 push 之後應回填 run 連結，並確認冷快取的建置時間**——若 `haskell-actions/setup@v2` 尚未提供 9.14.1，退場方案是改用 `ghcup` 直接安裝，屬 yml 的一行變更，不影響任何政策。
+
+### 8.4 本輪凍結的東西（政策，非型別）
+
+1. **支援平台分級 ≡ CI 矩陣**（三向守護：`docs/release.md` ≡ `README.md` ≡ `ci.yml`）。
+2. **tag 格式 `v<version>`**，四段與 cabal `version:` 一字相同。
+3. **每個外部 `build-depends` 帶 `^>=` 上界**；同套件子庫豁免。
+4. **`tested-with:` ≡ CI 安裝的 GHC**（兩端各釘一次）。
+5. **`PM_ABI_VERSION` 與套件版本獨立遞增**。
+6. **決定論的範圍**：同平台逐位元；跨平台結構相同 ＋ 位置欄至多 2 ulp。**新增參考平台 ＝ 錄一份該平台的 golden ＋ 放寬 `referencePlatform`**，三個 golden spec 的其他部分不動。

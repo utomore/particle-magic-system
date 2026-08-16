@@ -1,7 +1,16 @@
 # Changelog
 
-All notable changes to this project are documented here, one line per
+All notable changes to this project are documented here, one entry per
 delivered function spec (details in `docs/spec/`).
+
+Format rules (the authority is [docs/release.md](docs/release.md) §3, and
+`test/ReleaseMetaSpec.hs` enforces the first of them):
+
+- one `## <version> — <YYYY-MM-DD>` section per release, and the version
+  in `particle-magic.cabal` must have a section here;
+- inside a section, one entry per function spec, in numerical order,
+  opening with **`00NN <title>`**;
+- entries say what the round delivered, not what files moved.
 
 ## 0.1.0.0 — 2026-08-13
 
@@ -190,3 +199,28 @@ delivered function spec (details in `docs/spec/`).
   `pm_free` and `pm_scene_dismiss` from ever naming the same cast. C#
   binding and a C example (`examples/c/scene.c`) follow. `src/core` and
   `src/boundary` untouched. (delivered)
+- **0019 engineering: CI, release policy, the second platform** — ADR-0016.
+  "This commit is good" stops depending on one Windows machine:
+  `.github/workflows/ci.yml` runs build → test → `magic-validate` on every
+  push, on `windows-latest` and `ubuntu-latest`, and four text-contract
+  tests keep the workflow, the cabal metadata, `README.md` and
+  `docs/release.md` from drifting apart (support tiers ≡ CI matrix, the
+  declared `tested-with` ≡ the compiler CI installs, every dependency
+  carries a PVP upper bound, the tag format is derived from the version
+  rather than copied). `docs/release.md` is the new procedure: tier
+  definitions, version-bump rules, the `v0.1.0.0` tag format, and the
+  rule that `PM_ABI_VERSION` and the package version move independently.
+  The round's real product is what the first non-Windows run of the suite
+  found: 1156 examples, and 23 bit-for-bit goldens red — every one of
+  them in the position columns, none anywhere else. Root cause measured
+  directly rather than guessed: IEEE-754 does not require `sin`/`cos` to
+  be correctly rounded, and mingw's libm and glibc's differ on the last
+  bit for ~1.3% of arguments (63 of 4096 `Float` angles for `sin`, 46 for
+  `cos`, worst case 1 ulp each), which reaches the output as at most
+  1.79e-07 in `pbPosX`/`pbPosZ` with `pbPosY`, `pbSize`, `pbLife` and
+  `pbColor` bit-identical. So the determinism claim narrows honestly
+  instead of being quietly widened: bit-for-bit within a platform,
+  structure plus two ulp across platforms. Goldens are re-scoped, not
+  re-recorded (`test/GoldenPlatform.hs`); the C header's "on every
+  platform" sentence is corrected, without an ABI generation bump — it is
+  a comment, not a declaration. (delivered)

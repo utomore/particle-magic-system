@@ -1,0 +1,97 @@
+# func-spec 0019 S1: "this commit is good" stops depending on one developer's
+# Windows machine. Three steps, ordered by cost -- build all (the expensive
+# one: h-raylib compiles raylib's C sources), then the test suite, then
+# magic-validate on the shipped assets (milliseconds). Failure probability
+# runs the other way, which is the point: if the build is red the other two
+# are meaningless.
+#
+# The matrix is the whole reason this file is worth having. Tier 1 is
+# windows-latest + ubuntu-latest (docs/release.md, ADR-0016), and Linux is
+# where the cross-platform determinism claim of ADR-0011 D8 is actually
+# tested -- the bit-for-bit goldens (ExprGoldenSpec, the 240-frame example
+# goldens) run there too.
+#
+# test/CIWorkflowSpec.hs parses this file: the three commands, both matrix
+# entries and the GHC version below are asserted against the cabal file's
+# tested-with, so this workflow and the package metadata cannot drift apart.
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# One copy of the toolchain version in this file, referenced by both the
+# setup step and the cache key. GHC_VERSION must equal the cabal file's
+# tested-with -- ReleaseMetaSpec and CIWorkflowSpec both assert it, from
+# opposite ends.
+env:
+  GHC_VERSION: '9.14.1'
+  CABAL_VERSION: '3.16.1.0'
+
+jobs:
+  build:
+    name: build / test / validate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One red platform must not hide the other's result -- the interesting
+      # question here is precisely whether the two agree.
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # h-raylib builds raylib from its bundled C sources and links against
+      # the system's X11/GL development headers on Linux. Compile-time only:
+      # nothing in this workflow opens a window (the demo executable is
+      # built, never run -- its logic half is covered headless by
+      # EffectsSpec/TestInterp).
+      - name: Install raylib system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev \
+            libxi-dev libgl1-mesa-dev
+
+      - name: Set up GHC and cabal
+        id: setup
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: ${{ env.GHC_VERSION }}
+          cabal-version: ${{ env.CABAL_VERSION }}
+
+      - name: Resolve the build plan
+        run: cabal update && cabal build all --dry-run
+
+      # Cold cache is slow (raylib's C sources plus the whole dependency
+      # closure); warm cache is not. Keyed on the package description and
+      # the resolved plan, so a dependency change invalidates it and nothing
+      # else does.
+      - name: Restore cached dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.setup.outputs.cabal-store }}
+            dist-newstyle
+          key: ${{ runner.os }}-ghc${{ env.GHC_VERSION }}-${{ hashFiles('particle-magic.cabal', 'cabal.project', 'dist-newstyle/cache/plan.json') }}
+          restore-keys: |
+            ${{ runner.os }}-ghc${{ env.GHC_VERSION }}-
+
+      - name: Build everything
+        run: cabal build all
+
+      - name: Run the test suite
+        run: cabal test --test-show-details=direct
+
+      # The authoring CLI as a CI citizen (func-spec 0014 §9.3): it opens no
+      # window, draws nothing, and its exit code is the number of files that
+      # failed to load and cast. Asset rot is caught here.
+      - name: Validate the shipped spells
+        run: cabal run magic-validate -- assets/spells
