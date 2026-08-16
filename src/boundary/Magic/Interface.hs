@@ -49,10 +49,22 @@ module Magic.Interface
   -- them back to 'emitterBounds'; building one is the compiler's job.
   , emittersOf
   , emitterBounds
+
+    -- * Spatial summary (func-spec 0025, ADR-0019)
+  , OrientedBox (..)
+  , OccupancyGrid (..)
+  , boxToAABB
+  , occupancyDimDefault
+  , emitterBoxOf
+  , spellBoundsOf
+  , spellBoxOf
+  , occupancyOf
+  , occupancyMask
   ) where
 
 import Control.Monad.ST (runST)
 import qualified Data.Vector as V
+import Data.Word (Word32)
 import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Unboxed.Mutable as MU
 import Magic.Circle (Circle, emptyCircle)
@@ -81,6 +93,13 @@ import Magic.Particle.Analytic
 import Magic.Particle.Buffer (ParticleBuffer (..))
 import qualified Magic.Particle.Field as Field
 import Magic.Particle.Field (FieldState)
+import Magic.Space
+  ( OccupancyGrid (..)
+  , OrientedBox (..)
+  , boxToAABB
+  , occupancyDimDefault
+  )
+import qualified Magic.Space as Space
 import Magic.Types
   ( CastContext (..)
   , DeltaTime (..)
@@ -258,15 +277,27 @@ fieldInputs spell ctx t = runST $ do
 -- @batches@ was always a list.
 observeSpell :: ActiveSpell -> FrameOutput
 observeSpell spell =
+  FrameOutput
+    { batches = splitBatches (asSpell spell) (Time (asElapsed spell)) (sampledBuffer spell)
+    }
+
+-- | The rows 'observeSpell' cuts into batches: the analytic sample with
+-- the force-field overlay already added.
+--
+-- Lifted out of 'observeSpell' verbatim by func-spec 0025 S5 so the
+-- spatial queries read the /same/ particles the host is about to draw,
+-- rather than a second sampling that could differ. 'observeSpell' is
+-- bit-for-bit what it was — same expressions, same order.
+sampledBuffer :: ActiveSpell -> ParticleBuffer
+sampledBuffer spell =
   let t = Time (asElapsed spell)
       sampled = sample (asSpell spell) (asCtx spell) t
-      buffer = case spellFields (asSpell spell) of
+   in case spellFields (asSpell spell) of
         [] -> sampled
         _ ->
           let slots = aliveSlotIndices (asSpell spell) t
               (dx, dy, dz) = Field.displacementColumns (asField spell) slots
            in displaceBuffer sampled dx dy dz
-   in FrameOutput {batches = splitBatches (asSpell spell) t buffer}
 
 -- | Cut the sampled buffer into render batches: adjacent emitters with
 -- the same @(appBlend, appShape)@ merge into one batch, in emitter order
@@ -390,3 +421,55 @@ maxSpellParticles = budgetCap
 -- arguments 'emitterBounds' takes.
 emittersOf :: ActiveSpell -> [EmitterSpec]
 emittersOf = V.toList . spellEmitters . asSpell
+
+-- Spatial summary (func-spec 0025, ADR-0019) -----------------------------------
+--
+-- The system's third output, and a /query/ rather than a field of
+-- 'FrameOutput' (func-spec 0025 §2.2): most spells are pure visuals with
+-- no collision needs, and a host that wants none of this pays for none of
+-- it — the same discipline as 0007's structurally skipped zero-field
+-- layer and 0015's opt-in batching. 'FrameOutput' is unchanged, which
+-- also means no existing pattern match on it broke.
+--
+-- Two different horizons, on purpose:
+--
+--   * 'emitterBoxOf' answers /where is this emitter up to now/, so it
+--     uses the cast's current age — that is the box a frustum cull wants
+--     this frame;
+--   * 'spellBoundsOf' and 'spellBoxOf' answer /where can this spell ever
+--     be/, so they use the whole lifetime and are therefore constant for
+--     the cast's entire life. That is what §2.7's comparability law
+--     needs from the occupancy frame, and since the box grows
+--     monotonically with the horizon, the lifetime box contains every
+--     current-age box as well.
+
+-- | One emitter's fitted oriented box at the cast's current age
+-- (func-spec 0025 S1). The emitter comes from 'emittersOf'.
+emitterBoxOf :: ActiveSpell -> EmitterSpec -> OrientedBox
+emitterBoxOf spell = Space.emitterBox (asCtx spell) (Seconds (asElapsed spell))
+
+-- | The whole cast's world AABB over its entire life — the union a host
+-- would otherwise fold out of 'emittersOf' itself.
+spellBoundsOf :: ActiveSpell -> (V3, V3)
+spellBoundsOf spell = Space.spellBounds (asCtx spell) (lifetimeOf spell) (asSpell spell)
+
+-- | The whole cast as one oriented box, in the caster's frame, over its
+-- entire life. Constant for the cast: this is the frame the occupancy
+-- grid divides up.
+spellBoxOf :: ActiveSpell -> OrientedBox
+spellBoxOf spell = Space.spellBox (asCtx spell) (lifetimeOf spell) (asSpell spell)
+
+-- | @N³@ occupancy counts of the currently observed particles, in the
+-- cast's fixed 'spellBoxOf' frame. Reading only — calling it changes
+-- nothing about the spell, and 'observeSpell' before and after is bit
+-- for bit the same.
+occupancyOf :: Int -> ActiveSpell -> OccupancyGrid
+occupancyOf dim spell = Space.occupancyOf dim (spellBoxOf spell) (sampledBuffer spell)
+
+-- | The 'occupancyDimDefault' fast path: 27 cells as one word, one bit
+-- each (func-spec 0025 §2.8).
+occupancyMask :: ActiveSpell -> Word32
+occupancyMask spell = Space.occupancyMask (spellBoxOf spell) (sampledBuffer spell)
+
+lifetimeOf :: ActiveSpell -> Seconds
+lifetimeOf = spellLifetime . asSpell

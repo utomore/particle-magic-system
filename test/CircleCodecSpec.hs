@@ -89,10 +89,11 @@ genEssence =
 genNode :: Gen NodeRune
 genNode = DirBias <$> genSigned
 
--- | This round always generates @circlePhases = Nothing@ (spec 0006 §0.2)
--- and @circleFields = []@ (spec 0007 §0.2): the phases and fields
--- roundtrip properties live in their own 'PhaseCodecSpec' /
--- 'FieldCodecSpec', so this generator's edit surface stays minimal.
+-- | This round always generates @circlePhases = Nothing@ (spec 0006 §0.2),
+-- @circleFields = []@ (spec 0007 §0.2) and @circleAnchors = Nothing@
+-- (func-spec 0025 §0.2): the phases, fields and anchors roundtrip
+-- properties live in their own 'PhaseCodecSpec' / 'FieldCodecSpec' /
+-- 'AnchorCodecSpec', so this generator's edit surface stays minimal.
 genCircle :: Gen Circle
 genCircle =
   Circle
@@ -102,6 +103,7 @@ genCircle =
     <*> (Core <$> genMaybe genEssence <*> genNodes)
     <*> pure Nothing
     <*> pure []
+    <*> pure Nothing
   where
     genMaybe g = oneof [pure Nothing, Just <$> g]
     genNodes =
@@ -172,6 +174,7 @@ spec = describe "Magic.Codec full slot schema (spec 0002 S2)" $ do
                 }
           , circlePhases = Nothing
           , circleFields = []
+          , circleAnchors = Nothing
           }
 
   it "rejects an unknown rune tag with the position and the valid tags" $

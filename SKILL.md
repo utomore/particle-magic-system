@@ -30,7 +30,7 @@ title: expr-subsystem    # 檔名去掉編號前綴與副檔名的 slug
 description: Expr 數學式子系統：AST、求值器與文字語法
 status: open             # open | in-progress | done | closed；ADR 改用 proposed | accepted | superseded
 created: 2026-08-12
-updated: 2026-08-13
+updated: 2026-08-16
 depends-on: [func-0001]  # spec 用：前置依賴的 spec id，判斷任務可否平行開發
 related-adr: [adr-0002]  # 相關 ADR id
 related-spec: []         # bug/enhance/adr 回鏈到 spec id
@@ -135,4 +135,4 @@ related-spec: []         # bug/enhance/adr 回鏈到 spec id
 | [0022](docs/spec/func-0022-perf-second-tier.md) | 效能第二階梯：`Magic.Expr.Code` bytecode 求值器＋共同子式消去（`Expr.hs` 零觸碰，`evalExpr` 降為參照實作）、`Control.Parallel.Strategies` 平行取樣（核心白名單 +`parallel`）；**兩條逐位元等價律**是全部價值；備齊 ADR-0012 §後果指名的抬高上限前提；同輪 ADR-0017 | 一般 | spec 0021（需已完成——`Compile`／`Analytic` 交集）；**與 0018／0019／0024 平行**（見其 §0.2） | 設計定案，待實作 |
 | [0023](docs/spec/func-0023-production-visuals.md) | 產品級視覺：`ParticleBuffer` 六欄→九欄（速度，opt-in）、`BillboardTrail`＋`pm_observe_ex`（六欄簽名一字不動）、自訂 shader 管線＋bloom＋軟粒子（含測試場景幾何）、跨 batch alpha 深度交錯；**取代 ADR-0009 的「不自訂 shader」前提、鬆綁 ADR-0006 六欄硬點**；同輪 ADR-0018 | **重大基建功能** | spec 0022＋0018（皆需已完成）；**與 0019 平行**（見其 §0.2） | 設計定案，待實作 |
 | [0024](docs/spec/func-0024-authoring-tools-2.md) | 作者工具第二輪：`magic-schema`（draft-07 JSON Schema 入 repo，三向一致守護）、`magic-inspect` 結構報告、`magic-validate --json`、demo 內即時參數面板與寫回往返律；**可水平分割**——`tools/` 半場無依賴 | 一般 | `tools/` 半場：**無**（可提前認領）；`app/` 半場：spec 0023（需已完成——`app/*` 五檔交集）。見其 §0.3 | 設計定案，待實作 |
-| [0025](docs/spec/func-0025-spatial-output-anchors.md) | 空間資訊輸出與多發動點：`Magic.Space`——貼合的有向盒 `emitterBox`（`emitterBounds` 逐位元不變）、spell 級聯集、面座標系對齊的 N³ 佔用格網（N=3 ⇒ 27 格塞進一個 `Word32` 遮罩）；`Circle` 加陣層級 `"anchors"`，主效果第一次可有多個發動點（**能量等分、預算守恆**）；7 個 C 匯出。空間摘要是**輸出**不是模擬結構——不為「粒子對粒子」開門；同輪 ADR-0019 | **重大基建功能** | spec 0018（需已完成）；0016／0017 已交付。**與 0019／0020 平行**（見其 §0.2） | 設計定案，待實作 |
+| [0025](docs/spec/func-0025-spatial-output-anchors.md) | 空間資訊輸出與多發動點：`Magic.Space`——貼合的有向盒 `emitterBox`（`emitterBounds` 逐位元不變）、spell 級聯集、面座標系對齊的 N³ 佔用格網（N=3 ⇒ 27 格塞進一個 `Word32` 遮罩）；`Circle` 加陣層級 `"anchors"`，主效果第一次可有多個發動點（**能量等分、預算守恆**）；7 個 C 匯出。空間摘要是**輸出**不是模擬結構——不為「粒子對粒子」開門；同輪 ADR-0019 | **重大基建功能** | spec 0018（需已完成）；0016／0017 已交付。**與 0019／0020 平行**（見其 §0.2） | 已完成（凍結：`OrientedBox`／`OccupancyGrid` 的語意與索引序 `(k*N+j)*N+i`、格網框＝全生命週期 `spellBox`、`"anchors"` JSON 形狀（含空陣列為錯誤）、能量等分律、7 個 C 進入點與 `PM_OCCUPANCY_DIM_DEFAULT`，見其 §8） |

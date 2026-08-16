@@ -58,6 +58,19 @@ module Magic.Compile
     -- * Element lookup (closed influence surface, architecture §10)
   , elementAppearance
   , spellBlend
+
+    -- * Interval arithmetic over 'Expr' (internal; NOT part of the frozen
+    -- surface). Exposed for "Magic.Space" alone, so the per-axis box of
+    -- func-spec 0025 bounds a player formula with the /same/ code
+    -- 'emitterBounds' does rather than a second copy of it — which is
+    -- what lets the frozen function stay bit-for-bit while the new one
+    -- gets tighter (func-spec 0025 §2.3).
+  , Interval (..)
+  , IntervalEnv (..)
+  , evalInterval
+  , maxMagnitude
+  , ivSub
+  , shapeRadius
   ) where
 
 import Data.Bits ((.&.))
@@ -77,7 +90,8 @@ import Magic.Expr
   , foldConstants
   )
 import Magic.Rune
-  ( BillboardShape (..)
+  ( Anchor (..)
+  , BillboardShape (..)
   , BridgeRune (..)
   , Element (..)
   , Envelope (..)
@@ -124,9 +138,12 @@ data CompiledSpell = CompiledSpell
   -- ^ Particle budget; from spec 0006 on = Σ emCount across every
   -- emitter (casting + formation), computed at compile time.
   , spellEmitters :: !(V.Vector EmitterSpec)
-  -- ^ The emitters driving the analytic sampler. Index 0 is always the
-  -- casting emitter; spec 0006 first grows this past length 1 with the
-  -- formation-geometry emitters.
+  -- ^ The emitters driving the analytic sampler. A prefix of casting
+  -- emitters comes first, the formation-geometry emitters (spec 0006)
+  -- after; index 0 is always a casting emitter. The prefix has length 1
+  -- unless the circle names several activation points (func-spec 0025),
+  -- in which case it has one entry per 'Magic.Rune.Anchor', in the order
+  -- the circle lists them.
   , spellPhases :: !PhasePlan
   -- ^ Absolute time landmarks of the four lifecycle stages (spec 0006).
   , spellBudgetPlan :: !ParticleBudget
@@ -282,17 +299,6 @@ phaseAt plan (Time t)
     Seconds drawEnd = ppDrawEnd plan
     Seconds convergeEnd = ppConvergeEnd plan
     Seconds castingEnd = ppCastingEnd plan
-
--- | The activation point, in the caster's coordinate frame (resolved at
--- sample time with 'Magic.Types.CastContext': local +Z is 'casterFacing',
--- local X/Y are the 'Magic.Types.basisFromNormal' pair of the facing).
-data Anchor = Anchor
-  { anchorOffset :: !V3
-  -- ^ Offset from the caster position (caster frame; skeleton = origin).
-  , anchorNormal :: !V3
-  -- ^ Initial face normal (caster frame; skeleton = +Z = casterFacing).
-  }
-  deriving (Eq, Show)
 
 data Motion = Motion
   { motSpawn :: !SpawnPattern
@@ -467,20 +473,27 @@ compile circle = do
       -- particle dies. Func-spec 0017 hands it to step 5 so the sigil
       -- lives exactly as long as the spell does.
       spellEnd = Seconds (delay + duration + lifetime)
-      castingEmitter =
+      castingEmitterAt anchor n =
         EmitterSpec
-          { emAnchor = originAnchor
-          , emCount = count
+          { emAnchor = anchor
+          , emCount = n
           , emSpawn = envelope
           , emMotion = motion
           , emAppearance = (ssAppearance (bpSeed modulated)) {appShape = styleShape}
           , emPhase = Casting
           }
+      -- Func-spec 0025 S4. @Nothing@ branches around the split entirely
+      -- (rather than splitting into one part), which is what makes the
+      -- opt-in law hold by construction: every pre-0025 circle produces
+      -- the very expression it always did.
+      castingEmitters = case circleAnchors circle of
+        Nothing -> [castingEmitterAt originAnchor count]
+        Just anchors -> zipWith castingEmitterAt anchors (shareCount count (length anchors))
       formationEmitters = case mPhases of
         Nothing -> []
         Just _ -> formationEmittersFor circle castStart spellEnd element
       element = essenceElementOf (core circle)
-      allEmitters = map foldEmitterExprs (castingEmitter : formationEmitters)
+      allEmitters = map foldEmitterExprs (castingEmitters ++ formationEmitters)
       totalCount = sum (map emCount allEmitters)
       -- 'delay' is already absolute (step 3.5 baked castStart into it), so
       -- the closing landmarks are delay + duration [+ lifetime] with no
@@ -558,8 +571,33 @@ foldEmitterExprs em =
 
 -- | The caster-frame origin anchor shared by casting and every
 -- ring/center formation emitter (only the four node emitters offset it).
+-- Also the value a circle without 'Magic.Circle.circleAnchors' casts
+-- from, which is what makes the opt-in case the pre-0025 one exactly.
 originAnchor :: Anchor
 originAnchor = Anchor {anchorOffset = V3 0 0 0, anchorNormal = V3 0 0 1}
+
+-- | Split a particle count over @n@ activation points — the energy
+-- equipartition law of func-spec 0025 §2.6.
+--
+-- The same energy leaves from @n@ places, so the parts sum to @count@
+-- /exactly/: @spellBudget@ of an @n@-anchor circle equals that of the
+-- same circle with one anchor, and @budgetCap@ therefore stays the only
+-- gate on how much a spell may cost. Adding an activation point is a
+-- choice of shape, never of strength — 'Magic.Rune.essPower' remains the
+-- one parameter that buys power, and it still runs into the cap.
+--
+-- The remainder goes to the leading parts, so every part is @count \`div\`
+-- n@ or one more, and the split is a deterministic function of
+-- @(count, n)@ alone. When @count < n@ the trailing anchors get 0
+-- particles: a legal emitter that samples nothing, rather than a
+-- compile error — the codec's 16-anchor ceiling is what keeps that from
+-- being anyone's normal case.
+shareCount :: Int -> Int -> [Int]
+shareCount count n
+  | n <= 0 = []
+  | otherwise = [base + (if i < remainder then 1 else 0) | i <- [0 .. n - 1]]
+  where
+    (base, remainder) = count `divMod` n
 
 -- | castStart = phDraw + phConverge (spec 0006 §4.3); the degenerate
 -- 'Nothing' case is 0 — the compatibility law's anchor value.

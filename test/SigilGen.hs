@@ -133,6 +133,10 @@ genMaybe :: Gen a -> Gen (Maybe a)
 genMaybe g = oneof [pure Nothing, Just <$> g]
 
 -- | Every slot of the ADT is reachable, phases and fields included.
+--
+-- Activation points are deliberately left at 'Nothing': the sigil is
+-- drawn once however many places the spell fires from (func-spec 0025
+-- §2.6), so they are not part of what a sigil generator varies.
 genAnyCircle :: Gen Circle
 genAnyCircle =
   Circle
@@ -142,6 +146,7 @@ genAnyCircle =
     <*> (Core <$> genMaybe (EssenceRune <$> elements [Neutral, Fire, Water, Lightning] <*> choose (0.05, 10)) <*> genNodes)
     <*> genMaybe (PhaseConfig <$> (Seconds <$> choose (0.1, 3)) <*> (Seconds <$> choose (0, 2)))
     <*> (resize 3 (listOf genField))
+    <*> pure Nothing
   where
     genNodes =
       Nodes

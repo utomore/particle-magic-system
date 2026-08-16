@@ -38,6 +38,7 @@ import Magic.FFI
   , pmErrJson
   , pmErrQuota
   , pmMaxParticles
+  , pmOccupancyDimDefault
   , pmOk
   , pmPlaneSideXY
   , pmPlaneTopXZ
@@ -95,6 +96,14 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
         , "pm_scene_budget"
         , "pm_scene_count"
         , "pm_scene_spells"
+        , -- func-spec 0025: the spatial summary's seven, add-only again.
+          "pm_spell_bounds"
+        , "pm_spell_box"
+        , "pm_emitter_count"
+        , "pm_emitter_box"
+        , "pm_occupancy"
+        , "pm_occupancy_mask"
+        , "pm_scene_spell_bounds"
         ]
 
   it "exports through the Windows .def file exactly what the header declares" $ do
@@ -155,6 +164,27 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
     header <- readUtf8 headerFile
     header `shouldSatisfy` isInfixOf' "typedef struct PmScene PmScene;"
     header `shouldSatisfy` isInfixOf' "global_cap"
+
+  -- Func-spec 0025 S6. Pinned as a literal on both sides for the same
+  -- reason PM_ERR_QUOTA is: a host's bit indices into the occupancy mask
+  -- are compiled in, so this number moving would silently reinterpret
+  -- every mask already deployed rather than fail to build.
+  it "pins the default occupancy dimension at 3, on both sides" $ do
+    pmOccupancyDimDefault `shouldBe` 3
+    header <- headerDefines
+    lookup "PM_OCCUPANCY_DIM_DEFAULT" header `shouldBe` Just 3
+
+  it "keeps the whole 3-cubed grid inside one 32-bit mask" $
+    -- The reason the fast path can exist at all (func-spec 0025 §2.8);
+    -- a larger default would need pm_occupancy's array instead.
+    (fromIntegral pmOccupancyDimDefault :: Int) ^ (3 :: Int) `shouldSatisfy` (<= 32)
+
+  it "keeps PM_ABI_VERSION at 1 across the func-spec 0025 additions" $ do
+    -- Every entry point this round is new, so no host compiled against an
+    -- earlier header is affected: the generation does not move.
+    pmAbiVersion `shouldBe` 1
+    header <- headerDefines
+    lookup "PM_ABI_VERSION" header `shouldBe` Just 1
 
   it "agrees with Haskell on the view-plane selectors" $ do
     header <- headerDefines
