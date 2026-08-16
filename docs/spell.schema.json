@@ -1,0 +1,789 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/utomore/particle-magic-system/main/docs/spell.schema.json",
+  "title": "particle-magic spell file (schema v1)",
+  "description": "A magic circle, as JSON. Every slot is optional: a missing key, null, and a null array element all mean 'empty slot'. Author's handbook: docs/spell-schema.md. This document describes shape only -- cross-field rules (rInner < rOuter) and the particle budget are checked by magic-validate, not here.",
+  "type": "object",
+  "required": ["version", "circle"],
+  "properties": {
+    "version": {
+      "description": "Schema version. This build reads version 1 and nothing else.",
+      "const": 1
+    },
+    "name": {
+      "description": "A name for humans; the system never reads it.",
+      "type": "string"
+    },
+    "circle": {
+      "$ref": "#/definitions/circle"
+    }
+  },
+  "definitions": {
+    "circle": {
+      "description": "The circle itself. '\"circle\": {}' is the smallest legal spell (see assets/spells/empty.json).",
+      "type": "object",
+      "properties": {
+        "outer": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/outerRing"
+            }
+          ]
+        },
+        "bridge": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/bridgeRune"
+            }
+          ]
+        },
+        "inner": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/innerRing"
+            }
+          ]
+        },
+        "core": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/core"
+            }
+          ]
+        },
+        "phases": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/phases"
+            }
+          ]
+        },
+        "fields": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/fieldArray"
+            }
+          ]
+        },
+        "anchors": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/anchorArray"
+            }
+          ]
+        }
+      }
+    },
+    "outerRing": {
+      "description": "Outer ring: presentation. Index 0 is the inner layer, index 1 the outer one; same-kind runes at index 1 override index 0.",
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "$ref": "#/definitions/outerRune"
+          }
+        ]
+      },
+      "maxItems": 2
+    },
+    "outerRune": {
+      "description": "Presentation: where particles are born and which way they leave.",
+      "type": "object",
+      "required": ["rune"],
+      "oneOf": [
+        {
+          "required": ["rune", "shape"],
+          "properties": {
+            "rune": {
+              "const": "shape"
+            },
+            "shape": {
+              "$ref": "#/definitions/faceShape"
+            }
+          }
+        },
+        {
+          "required": ["rune", "mode"],
+          "properties": {
+            "rune": {
+              "const": "radiate"
+            },
+            "mode": {
+              "description": "Reference direction the trajectory travels along. The last three read the particle's spawn offset, so they need a 'shape' rune to be visible.",
+              "type": "string",
+              "enum": ["along-normal", "radial-outward", "radial-inward", "tangential-swirl"]
+            }
+          }
+        },
+        {
+          "required": ["rune", "expr"],
+          "properties": {
+            "rune": {
+              "const": "range"
+            },
+            "expr": {
+              "$ref": "#/definitions/formula"
+            }
+          }
+        },
+        {
+          "required": ["rune", "billboard"],
+          "properties": {
+            "rune": {
+              "const": "style"
+            },
+            "billboard": {
+              "description": "Billboard form of the casting particles. Formation particles stay hard squares so the drawn circle keeps its edges.",
+              "type": "string",
+              "enum": ["square", "soft-dot", "ring", "spark", "trail"]
+            }
+          }
+        }
+      ]
+    },
+    "faceShape": {
+      "description": "The drawn 2D face particles are born on. Without one they spawn in a scatter around the circle's centre.",
+      "type": "object",
+      "required": ["kind"],
+      "oneOf": [
+        {
+          "required": ["kind", "size"],
+          "properties": {
+            "kind": {
+              "const": "hollow-square"
+            },
+            "size": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        {
+          "required": ["kind", "w", "h"],
+          "properties": {
+            "kind": {
+              "const": "rect"
+            },
+            "w": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "h": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        {
+          "required": ["kind", "rInner", "rOuter"],
+          "properties": {
+            "kind": {
+              "const": "ring"
+            },
+            "rInner": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "rOuter": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        {
+          "required": ["kind", "size"],
+          "properties": {
+            "kind": {
+              "const": "diamond"
+            },
+            "size": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        {
+          "required": ["kind", "sides", "radius"],
+          "properties": {
+            "kind": {
+              "const": "polygon"
+            },
+            "sides": {
+              "type": "integer",
+              "minimum": 3
+            },
+            "radius": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        {
+          "required": ["kind", "points", "outer", "inner"],
+          "properties": {
+            "kind": {
+              "const": "star"
+            },
+            "points": {
+              "type": "integer",
+              "minimum": 2
+            },
+            "outer": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "inner": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "required": ["kind", "length", "width"],
+          "properties": {
+            "kind": {
+              "const": "cross"
+            },
+            "length": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "width": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        {
+          "required": ["kind", "inner", "outer", "sweep"],
+          "properties": {
+            "kind": {
+              "const": "sector"
+            },
+            "inner": {
+              "type": "number",
+              "minimum": 0
+            },
+            "outer": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "sweep": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 6.283185307179586
+            }
+          }
+        }
+      ]
+    },
+    "innerRing": {
+      "description": "Inner ring: behaviour. Index 0 is the inner layer, index 1 the outer one; same-kind runes at index 1 override index 0.",
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "$ref": "#/definitions/innerRune"
+          }
+        ]
+      },
+      "maxItems": 2
+    },
+    "innerRune": {
+      "description": "Behaviour: how a particle moves and how long it lives.",
+      "type": "object",
+      "required": ["rune"],
+      "oneOf": [
+        {
+          "required": ["rune", "kind"],
+          "properties": {
+            "rune": {
+              "const": "trajectory"
+            }
+          },
+          "oneOf": [
+            {
+              "required": ["kind", "speed"],
+              "properties": {
+                "kind": {
+                  "const": "forward"
+                },
+                "speed": {
+                  "type": "number"
+                }
+              }
+            },
+            {
+              "required": ["kind", "speed", "radius", "freq"],
+              "properties": {
+                "kind": {
+                  "const": "spiral"
+                },
+                "speed": {
+                  "type": "number"
+                },
+                "radius": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "freq": {
+                  "type": "number"
+                }
+              }
+            },
+            {
+              "required": ["kind", "radius", "freq"],
+              "properties": {
+                "kind": {
+                  "const": "orbit"
+                },
+                "radius": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "freq": {
+                  "type": "number"
+                }
+              }
+            },
+            {
+              "required": ["kind", "speed", "amplitude", "freq"],
+              "properties": {
+                "kind": {
+                  "const": "wave"
+                },
+                "speed": {
+                  "type": "number"
+                },
+                "amplitude": {
+                  "type": "number"
+                },
+                "freq": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              }
+            },
+            {
+              "required": ["kind", "speed", "gravity"],
+              "properties": {
+                "kind": {
+                  "const": "ballistic"
+                },
+                "speed": {
+                  "type": "number"
+                },
+                "gravity": {
+                  "type": "number"
+                }
+              }
+            },
+            {
+              "required": ["kind", "speed", "freq"],
+              "properties": {
+                "kind": {
+                  "const": "pulse"
+                },
+                "speed": {
+                  "type": "number"
+                },
+                "freq": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              }
+            },
+            {
+              "required": ["kind", "speed", "amplitude", "freq"],
+              "properties": {
+                "kind": {
+                  "const": "zigzag"
+                },
+                "speed": {
+                  "type": "number"
+                },
+                "amplitude": {
+                  "type": "number"
+                },
+                "freq": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              }
+            }
+          ]
+        },
+        {
+          "required": ["rune", "delay", "duration", "lifetime"],
+          "properties": {
+            "rune": {
+              "const": "timing"
+            },
+            "delay": {
+              "type": "number",
+              "minimum": 0
+            },
+            "duration": {
+              "type": "number",
+              "minimum": 0
+            },
+            "lifetime": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        {
+          "required": ["rune", "x", "y", "z"],
+          "properties": {
+            "rune": {
+              "const": "formula"
+            },
+            "x": {
+              "$ref": "#/definitions/formula"
+            },
+            "y": {
+              "$ref": "#/definitions/formula"
+            },
+            "z": {
+              "$ref": "#/definitions/formula"
+            }
+          }
+        }
+      ]
+    },
+    "bridgeRune": {
+      "description": "Modulation: bends the inner ring's behaviour once more before presentation.",
+      "type": "object",
+      "required": ["rune"],
+      "oneOf": [
+        {
+          "required": ["rune", "shift"],
+          "properties": {
+            "rune": {
+              "const": "phase"
+            },
+            "shift": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "required": ["rune", "expr"],
+          "properties": {
+            "rune": {
+              "const": "converge"
+            },
+            "expr": {
+              "$ref": "#/definitions/formula"
+            }
+          }
+        },
+        {
+          "required": ["rune", "expr"],
+          "properties": {
+            "rune": {
+              "const": "amplify"
+            },
+            "expr": {
+              "$ref": "#/definitions/formula"
+            }
+          }
+        }
+      ]
+    },
+    "core": {
+      "description": "Essence: what kind of magic this is.",
+      "type": "object",
+      "properties": {
+        "center": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/essence"
+            }
+          ]
+        },
+        "nodes": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/nodes"
+            }
+          ]
+        }
+      }
+    },
+    "nodes": {
+      "description": "The four directional node slots. north = face up, east = face right.",
+      "type": "object",
+      "properties": {
+        "north": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/nodeRune"
+            }
+          ]
+        },
+        "south": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/nodeRune"
+            }
+          ]
+        },
+        "east": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/nodeRune"
+            }
+          ]
+        },
+        "west": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/nodeRune"
+            }
+          ]
+        }
+      }
+    },
+    "essence": {
+      "type": "object",
+      "required": ["element", "power"],
+      "properties": {
+        "element": {
+          "description": "Element: decides the colour ramp and the blend mode. One circle has one element, so one blend mode.",
+          "type": "string",
+          "enum": ["neutral", "fire", "water", "lightning", "metal", "wood", "earth", "yin", "yang"]
+        },
+        "power": {
+          "description": "Particle count = round(256 * power), floor 1. Too large and the compile fails on the budget cap.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "nodeRune": {
+      "type": "object",
+      "required": ["rune"],
+      "oneOf": [
+        {
+          "required": ["rune", "strength"],
+          "properties": {
+            "rune": {
+              "const": "dir-bias"
+            },
+            "strength": {
+              "type": "number"
+            }
+          }
+        }
+      ]
+    },
+    "phases": {
+      "description": "Lifecycle staging: draw the circle, hold, then cast. Omitting it casts at once.",
+      "type": "object",
+      "required": ["draw", "converge"],
+      "properties": {
+        "draw": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "converge": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "fieldArray": {
+      "description": "Force fields: a displacement layer over the analytic trajectories. They act on the casting particles only -- the drawn circle stays put.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/forceField"
+      }
+    },
+    "forceField": {
+      "type": "object",
+      "required": ["kind"],
+      "oneOf": [
+        {
+          "required": ["kind", "accel"],
+          "properties": {
+            "kind": {
+              "const": "gravity"
+            },
+            "accel": {
+              "$ref": "#/definitions/vec3"
+            }
+          }
+        },
+        {
+          "required": ["kind", "center", "strength", "softening"],
+          "properties": {
+            "kind": {
+              "const": "attractor"
+            },
+            "center": {
+              "$ref": "#/definitions/vec3"
+            },
+            "strength": {
+              "type": "number"
+            },
+            "softening": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        {
+          "required": ["kind", "center", "axis", "strength", "falloff"],
+          "properties": {
+            "kind": {
+              "const": "vortex"
+            },
+            "center": {
+              "$ref": "#/definitions/vec3"
+            },
+            "axis": {
+              "$ref": "#/definitions/vec3"
+            },
+            "strength": {
+              "type": "number"
+            },
+            "falloff": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "required": ["kind", "dir", "strength", "turbulence"],
+          "properties": {
+            "kind": {
+              "const": "wind"
+            },
+            "dir": {
+              "$ref": "#/definitions/vec3"
+            },
+            "strength": {
+              "type": "number"
+            },
+            "turbulence": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "required": ["kind", "strength", "scale"],
+          "properties": {
+            "kind": {
+              "const": "turbulence"
+            },
+            "strength": {
+              "type": "number"
+            },
+            "scale": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        {
+          "required": ["kind", "center", "k"],
+          "properties": {
+            "kind": {
+              "const": "spring"
+            },
+            "center": {
+              "$ref": "#/definitions/vec3"
+            },
+            "k": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "anchorArray": {
+      "description": "Activation points. Omit the key (or write null) for the single default one; an empty array is an error, and 16 is the cap. Particles are shared out between the points, never multiplied by them.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/anchor"
+      },
+      "minItems": 1,
+      "maxItems": 16
+    },
+    "anchor": {
+      "type": "object",
+      "required": ["offset", "normal"],
+      "properties": {
+        "offset": {
+          "$ref": "#/definitions/vec3"
+        },
+        "normal": {
+          "$ref": "#/definitions/vec3"
+        }
+      }
+    },
+    "vec3": {
+      "description": "Three numbers, [x, y, z], in the caster's frame: x = right, y = up, z = straight ahead.",
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "formula": {
+      "description": "A one-line formula. Names: t, life, pindex, pi. Functions: sin cos abs sqrt floor sign min max clamp, and chan(N) for per-particle randomness. At most 512 syntax-tree nodes. Parsed at load time -- a syntax error names its line and column.",
+      "type": "string"
+    }
+  }
+}

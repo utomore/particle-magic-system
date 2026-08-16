@@ -31,11 +31,13 @@ module Validate
   , Stats (..)
   , validateBytes
   , renderReport
+  , renderJsonReport
   , failureCount
   , exitCodeFor
 
     -- * The context reports are measured in
   , defaultContext
+  , lifetimeOf
   ) where
 
 import Data.Aeson (Value (Array, Number, Object), decodeStrict)
@@ -66,13 +68,19 @@ import Magic.Interface
   , isFinished
   , maxSpellParticles
   )
-import Numeric (showFFloat)
+import Numeric (showFFloat, showHex)
 
 -- Command line ---------------------------------------------------------------
 
 data Options = Options
   { optStats :: !Bool
   -- ^ @--stats@: print the compiled numbers under every passing file.
+  , optJson :: !Bool
+  -- ^ @--json@ (func-spec 0024 S3): print the whole run as one JSON
+  -- document instead of the line format, for an editor or a CI step to
+  -- read. Orthogonal to 'optStats', which still decides whether the
+  -- numbers are included — the two flags choose /shape/ and /detail/
+  -- independently.
   , optPaths :: ![FilePath]
   -- ^ Files and\/or directories to validate, in the order given.
   }
@@ -84,26 +92,28 @@ data Options = Options
 -- in a CI script.
 parseArgs :: [String] -> Either String Options
 parseArgs args = do
-  (stats, paths) <- go False [] args
+  (stats, json, paths) <- go False False [] args
   if null paths
     then Left "magic-validate: no files or directories given"
-    else Right (Options {optStats = stats, optPaths = reverse paths})
+    else Right (Options {optStats = stats, optJson = json, optPaths = reverse paths})
   where
-    go stats paths [] = Right (stats, paths)
-    go stats paths (a : rest) = case a of
-      "--stats" -> go True paths rest
+    go stats json paths [] = Right (stats, json, paths)
+    go stats json paths (a : rest) = case a of
+      "--stats" -> go True json paths rest
+      "--json" -> go stats True paths rest
       "--help" -> Left "magic-validate: help requested"
       "-h" -> Left "magic-validate: help requested"
       ('-' : _) -> Left ("magic-validate: unknown option " ++ show a)
-      _ -> go stats (a : paths) rest
+      _ -> go stats json (a : paths) rest
 
 usage :: String
 usage =
   unlines
-    [ "usage: magic-validate [--stats] PATH..."
+    [ "usage: magic-validate [--stats] [--json] PATH..."
     , ""
     , "  PATH      a spell file, or a directory whose *.json files are all checked"
     , "  --stats   print the compiled budget, lifetime, phases, fields and extent"
+    , "  --json    print the whole run as one JSON document (for editors and CI)"
     , ""
     , "Exit code is the number of files that failed (0 = all good, 64 = bad usage)."
     ]
@@ -219,6 +229,12 @@ extentOf horizon emitters = case map (emitterBounds defaultContext horizon) emit
 
 -- | The spell's total duration, in seconds.
 --
+-- Exported since func-spec 0024 S2, unchanged: @magic-inspect@ reports the
+-- same lifetime this tool does, and the way to guarantee that is for there
+-- to be one of it. ('defaultContext' is shared for the same reason — the
+-- two tools' extents are comparable only if they were measured in the same
+-- cast.)
+--
 -- 'Magic.Interface' publishes the duration only as the predicate
 -- 'isFinished' (@age >= lifetime@) — and func-spec 0014 §0.1 imports that
 -- module read-only, because func-spec 0012 owns the file while the two
@@ -330,6 +346,124 @@ statLines st =
     secs s = showFFloat (Just 3) s "s"
     coord x = showFFloat (Just 3) (realToFrac x :: Double) ""
     point (V3 x y z) = "(" ++ intercalate ", " (map coord [x, y, z]) ++ ")"
+
+-- The machine-readable report (func-spec 0024 S3) ----------------------------
+
+-- | The same verdicts as 'renderReport', as one JSON document.
+--
+-- __Why this is an added flag and not a changed format.__ func-spec 0014
+-- froze the line format because its readers are humans /and/ scripts
+-- (§9.3), and func-spec 0019's CI depends on the exit code meaning the
+-- number of failures. So the machine-readable want could only ever be
+-- served by adding a mode: with no @--json@, every byte on stdout is what
+-- it was, and the exit code is what it was in both modes.
+--
+-- Written by hand rather than through aeson's 'encode' for one reason:
+-- aeson's 'Object' is a hash map, so it would order the keys by hashing.
+-- A report an author might read in a terminal, or a CI might diff between
+-- runs, should have @path@ before @ok@ before @error@ every time.
+--
+-- @stats@ appears exactly when @--stats@ was given, so the two flags stay
+-- orthogonal: @--json@ chooses the shape, @--stats@ the detail.
+renderJsonReport :: Bool -> [Report] -> String
+renderJsonReport withStats reports =
+  jsonObject
+    0
+    [ ("tool", jsonString "magic-validate")
+    , ("version", "1")
+    , ("files", jsonArray 1 (map (fileEntry 2) reports))
+    , ("checked", show (length reports))
+    , ("failed", show (failureCount reports))
+    ]
+    ++ "\n"
+  where
+    fileEntry ind (Report path result) =
+      jsonObject
+        ind
+        ( [ ("path", jsonString path)
+          , ("ok", jsonBool (either (const False) (const True) result))
+          , ("error", either jsonString (const "null") result)
+          ]
+            ++ [ ("stats", either (const "null") (statsObject (ind + 1)) result)
+               | withStats
+               ]
+        )
+
+statsObject :: Int -> Stats -> String
+statsObject ind st =
+  jsonObject
+    ind
+    [ ("budget", show (stBudget st))
+    , ("cap", show (stCap st))
+    , ("perEmitter", "[" ++ intercalate ", " (map show (stPerEmitter st)) ++ "]")
+    , ("emitters", show (stEmitters st))
+    , ("lifetime", jsonNumber (unSeconds (stLifetime st)))
+    , ("phases", phasesJson)
+    , ("fields", show (stFields st))
+    , ("extent", jsonObject (ind + 1) [("min", vec lo), ("max", vec hi)])
+    ]
+  where
+    (lo, hi) = stExtent st
+    unSeconds (Seconds s) = s
+    vec (V3 x y z) = "[" ++ intercalate ", " (map (jsonNumber . realToFrac) [x, y, z]) ++ "]"
+    phasesJson = case stPhases st of
+      Nothing -> "null"
+      Just (Seconds d, Seconds c) ->
+        jsonObject (ind + 1) [("draw", jsonNumber d), ("converge", jsonNumber c)]
+
+-- | A JSON object, one key per line, closing brace at the parent's
+-- indentation.
+jsonObject :: Int -> [(String, String)] -> String
+jsonObject ind pairs
+  | null pairs = "{}"
+  | otherwise =
+      "{\n"
+        ++ intercalate ",\n" [tab (ind + 1) ++ jsonString k ++ ": " ++ v | (k, v) <- pairs]
+        ++ "\n"
+        ++ tab ind
+        ++ "}"
+
+jsonArray :: Int -> [String] -> String
+jsonArray ind items
+  | null items = "[]"
+  | otherwise =
+      "[\n"
+        ++ intercalate ",\n" [tab (ind + 1) ++ item | item <- items]
+        ++ "\n"
+        ++ tab ind
+        ++ "]"
+
+tab :: Int -> String
+tab n = replicate (n * 2) ' '
+
+jsonBool :: Bool -> String
+jsonBool b = if b then "true" else "false"
+
+-- | JSON has no spelling for a non-finite number, and an @Infinity@
+-- literal would make the whole document unparseable for the consumer this
+-- flag exists to serve. The codec's validation rules these out, so this is
+-- a guard rather than a case that happens.
+jsonNumber :: Double -> String
+jsonNumber x
+  | isNaN x || isInfinite x = "null"
+  | otherwise = show x
+
+-- | A JSON string literal. Error messages carry newlines (a load error's
+-- detail lines) and quotes (@unknown rune tag "wibble"@), so this is the
+-- one piece of the encoder that has to be careful.
+jsonString :: String -> String
+jsonString s = '"' : concatMap esc s ++ "\""
+  where
+    esc c = case c of
+      '"' -> "\\\""
+      '\\' -> "\\\\"
+      '\n' -> "\\n"
+      '\r' -> "\\r"
+      '\t' -> "\\t"
+      _
+        | c < ' ' -> "\\u" ++ pad4 (showHex (fromEnum c) "")
+        | otherwise -> [c]
+    pad4 h = replicate (4 - length h) '0' ++ h
 
 -- | How many files did not pass.
 failureCount :: [Report] -> Int

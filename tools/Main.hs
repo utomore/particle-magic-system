@@ -21,6 +21,7 @@ import Validate
   , exitCodeFor
   , failureCount
   , parseArgs
+  , renderJsonReport
   , renderReport
   , usage
   , validateBytes
@@ -37,7 +38,10 @@ main = do
     Right opts -> do
       files <- concat <$> mapM expand (optPaths opts)
       reports <- mapM checkFile files
-      putStr (concatMap (renderReport (optStats opts)) reports)
+      putStr $
+        if optJson opts
+          then renderJsonReport (optStats opts) reports
+          else concatMap (renderReport (optStats opts)) reports
       hPutStrLn stderr (summary reports)
       case exitCodeFor reports of
         0 -> exitSuccess
