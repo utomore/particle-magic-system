@@ -486,6 +486,8 @@ void     pm_free(PmSpell*);
 ## 7. 效能設計（目標：1 萬～10 萬粒子）
 
 > 現況註記（spec 0010 交付後更新）：本節的手段已由 **func-spec 0010** 落地並實測，逐項狀態見下表「現況」欄。**實測結果**：4096 粒每幀純 CPU 0.73 ms → **0.27 ms**；取樣常數因子 161 → **65 ns/粒**；合成 10 萬粒取樣 **6.5 ms**（60 fps 預算的 39%）——1 萬～10 萬的目標在單執行緒下成立。**護欄 `budgetCap` 已由 func-spec 0012 提升為 16384**（原為 spec 0002 的骨架渲染護欄 4096）：選值規則＝「單幀純 CPU（取樣＋quad 展開）≤ 2 ms 的最大 2 的冪」，同機實測 16384 → **1.45 ms**、32768 → 2.87 ms（0012 §9.2；ADR-0012 D7）。提升未動到任何對外合約——`PM_MAX_PARTICLES` 永釘 4096，宿主改用 `pm_max_particles()`／`maxSpellParticles` 查詢。
+>
+> 現況註記（spec 0022 交付後追加）：ADR-0012 §後果指名的兩件「再抬上限的前提」——Expr bytecode 與多執行緒取樣——**都已到位**（§8.2、本表新增列）。同機（AMD Ryzen 7 9800X3D，8 核 16 緒）實測：單執行緒 100k 粒取樣 8.4 ms、16 緒 **2.5 ms**（3.9×）；`budgetCap` 現值 16384 的一幀取樣自 1.5 ms 降至 **1.0 ms**（-N8，1.51×）。**本輪不改 `budgetCap` 的值**：改它要依 ADR-0012 D7 的同一條規則重新量測，並同步 `pmMaxParticles`，屬另一輪的檔案（ADR-0017 D5）。
 
 | 手段 | 說明 | 現況 |
 |---|---|---|
@@ -494,7 +496,8 @@ void     pm_free(PmSpell*);
 | 編譯期粒子預算 | `compile` 時即算出各發射器最大粒子數（`ParticleBudget`），緩衝一次配足，執行期零成長 | ✅ 0010 S7：`ParticleBudget`（per-emitter＋total）入 `CompiledSpell.spellBudgetPlan`，經 `Magic.Interface.budgetPlanOf` 對宿主開放 |
 | 發射器層級剔除 | 解析模型下每個發射器的空間包絡可靜態估計上界 → 視錐外整個發射器跳過取樣 | ✅ 兩半都交付，但**分工釐清**：核心交 `emitterBounds`（區間算術得到的保守 AABB，0010 S7），**視錐判定本身是宿主責任**——核心沒有相機概念（ADR-0008）。另加**時間**維度的剔除（0010 S3）：每發射器的存活索引由 `aliveRanges` 以 `O(log n)` 二分求出，死窗發射器零逐粒成本 |
 | 批次渲染（[ADR-0009](adr/adr-0009-dynamic-quad-mesh-rendering.md)） | raylib 端以動態 quad mesh＋`c'` 指標 API 繪製整個 batch，draw call 數 = batch 數而非粒子數（instancing 經實證否決：無 per-instance 顏色、需自訂 shader） | ✅ spec 0005 |
-| GHC 設定 | `-O2 -fllvm`（視環境）；熱路徑函數 `INLINE`/`SPECIALIZE`；必要時 `-threaded` 讓 GC 與模擬並行 | 部分：`-O2` ✅（0005）、`evalFinite`/`evalFiniteV3` `INLINE`＋`evalExpr` `INLINABLE` ✅（0010 S6）；`-fllvm` 與多執行緒取樣未做（0010 §8-6：先把單執行緒常數因子吃完） |
+| GHC 設定 | `-O2 -fllvm`（視環境）；熱路徑函數 `INLINE`/`SPECIALIZE`；必要時 `-threaded` 讓 GC 與模擬並行 | 部分：`-O2` ✅（0005）、`evalFinite`/`evalFiniteV3` `INLINE`＋`evalExpr` `INLINABLE` ✅（0010 S6）；**多執行緒取樣 ✅ 0022 S4**（`Control.Parallel.Strategies` 逐發射器分片，ADR-0017；exe／tool／test／bench 皆帶 `-threaded -rtsopts "-with-rtsopts=-N"`，foreign library 的能力數由宿主 `hs_init` 決定）；`-fllvm` 仍未做（0022 §8-2：屬建置環境變數，與 CI 一起評估） |
+| **平行取樣**（0022 追加） | 取樣工作按「發射器 × 索引區間」切成分片，以純 Strategies 平行求值後定序串接；決定論由切分方式結構性保證（律 2，ADR-0017 D2） | ✅ 0022 S4。粒子數 ≥ `parallelThreshold`（8192，實測選定）才走此路。同機（8 核 16 緒）實測 16384 粒 **1.4–1.5×**、100k 粒 **3.9×**；閾值以下平行較慢，故不走 |
 | **per-emitter 提升**（0010 追加） | 位置公式中不隨粒子改變的部分（施法者座標系、世界座標錨點、面法線與其平面基底、節點漂移）每發射器每幀算一次，而非每粒子算一次 | ✅ 0010 S2。**這一步就是本輪一半以上的加速**（`observeSpell@4096` 471 → 195 µs）——原本每顆粒子要重算 4 次 `normalize`＋2 次 `basisFromNormal` |
 
 **明確不做**（POC 範圍外）：GPU compute/transform feedback、粒子間碰撞、空間分割結構。力場層僅支援「場對粒子」（重力、吸引、渦流），不支援「粒子對粒子」。
@@ -506,7 +509,11 @@ void     pm_free(PmSpell*);
 ## 8. 未來可能遇到的問題
 
 1. **符文組合爆炸與平衡性**：固定職責限制了語意發散，但外圈×夾層×內圈×核心的組合數仍隨符文種類多項式成長。編譯期的 `ParticleBudget` 與能量預算（`essPower` 封頂）是第一道閘門；長期需要「魔法代價」系統在遊戲層約束。
-2. **Expr 求值效能**：AST 直譯在十萬粒子 × 每粒子多個式子時可能成為熱點。緩解路徑（依序）：求值器對常見形狀 SPECIALIZE → 編譯期常數摺疊/共同子式消去 → 將 `Expr` 編成扁平的 bytecode 陣列以緊密迴圈求值。AST 介面不變，只換求值器。——**第一階已由 spec 0010 S6 交付**：`foldConstants` 在 `compile` 時預求值所有無變數子樹（律：`evalExpr . foldConstants ≡ evalExpr`，逐位元），求值入口加 `INLINE`/`INLINABLE`；AST 與剖析器一字未動。bytecode 與共同子式消去仍未做，且 0010 §9.2 的量測顯示目前的熱點不在 Expr，而在解析模型本身的 `sin`/`cos`/`sqrt` 與 `hashChan`。
+2. **Expr 求值效能**：AST 直譯在十萬粒子 × 每粒子多個式子時可能成為熱點。緩解路徑（依序）：求值器對常見形狀 SPECIALIZE → 編譯期常數摺疊/共同子式消去 → 將 `Expr` 編成扁平的 bytecode 陣列以緊密迴圈求值。AST 介面不變，只換求值器。——**三階全數交付**：第一階由 spec 0010 S6（`foldConstants`，律：`evalExpr . foldConstants ≡ evalExpr`，逐位元），第二、三階由 **spec 0022**（`Magic.Expr.Code`：hash-consing 的 `cse` ＋ 扁平 `ExprCode`／`evalCode`，律：`evalCode . compileExpr ≡ evalExpr`，逐位元）。「AST 介面不變，只換求值器」被做到字面上：**`Magic/Expr.hs` 一個字都沒改**，`evalExpr` 降級為等價律的參照實作。
+
+   **0010 的發現在本輪之後仍然成立，而且是本輪最重要的量測結論**：熱點確實不在 Expr。同機實測（0022 §9）——重複子式多的式子 bytecode 快 **1.57×**，但**已出貨的三張帶公式範例陣，整體取樣時間 −12% 到 +2%，即打平**。真正的量級改善來自平行取樣（同節 §7），不是來自這條階梯。階梯的價值在於它隨式子複雜度成長（193 節點的深式子 CSE 砍掉 33% 節點），而玩家的式子只會愈寫愈長。
+
+   尚未處理的相鄰瓶頸（0022 §9 量測時浮現）：取樣器每粒子配置約 460 位元組的中介 `V3`。若要再抬 `budgetCap`，去掉它的收益可能大於再加核心。
 3. **熱重載下的狀態遷移**：魔法陣 JSON 改變時，進行中的 `ActiveSpell` 怎麼辦？POC 策略：重載＝重新施法（狀態歸零）——spec 0007 交付力場層後這條由預告變成實際政策（ADR-0010 D8：`castSpell` 一律以全靜止的 `FieldState` 起步，不遷移）。未來若要「編輯中即時 morphing」，解析式模型天然支援（同一個 `t` 用新 spell 取樣即可），但 `FieldState` 無法對應遷移，需定義淡出/淡入規則。
 4. **多魔法並行的緩衝管理**：多個 `ActiveSpell` 各持有預算緩衝，總量需要全域上限與配額策略（先到先得？按 power 分配？）——**已由 spec 0012 落地**：`Magic.Scene` 是 `Magic.Interface` 之上的純值組合層，以 `SceneConfig.scGlobalCap` 表達全域上限、以 `ParticleBudget` 記帳，v1 策略取**先到先得**（拒收回 `QuotaExceeded 需求 剩餘`，場景不變；已用量由現存法術即時求和，法術結束即釋放）。按 power 加權與優先權搶佔明文否決並記在 [ADR-0012](adr/adr-0012-multi-circle-scene.md) D6——它們需要「重要性」這個遊戲層詞彙，庫給的是拒收與剩餘量。**尚未上 C ABI**（同 ADR D8）。
 5. **h-raylib 的 FFI 邊界開銷**：每幀把 SoA 緩衝交給 raylib instanced 繪製，若 h-raylib 的綁定強制逐元素 marshalling 會抵銷 SoA 的優勢；需要確保走 `unsafeWith`/指標直傳路徑（見 §9）。

@@ -3,7 +3,7 @@ id: func-0022
 type: spec
 title: perf-second-tier
 description: 效能第二階梯：bytecode、共同子式消去與平行取樣
-status: open
+status: done
 created: 2026-08-15
 updated: 2026-08-16
 depends-on: [func-0021]
@@ -12,7 +12,7 @@ related-adr: [adr-0006, adr-0007, adr-0012, adr-0017]
 
 # Func-Spec 0022：效能第二階梯（Expr bytecode、共同子式消去、平行取樣）
 
-> 狀態：**設計定案，待實作**
+> 狀態：**已交付（2026-08-16）**——驗收紀錄見 §9，與計畫的三處偏離見 §10。
 > 性質：一般 —— 交付後凍結**兩條等價律**（bytecode ≡ AST 求值、平行 ≡ 單執行緒，皆逐位元）與 `Magic.Expr.Code` 的匯出面。**同輪交付 ADR-0017**（平行取樣的決定論保證＋核心依賴白名單的變更）。
 > 前置依賴：**spec 0021（需已完成）**——本 spec 修改 `src/core/Magic/{Compile,Particle/Analytic}.hs`，與 0021 的新建構子 case 同檔，依 SKILL.md 規則 4 **動工門檻＝0021 驗收**（且 bytecode 求值器必須涵蓋 0021 加完之後的完整 `Expr` 值域）。**與 spec 0018／0019／0024 平行**（逐檔交集 = ∅，§0.2）。
 > 依據：architecture **§8.2**（Expr 加速三階梯：「SPECIALIZE → 常數摺疊/共同子式消去 → 編成扁平 bytecode 陣列」，並明文「**AST 介面不變，只換求值器**」——第一階已由 0010 S6 交付，本輪做第二、三階）、**§7**（GHC 設定：「必要時 `-threaded` 讓 GC 與模擬並行」）、§9.4（GC 停頓）；ADR-0006（SoA＋unboxed）、**ADR-0007（核心零 IO、無 `Eff`——本輪的平行方案被這條唯一化，見 §2.3）**、ADR-0012 §後果（「若日後 Expr bytecode 或多執行緒取樣落地，`budgetCap` 應重新以同一條規則量測」）；[roadmap.md](../roadmap.md) §3.1 末兩列（「bytecode／共同子式消去未做」「多執行緒取樣未做——**下一次抬高上限的前提**」）；spec 0010 §8-4／§8-6（本輪的兩筆記帳來源）、§9.2（量測基線）。
@@ -39,8 +39,9 @@ related-adr: [adr-0006, adr-0007, adr-0012, adr-0017]
 ### 0.2 檔案盤點（與 0018／0019／0024 的四方零交集證明）
 
 **新增（5）**：`src/core/Magic/Expr/Code.hs`、`test/ExprCodeSpec.hs`、`test/ExprCseSpec.hs`、`test/ParallelSampleSpec.hs`、`docs/adr/adr-0017-parallel-sampling-determinism.md`。
+（**實際新增 6**：§6 S3 的測試檔 `test/ExprCodeWiringSpec.hs` 本節漏列，§6 表格有列。）
 
-**修改（6）**：
+**修改（6）**：（**實際 7**：另加 `test/Acceptance10Spec.hs`，其手工 `EmitterSpec` fixture 需補一行 `emCode`——見 §10-1。仍與 0018／0019／0024 零交集。）
 
 | 檔案 | 變更 |
 |---|---|
@@ -217,12 +218,12 @@ flowchart LR
 
 | # | Todo | 測試 |
 |---|---|---|
-| S1 | `Magic.Expr.Code`：`ExprCode`／`compileExpr`／`evalCode`／`compileExprV3`／`evalCodeV3`（後序展平、常數池、exact-size 堆疊） | `test/ExprCodeSpec.hs`（**律 1 的核心**：`evalCode (compileExpr e) env` ≡ `evalExpr e env` **逐位元**（QuickCheck over 既有 `ExprGen`，含 NaN／±Inf／負零／極端指數）；`ecMaxDepth` ≥ 實際堆疊用量（property）；求值零配置（以 `exprSize` 大的式子測 allocation）；`Chan` 指令 ≡ `hashChan` 原值；`evalFinite` 的歸零位置不變） |
-| S2 | `cse`（hash-consing DAG、結構相等的碰撞防護） | `test/ExprCseSpec.hs`（**律**：`evalExpr (cse e) ≡ evalExpr e` 逐位元（property）；重複子式的節點數確實下降（見證）；`foldConstants → cse` 的複合仍逐位元等價；**碰撞見證**：以人工構造的雜湊碰撞驗證結構相等比較確實阻止了錯誤合併；`cse` 冪等（`cse . cse ≡ cse`）） |
-| S3 | `Compile` 於 `compile` 期產生 `ExprCode`；`Analytic` 求值改走 bytecode | `test/ExprCodeWiringSpec.hs`（既有 13 個範例陣 240 幀 `FrameOutput` **逐位元不變**（律 1 的端到端見證）；`CompiledSpell` 仍可序列化／可比較；`spellBudget` 與 `emitterBounds` 不受影響；含 `FormulaRune`／`ConvergeRune`／`AmplifyRune`／`RangeRune` 四種 Expr 符文各一見證） |
-| S4 | 平行取樣路徑（`Control.Parallel.Strategies`，逐發射器分片＋定序串接）＋`parallelThreshold` | `test/ParallelSampleSpec.hs`（**律 2**：平行 ≡ 單執行緒六欄逐位元（property，跨多種發射器數／粒子數／`Time`）；`+RTS -N1/-N2/-N4` 三種核心數輸出相同；閾值兩側各一見證；`aliveSlots` 的 row 順序不受影響；分片索引區間兩兩不相交且聯集完整（切分正確性，§2.4 論證的直接測試）） |
-| S5 | 核心依賴白名單 +`parallel`；test／bench／exe 的 `-threaded -rtsopts "-with-rtsopts=-N"` | `test/BoundarySpec.hs`（更新後全綠：`magic-core` 的 build-depends ≡ `{base, vector, deepseq, parallel}`；boundary／flib 白名單不變；exe 仍不依賴 `magic-core`；**新增**：核心與 boundary 仍無任何 `IO`／`Eff` 於簽名中——`parallel` 的引入不得破壞 ADR-0007） |
-| S6 | bench 三組新 bgroup＋閾值選定＋量測回填＋ADR-0017 | `test/PerfGoldenSpec.hs`（更新後全綠：golden 值逐位元不變（效能改動不得改變輸出，這是 0010 立下的慣例）；`parallelThreshold` 為正且被 bench 覆蓋）＋**量測回填**（§8）：Expr 求值 ns、取樣 ns/粒、100k 粒取樣、加速比 ×{1,2,4,8} 核心、memcpy 成本差額 |
+| S1 | **[x]** `Magic.Expr.Code`：`ExprCode`／`compileExpr`／`evalCode`／`compileExprV3`／`evalCodeV3`（後序展平、常數池、exact-size 堆疊） | `test/ExprCodeSpec.hs`（**律 1 的核心**：`evalCode (compileExpr e) env` ≡ `evalExpr e env` **逐位元**（QuickCheck over 既有 `ExprGen`，含 NaN／±Inf／負零／極端指數）；`ecMaxDepth` ≥ 實際堆疊用量（property）；求值零配置（以 `exprSize` 大的式子測 allocation）；`Chan` 指令 ≡ `hashChan` 原值；`evalFinite` 的歸零位置不變） |
+| S2 | **[x]** `cse`（hash-consing DAG、結構相等的碰撞防護） | `test/ExprCseSpec.hs`（**律**：`evalExpr (cse e) ≡ evalExpr e` 逐位元（property）；重複子式的節點數確實下降（見證）；`foldConstants → cse` 的複合仍逐位元等價；**碰撞見證**：以人工構造的雜湊碰撞驗證結構相等比較確實阻止了錯誤合併；`cse` 冪等（`cse . cse ≡ cse`）） |
+| S3 | **[x]** `Compile` 於 `compile` 期產生 `ExprCode`；`Analytic` 求值改走 bytecode | `test/ExprCodeWiringSpec.hs`（既有 13 個範例陣 240 幀 `FrameOutput` **逐位元不變**（律 1 的端到端見證）；`CompiledSpell` 仍可序列化／可比較；`spellBudget` 與 `emitterBounds` 不受影響；含 `FormulaRune`／`ConvergeRune`／`AmplifyRune`／`RangeRune` 四種 Expr 符文各一見證） |
+| S4 | **[x]** 平行取樣路徑（`Control.Parallel.Strategies`，逐發射器分片＋定序串接）＋`parallelThreshold` | `test/ParallelSampleSpec.hs`（**律 2**：平行 ≡ 單執行緒六欄逐位元（property，跨多種發射器數／粒子數／`Time`）；`+RTS -N1/-N2/-N4` 三種核心數輸出相同；閾值兩側各一見證；`aliveSlots` 的 row 順序不受影響；分片索引區間兩兩不相交且聯集完整（切分正確性，§2.4 論證的直接測試）） |
+| S5 | **[x]** 核心依賴白名單 +`parallel`；test／bench／exe 的 `-threaded -rtsopts "-with-rtsopts=-N"` | `test/BoundarySpec.hs`（更新後全綠：`magic-core` 的 build-depends ≡ `{base, vector, deepseq, parallel}`；boundary／flib 白名單不變；exe 仍不依賴 `magic-core`；**新增**：核心與 boundary 仍無任何 `IO`／`Eff` 於簽名中——`parallel` 的引入不得破壞 ADR-0007） |
+| S6 | **[x]** bench 三組新 bgroup＋閾值選定＋量測回填＋ADR-0017 | `test/PerfGoldenSpec.hs`（更新後全綠：golden 值逐位元不變（效能改動不得改變輸出，這是 0010 立下的慣例）；`parallelThreshold` 為正且被 bench 覆蓋）＋**量測回填**（§8）：Expr 求值 ns、取樣 ns/粒、100k 粒取樣、加速比 ×{1,2,4,8} 核心、memcpy 成本差額 |
 
 ## 7. 收尾：architecture.md 的三處現況更新
 
@@ -244,4 +245,82 @@ flowchart LR
 
 ## 9. 驗收紀錄
 
-（實作時回填：日期、環境、核心數；`cabal test` 結果；**四組量測與 0010 §9.2 的對照**——Expr 求值 ns、取樣 ns/粒、100k 粒取樣 ms、平行加速比 vs 核心數；memcpy 取捨的實測差額；`parallelThreshold` 的選定值與依據；bytecode 對 Expr 求值的實際加速幅度（§2.2 預期有限，回填實際值）；凍結清單：`Magic.Expr.Code` 匯出面、律 1、律 2、`parallelThreshold`；與計畫的差異。）
+**日期**：2026-08-16
+**環境**：Windows 11 Pro 26200，GHC 9.14.1 / cabal 3.16.1.0，AMD Ryzen 7 9800X3D（8 核 16 執行緒）。全部量測以 `-O2` 取得。
+**測試**：`cabal test` → **1563 examples, 0 failures**（動工前 1478；本輪 **+85**：`ExprCodeSpec`＋`ExprCseSpec` 35、`ExprCodeWiringSpec` 26、`ParallelSampleSpec` 18、`BoundarySpec` +3、`PerfGoldenSpec` +3）。既有 15 個範例陣的 240 幀 `FrameOutput` golden **逐位元不變**；`cabal build all`（含 h-raylib demo 與 foreign library）零新增警告。
+
+### 9.1 律 1（bytecode ≡ AST）
+
+- `test/ExprCodeSpec.hs`：QuickCheck over `ExprGen`，含 NaN／±Inf／負零／極端指數／`FFloor` 的 ±2²³ 邊界／`Chan` 的 24-bit 溢位索引，全綠。
+- `test/ExprCodeWiringSpec.hs`：**15 個範例陣 × 240 幀 × 六欄逐位元**，比對對象是「同一個 build 上把 `emCode` 清空後走 AST 參照路徑」的結果——比 golden 檔更強的說法（golden 只說「與某個舊 build 相同」）。
+- 零配置：200 指令的程式與 4 指令的程式，每次求值配置的位元組數相同（差 < 64 B，絕對值 < 512 B）；每節點一個 boxed `Float` 會是 3.2 kB。
+
+### 9.2 律 2（平行 ≡ 單執行緒）
+
+`test/ParallelSampleSpec.hs`：property over 發射器數 × 粒子數 × 時間；`setNumCapabilities` 實跑 -N1／-N2／-N4 同輸出；閾值兩側各一見證；分片切分的四條性質（分割完整、無重疊、非空、≤ chunk）各自 property。
+
+### 9.3 Expr 求值：bytecode vs AST（10k 次求值，單執行緒）
+
+| 式子 | AST | bytecode | 比 |
+|---|---|---|---|
+| `wave`（11 節點，無重複子式） | 340 µs | 375 µs | **0.91×** |
+| `shared`（16 節點，`sin(3t)` 出現三次） | 504 µs | 321 µs | **1.57×** |
+| `deep`（193 節點鏈） | 10.8 ms | 10.5 ms | 1.03× |
+
+CSE 命中率：`wave` 11 → 9 節點、`shared` 16 → 8、`deep` 193 → 130。編譯成本（每次施法一次，非每粒子）：0.6–8.9 µs。
+
+**出貨範例陣的整體取樣時間（bytecode vs 清空 `emCode` 的 AST 路徑）**：`lissajous` 44.4 vs 39.7 µs（−12%）、`converge-flame` 59.9 vs 60.8 µs（+1%）、`pulse-ring` 59.1 vs 59.9 µs（+1%）。
+
+**結論（§2.2 的預期被證實，且比預期更弱）**：0010 §9.2「熱點不在 Expr 而在 `sin`/`cos`/`hashChan`」**在本輪之後仍然成立**。bytecode 對已出貨的範例陣是**打平**；它的收益隨式子的重複度與長度成長，而玩家的式子只會愈寫愈長。
+
+### 9.4 平行取樣加速比 vs 核心數（牆鐘，`syntheticSpell`，t = 2.5）
+
+| 粒子數 | -N1 | -N2 | -N4 | -N8 | -N16 |
+|---|---|---|---|---|---|
+| 1024 | 0.89× | 0.92× | 0.91× | 0.91× | 0.92× |
+| 2048 | 0.87× | 0.90× | 0.89× | 0.91× | 0.92× |
+| 4096 | 0.91× | 0.98× | 1.06× | 1.08× | 1.06× |
+| **8192**（閾值） | 0.93× | 1.06× | 1.16× | 1.36× | 1.40× |
+| 16384（＝`budgetCap`） | 0.91× | 1.43× | 1.45× | 1.51× | 1.47× |
+| 32768 | 0.90× | 1.44× | 2.84× | 2.69× | 2.78× |
+| 100000 | 0.87× | 1.44× | 2.54× | 3.45× | **3.90×** |
+
+絕對值：100k 粒單執行緒 8.4 ms（84 ns/粒）→ -N16 **2.5 ms（25 ns/粒）**；`budgetCap` 現值 16384 的一幀取樣 1.5 ms → -N8 **1.0 ms**。
+
+**memcpy 取捨的實測差額**（§2.4 要求回填）＝ -N1 那一欄：**0.87–0.93×，即 7–13%**。這正是閾值存在的理由。
+
+**`parallelThreshold` = 8192**，依據：在所有量測到的核心數上都確實變快的最小 2 的冪（4096 在 -N2 仍是 0.98×）。**`parallelChunk` = 1024**，依據：同機 -N8、16384 粒，chunk 512／1024／4096 = 1.54×／1.45×／1.24×，4096 明顯太粗，512 與 1024 在雜訊內。
+
+### 9.5 量測方法上的一條教訓（已寫入 ADR-0017 D7）
+
+`tasty-bench` 量的是 **CPU 時間**。本輪驗收的初稿據此讀出「100k 粒平行慢 15%」，而同一份工作在牆鐘上快 3.45 倍。`bench/Bench.hs` 的平行段因此改用 `GHC.Clock.getMonotonicTime`，並由 `PerfGoldenSpec` 釘住這件事；其餘單執行緒量測仍用 `tasty-bench`。
+
+### 9.6 凍結清單
+
+- `Magic.Expr.Code` 的匯出面（`ExprCode`／`ExprCodeV3`／`compileExpr`／`compileExprV3`／`evalCode`／`evalCodeV3`／`evalCodeFinite`／`evalCodeFiniteV3`／`ExprDag`／`DagNode`／`cse`／`cseBuckets`／`dagNodeCount`／`evalDag`／`compileDag`／`codeSize`）
+- **律 1**：`evalCode (compileExpr (foldConstants e)) env ≡ evalExpr e env`，逐位元
+- **律 2**：`sampleParallel ≡ sampleSequential`，六欄逐位元，任意核心數
+- `parallelThreshold = 8192`、`parallelChunk = 1024`（改值須重跑 §9.4 的量測）
+- `Magic.Compile.EmitterCode` 的形狀與 `emitterCodeOf` 的「快取，非第二真相來源」性質
+
+## 10. 實作備註（與計畫的差異）
+
+三處偏離，都在實作中發現計畫案行不通，均已在程式碼註解與 ADR-0017 內留下理由。
+
+**10-1（§3）`Motion` 的 `Expr` 欄位保留，bytecode 以 `EmitterSpec.emCode` 併存，而非「改持 `ExprCode`」。** 計畫寫的是把 `motRange`／`motConverge`／`appAmplify` 換成 `ExprCode`。實作時三個理由同時否掉它：
+
+1. `emitterBounds` 以**區間算術**走 `Expr` AST 求發射器包絡（`evalInterval`），扁平化後的指令流答不出這個問題；而 §6 S3 的驗收條件正是「`emitterBounds` 不受影響」。
+2. `motTraject :: Trajectory`，而 `Formula ExprV3` 住在 `Magic.Rune` 裡——本 spec §0.2 明文不碰 `Rune.hs`。軌跡公式的 bytecode 本來就**必須**住在別處，於是「併存」對四個插入點之一是強制的，其餘三個跟著一致才是連貫的設計。
+3. 既有的 `CompileExprSpec`／`ExprFoldSpec` 直接比對 `motRange (emMotion em) == Just eA`；換型別會波及 §0.2 盤點外的檔案。
+
+採用的形狀：`EmitterSpec` 加**一個**欄位 `emCode :: EmitterCode`（四個 `Maybe` 槽），由 `compile` 的單一收斂點 `compileEmitterExprs` 從該發射器自己的 AST 產生。`Nothing` = 未編譯，取樣器退回 `evalFinite`——由律 1，那是同一個答案的較慢版本，於是手工建構的 `EmitterSpec`（bench／測試 fixture）不必自行編譯公式也能取樣。快取與 AST 的一致性由 `ExprCodeWiringSpec` 對全部範例陣斷言 `emCode em == emitterCodeOf em`。
+
+**代價**：`bench/Bench.hs` 與 `test/Acceptance10Spec.hs` 兩處手工 `EmitterSpec` 各加一行 `emCode = noEmitterCode`。後者不在 §0.2 的盤點內（+1 檔）。
+
+**10-2（§3）`cse :: Expr -> ExprDag`，而非 `Expr -> Expr`。** §3 的註解本身留了「或內部 DAG 表徵」這個選項，本輪取它，理由是**可觀察性**：`Expr` 裡的共享是物理的、不是結構的，`exprSize` 對共享後的樹仍數兩次——`Expr -> Expr` 的簽名沒有任何測試能見證「這個子式現在只求值一次」。S2 的驗收條件「重複子式的節點數確實下降（見證）」在 DAG 形式下才有意義。`compileExpr :: Expr -> ExprCode`（＝`compileDag . cse`）與律 1 的形狀不變。
+
+**10-3（§2.4）平行切分：逐發射器**之外**再逐索引分塊。** §2.4 寫「逐發射器切分」。實作時量到：一張用滿 `budgetCap` 的陣通常只有個位數發射器，只按發射器切等於沒切。分片因此改為「一個發射器的一段連續索引區間，至多 `parallelChunk` 列」——分片**絕不跨發射器**，所以 §2.4 的四點論證逐字成立（它本來就是用「索引區間」寫的），這是同一個證明的更細用法而非新風險。`ParallelSampleSpec` 為此加了「分片不跨發射器」與「輸出列區間不重疊且恰好覆蓋緩衝」兩條見證。
+
+**10-4（非偏離，但值得記帳）** `parallelThreshold` 放在 `Magic.Particle.Analytic` 而非 §3 列出的 `Magic.Expr.Code`——它是取樣層的常數，與公式語言無關。
+
+**新的一筆帳**：取樣器每粒子配置約 **460 位元組**的中介 `V3`（位置公式的十餘個暫存值）。這是本輪量測過程中浮現的下一個瓶頸，也是平行加速在 -N8 之後趨緩的原因之一。已記入 ADR-0017 §後果與 roadmap。

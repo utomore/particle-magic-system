@@ -40,6 +40,11 @@ module Magic.Compile
   , BlendMode (..)
   , BillboardShape (..)
 
+    -- * Compiled formula programs (func-spec 0022 S3)
+  , EmitterCode (..)
+  , noEmitterCode
+  , emitterCodeOf
+
     -- * Lifecycle (permanent, spec 0006)
   , Phase (..)
   , PhasePlan (..)
@@ -90,6 +95,7 @@ import Magic.Expr
   , Var (..)
   , foldConstants
   )
+import Magic.Expr.Code (ExprCode, ExprCodeV3, compileExpr, compileExprV3)
 import Magic.Rune
   ( Anchor (..)
   , BillboardShape (..)
@@ -258,8 +264,61 @@ data EmitterSpec = EmitterSpec
   -- ^ Pure metadata (spec 0006): which lifecycle stage this emitter
   -- belongs to. The sampler never reads it — time classification always
   -- goes through 'phaseAt'.
+  , emCode :: !EmitterCode
+  -- ^ The emitter's formulas, compiled to bytecode (func-spec 0022 S3).
+  -- A /cache/ of what 'emMotion' and 'emAppearance' already say, not a
+  -- second source of truth: 'compile' fills it from the emitter's own AST
+  -- and nothing else ever writes it.
   }
   deriving (Eq, Show)
+
+-- | The bytecode form of every formula an emitter can carry (func-spec
+-- 0022 S3). Each slot is 'Nothing' when the emitter has no formula there —
+-- and also, for a hand-built 'EmitterSpec' that never went through
+-- 'compile', when nobody has compiled one yet: the sampler then falls back
+-- to 'Magic.Expr.evalFinite' over the AST, which law 1 makes an identical
+-- answer at a slower speed.
+--
+-- Why the AST fields stay where they are, rather than being /replaced/ by
+-- these (a deviation from func-spec 0022 §3, recorded in its §10): the
+-- 'Magic.Rune.Trajectory' sum carries its own 'Magic.Expr.ExprV3' and
+-- "Magic.Rune" is untouched this round; and 'emitterBounds' bounds a player
+-- formula by interval arithmetic over the AST, which a flattened program
+-- cannot answer. Bytecode is what the /sampler/ needs; the AST is what the
+-- /compiler/ needs. Keeping both is the honest shape.
+data EmitterCode = EmitterCode
+  { emcRange :: !(Maybe ExprCode)
+  -- ^ 'motRange' compiled.
+  , emcConverge :: !(Maybe ExprCode)
+  -- ^ 'motConverge' compiled.
+  , emcAmplify :: !(Maybe ExprCode)
+  -- ^ 'appAmplify' compiled.
+  , emcTraject :: !(Maybe ExprCodeV3)
+  -- ^ 'motTraject'\'s 'Magic.Rune.Formula' payload compiled.
+  }
+  deriving (Eq, Show)
+
+-- | No formula compiled — the value a fixture that bypasses 'compile'
+-- carries, and the correct one for an emitter with no formulas at all.
+noEmitterCode :: EmitterCode
+noEmitterCode = EmitterCode Nothing Nothing Nothing Nothing
+
+-- | Compile every formula an emitter carries. Reads the emitter's own
+-- 'Motion' and 'Appearance', so the cache cannot drift from the AST it was
+-- derived from unless somebody rewrites one without re-running this — which
+-- @test\/ExprCodeWiringSpec.hs@ checks for across every shipped example.
+emitterCodeOf :: EmitterSpec -> EmitterCode
+emitterCodeOf em =
+  EmitterCode
+    { emcRange = fmap compileExpr (motRange motion)
+    , emcConverge = fmap compileExpr (motConverge motion)
+    , emcAmplify = fmap compileExpr (appAmplify (emAppearance em))
+    , emcTraject = case motTraject motion of
+        Formula v3 -> Just (compileExprV3 v3)
+        _ -> Nothing
+    }
+  where
+    motion = emMotion em
 
 -- | The four lifecycle stages (architecture §3.3). Extensible sum.
 -- 'Converging' and 'Dissipating' label time spans, not emitters — no
@@ -505,6 +564,7 @@ compile circle = do
           , emMotion = motion
           , emAppearance = (ssAppearance (bpSeed modulated)) {appShape = styleShape}
           , emPhase = Casting
+          , emCode = noEmitterCode
           }
       -- Func-spec 0025 S4. @Nothing@ branches around the split entirely
       -- (rather than splitting into one part), which is what makes the
@@ -517,7 +577,7 @@ compile circle = do
         Nothing -> []
         Just _ -> formationEmittersFor circle castStart spellEnd element
       element = essenceElementOf (core circle)
-      allEmitters = map foldEmitterExprs (castingEmitters ++ formationEmitters)
+      allEmitters = map compileEmitterExprs (castingEmitters ++ formationEmitters)
       totalCount = sum (map emCount allEmitters)
       -- 'delay' is already absolute (step 3.5 baked castStart into it), so
       -- the closing landmarks are delay + duration [+ lifetime] with no
@@ -570,11 +630,23 @@ compileMany circles = do
     then Left (BudgetExceeded total budgetCap)
     else Right composed
 
--- | Fold every variable-free subtree of every formula an emitter carries
--- (func-spec 0010 S6). Compile time is where a player's constant
--- arithmetic should be paid for — once — rather than per particle per
--- frame; 'Magic.Expr.foldConstants' preserves evaluation bit for bit, so
--- this is invisible to every sampled buffer.
+-- | Run architecture §8.2's whole acceleration ladder over every formula an
+-- emitter carries: fold the constants (func-spec 0010 S6), then share and
+-- flatten into bytecode (func-spec 0022 S3, @foldConstants → cse →
+-- compileExpr@).
+--
+-- Compile time is where a player's arithmetic should be paid for — once —
+-- rather than once per particle per frame. Every rung of the ladder
+-- preserves evaluation bit for bit, so all of this is invisible to every
+-- sampled buffer; that is the whole claim, and @test\/ExprCodeWiringSpec.hs@
+-- is where it is cashed.
+compileEmitterExprs :: EmitterSpec -> EmitterSpec
+compileEmitterExprs em = folded {emCode = emitterCodeOf folded}
+  where
+    folded = foldEmitterExprs em
+
+-- | The constant-folding half, kept separate so the ordering
+-- @fold → compile@ is visible rather than implied.
 foldEmitterExprs :: EmitterSpec -> EmitterSpec
 foldEmitterExprs em =
   em
@@ -791,6 +863,7 @@ formationEmittersFor circle castStart spellEnd element =
         , emMotion = formationMotion spawn
         , emAppearance = appearance
         , emPhase = Drawing
+        , emCode = noEmitterCode
         }
 
     nodeSlotEmitter :: Int -> V3 -> Maybe NodeRune -> [EmitterSpec]
@@ -804,6 +877,7 @@ formationEmittersFor circle castStart spellEnd element =
             , emMotion = formationMotion (SpawnAtAnchor 0)
             , emAppearance = appearance
             , emPhase = Drawing
+            , emCode = noEmitterCode
             }
         ]
 
@@ -818,6 +892,7 @@ formationEmittersFor circle castStart spellEnd element =
             , emMotion = formationMotion (SpawnAtAnchor 0)
             , emAppearance = appearance
             , emPhase = Drawing
+            , emCode = noEmitterCode
             }
         ]
 

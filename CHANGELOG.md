@@ -318,3 +318,33 @@ Format rules (the authority is [docs/release.md](docs/release.md) §3, and
   all across the ABI with `PM_ABI_VERSION` still 1. New example
   `twin-lance.json`; every example and golden that existed before this
   round is untouched. (delivered)
+- **0022 performance, second tier** — ADR-0017. The two accounting items
+  func-spec 0010 left open, closed. Architecture §8.2's acceleration ladder
+  gets its remaining two rungs: `Magic.Expr.Code` hash-conses a formula into
+  a shared DAG and flattens it into a contiguous `Word32` instruction stream
+  run by a tight loop over unboxed memory. "AST interface unchanged, only
+  the evaluator swapped" is taken literally — `Magic/Expr.hs` is not touched
+  at all, and `evalExpr` stays on as the reference implementation the fast
+  path must prove itself equal to. And `sample` grows a second path: the
+  work is cut into shards (one emitter, a run of indices) and evaluated with
+  `Control.Parallel.Strategies`. That is a *pure* API, so the core keeps
+  ADR-0007's "no IO, no `Eff`" — which is the whole reason it was chosen
+  over `forkIO`, and which `BoundarySpec` now checks by scanning the core
+  and boundary sources rather than by asserting it in a comment. `parallel`
+  is the first addition to the core dependency whitelist since 0001.
+  Two bit-for-bit equivalence laws are the round's entire value: bytecode ≡
+  AST evaluation, and parallel ≡ single-threaded, on any number of cores.
+  Both are structural rather than statistical — the shard boundaries are
+  compile-time data, the shards are independent, nothing is reduced across
+  threads, and the concatenation order is fixed — and every golden from
+  every earlier round is unchanged. Measured on 8 cores / 16 threads: 100k
+  particles sample in 2.5 ms instead of 8.4 (3.9×), a spell at the 16384
+  cap in 1.0 ms instead of 1.5 (1.5×); below the measured threshold of 8192
+  the parallel path is slower, so `sample` does not take it. The honest
+  half of the record: the bytecode is 1.57× on formulas with repeated
+  subterms and a *wash* on the shipped examples — func-spec 0010's finding
+  that the hot spot is `sin`/`cos`/`hashChan` rather than `Expr` dispatch
+  still holds, and the next bottleneck it turned up is the ~460 bytes of
+  intermediate `V3`s the sampler allocates per particle. `budgetCap` is
+  deliberately unchanged: this round delivers the measurements ADR-0012's
+  consequences asked for, not the raise. (delivered)

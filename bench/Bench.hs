@@ -20,9 +20,12 @@
 -- nothing.
 module Main (main) where
 
+import Control.Exception (evaluate)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.List (sortOn)
+import GHC.Clock (getMonotonicTime)
+import GHC.Conc (getNumCapabilities)
 import Data.Ord (Down (..))
 import qualified Data.Vector as V
 import qualified Data.Vector.Storable as S
@@ -39,6 +42,8 @@ import Magic.Compile
   , Envelope (..)
   , Motion (..)
   , ParticleBudget (..)
+  , compile
+  , noEmitterCode
   , Phase (..)
   , PhasePlan (..)
   , SpawnPattern (..)
@@ -63,7 +68,31 @@ import Magic.Interface
   , pbCount
   , spellAge
   )
-import Magic.Particle.Analytic (sample)
+import Magic.Expr
+  ( BinOp (..)
+  , Expr (..)
+  , ExprEnv (..)
+  , Fun1 (..)
+  , Var (..)
+  , evalFinite
+  , exprSize
+  , foldConstants
+  )
+import Magic.Expr.Code
+  ( codeSize
+  , compileExpr
+  , cse
+  , dagNodeCount
+  , evalCodeFinite
+  )
+import Magic.Particle.Analytic
+  ( parallelChunk
+  , parallelThreshold
+  , sample
+  , sampleParallel
+  , sampleSequential
+  , spellShards
+  )
 import Magic.Particle.Buffer (pbPosX, pbPosY, pbPosZ)
 import Magic.Projection (ViewPlane (..), depthOrder, orthographic)
 import Magic.Rune (FaceShape (..), RadiationMode (..), Trajectory (..))
@@ -164,6 +193,10 @@ syntheticSpell n =
               }
         , emAppearance = Appearance (ColorRamp 0xFFD966FF 0xE6390000) 0.05 BlendAdditive Nothing BillboardSquare
         , emPhase = Casting
+        -- func-spec 0022 S3: this fixture carries no formulas at all, so "no
+        -- bytecode compiled" is the accurate value rather than a shortcut --
+        -- there is nothing here for the sampler to run either way.
+        , emCode = noEmitterCode
         }
 
 -- | Sample the synthetic spell and force every column by summing one of
@@ -212,6 +245,161 @@ frameCost spell t =
 capCandidates :: [Int]
 capCandidates = [4096, 8192, 16384, 32768]
 
+-- func-spec 0022 S6 fixtures ---------------------------------------------------
+
+-- | Formulas of the shape a player actually writes, and the shape this
+-- round is meant to help. @wave@ is a plain trajectory term; @shared@
+-- repeats @sin(3t)@ three times, which is what CSE is for; @deep@ is a long
+-- chain, where the flat instruction stream should beat the pointer chase by
+-- the widest margin it ever will.
+benchExprs :: [(String, Expr)]
+benchExprs =
+  [ ("wave", wave)
+  , ("shared", Bin Add (Bin Mul s s) (Bin Sub s (Var VarLife)))
+  , ("deep", chain 64)
+  ]
+  where
+    s = Fun1 FSin (Bin Mul (Lit 3) (Var VarT))
+    wave =
+      Bin
+        Add
+        (Bin Mul (Lit 2) (Fun1 FSin (Bin Mul (Lit 3) (Var VarT))))
+        (Fun1 FCos (Bin Mul (Lit 2) (Var VarT)))
+    chain n = go (n :: Int) (Var VarT)
+      where
+        go 0 acc = acc
+        go k acc = go (k - 1) (Bin Add (Fun1 FSin acc) (Lit 1))
+
+-- | The production pipeline: fold, share, flatten (func-spec 0022 §2.6).
+prepared :: Expr -> Expr
+prepared = foldConstants
+
+-- | @n@ evaluations of a formula over varying particle indices — the shape
+-- the sampler runs it in, one per particle per frame.
+astExprCost :: Expr -> Int -> Float
+astExprCost e n = go 0 0
+  where
+    go !i !acc
+      | i >= n = acc
+      | otherwise = go (i + 1) (acc + evalFinite e (exprEnvAt i))
+
+codeExprCost :: Expr -> Int -> Float
+codeExprCost e n = go 0 0
+  where
+    code = compileExpr e
+    go !i !acc
+      | i >= n = acc
+      | otherwise = go (i + 1) (acc + evalCodeFinite code (exprEnvAt i))
+
+exprEnvAt :: Int -> ExprEnv
+exprEnvAt i =
+  ExprEnv
+    { envT = fromIntegral i * 0.001
+    , envLife = fromIntegral (i `mod` 100) * 0.01
+    , envPIndex = i
+    , envSeed = Seed 2026
+    }
+
+-- | How much of a formula CSE removes: nodes before, nodes after,
+-- instructions emitted. Reported rather than benchmarked — a hit rate is a
+-- number, not a duration.
+cseReport :: (String, Expr) -> String
+cseReport (name, e0) =
+  name
+    ++ ": "
+    ++ show (exprSize e0)
+    ++ " AST nodes -> "
+    ++ show (exprSize e)
+    ++ " folded -> "
+    ++ show (dagNodeCount (cse e))
+    ++ " shared -> "
+    ++ show (codeSize (compileExpr e))
+    ++ " instructions"
+  where
+    e = prepared e0
+
+-- | The same spell with every compiled program removed, so the sampler
+-- falls back to 'Magic.Expr.evalFinite' over the AST.
+stripCode :: CompiledSpell -> CompiledSpell
+stripCode spell =
+  spell {spellEmitters = V.map (\em -> em {emCode = noEmitterCode}) (spellEmitters spell)}
+
+-- | Shipped examples that actually carry formulas — the only ones for which
+-- "bytecode vs AST" is a question rather than a tautology.
+formulaExamples :: [FilePath]
+formulaExamples =
+  [ "assets/spells/lissajous.json"
+  , "assets/spells/converge-flame.json"
+  , "assets/spells/pulse-ring.json"
+  ]
+
+-- The parallel measurement, on a wall clock -------------------------------------
+
+-- | Sizes either side of 'parallelThreshold', so the acceptance record can
+-- say where the parallel path starts paying for itself rather than assert
+-- it. Powers of two around the threshold plus the ADR-0006 target range.
+parallelSizes :: [Int]
+parallelSizes = [1024, 2048, 4096, 8192, 16384, 32768, 100000]
+
+-- | Force every column of a buffer, so the measurement is of the whole
+-- sample and not of a thunk.
+forceBuffer :: ParticleBuffer -> Float
+forceBuffer pb = U.sum (pbPosX pb) + U.sum (pbPosZ pb) + fromIntegral (pbCount pb)
+
+-- | Milliseconds per call, on the /wall/ clock, averaged over @reps@.
+--
+-- This section deliberately does not go through 'Test.Tasty.Bench':
+-- tasty-bench measures __CPU__ time, which for a parallel computation goes
+-- /up/ as the work is spread over more cores. It is the right instrument
+-- for every other group in this file and exactly the wrong one for this
+-- one — an early draft of func-spec 0022's acceptance run read "parallel is
+-- 15% slower at 100k" off it, when the same work on a wall clock was 3.7×
+-- faster. The numbers below are the ones §9 records.
+--
+-- The time argument varies by an unobservably small amount per repetition,
+-- which changes nothing about the work and everything about whether GHC may
+-- float the sample out of the loop and measure a memoized thunk.
+timeMs :: Int -> (Int -> Float) -> IO Double
+timeMs reps f = do
+  _ <- evaluate (f 0)
+  t0 <- getMonotonicTime
+  let go !i !acc
+        | i >= reps = acc
+        | otherwise = go (i + 1) (acc + f i)
+  _ <- evaluate (go 0 0)
+  t1 <- getMonotonicTime
+  pure ((t1 - t0) / fromIntegral reps * 1000)
+
+-- | The sequential\/parallel table at the current capability count. Run the
+-- binary at @+RTS -N1@, @-N2@, @-N4@, @-N8@ to get the speed-up curve; the
+-- two columns are the same buffer computed two ways (law 2), so the ratio
+-- is a pure statement about time.
+parallelReport :: IO ()
+parallelReport = do
+  caps <- getNumCapabilities
+  putStrLn ("-- sample: sequential vs parallel, wall clock, -N" ++ show caps)
+  mapM_ row parallelSizes
+  where
+    row n = do
+      let spell = syntheticSpell n
+          at i = Time (2.5 + fromIntegral i * 1e-9)
+          reps = max 20 (2000000 `div` max 1 n)
+      s <- timeMs reps (\i -> forceBuffer (sampleSequential spell ctx (at i)))
+      p <- timeMs reps (\i -> forceBuffer (sampleParallel spell ctx (at i)))
+      putStrLn
+        ( "   "
+            ++ pad 8 (show n)
+            ++ " particles  seq "
+            ++ pad 9 (micro s)
+            ++ "  par "
+            ++ pad 9 (micro p)
+            ++ "  speedup "
+            ++ show (fromIntegral (round (s / p * 100) :: Int) / 100 :: Double)
+            ++ (if n < parallelThreshold then "   (below threshold: sample takes the sequential path)" else "")
+        )
+    micro x = show (round (x * 1000) :: Int) ++ " us"
+    pad w s = s ++ replicate (w - length s) ' '
+
 -- | Cast and force the compiled spell to its constructor. 'isFinished'
 -- reads @spellLifetime@, so the strict 'CompiledSpell' record exists —
 -- but its emitter vector's elements stay lazy, so this is the floor of
@@ -250,6 +438,30 @@ main = do
     ( "particle counts by age: "
         ++ show [(a, pbCount (bufferOf s)) | (a, s) <- zip ages agedSpells]
     )
+  -- func-spec 0022 S6. The CSE hit rate and the shard layout are counts,
+  -- not durations, so they are reported here rather than benchmarked.
+  caps <- getNumCapabilities
+  putStrLn ("capabilities: " ++ show caps)
+  putStrLn
+    ( "parallel threshold / chunk: "
+        ++ show parallelThreshold
+        ++ " / "
+        ++ show parallelChunk
+    )
+  putStrLn
+    ( "shards at t=2.5: "
+        ++ show [(n, length (spellShards (syntheticSpell n) (Time 2.5))) | n <- parallelSizes]
+    )
+  mapM_ (putStrLn . ("CSE " ++) . cseReport) benchExprs
+  formulaSpells <-
+    mapM
+      ( \path -> do
+          circle <- loadOrDie path
+          spell <- either (fail . show) pure (compile circle)
+          pure (takeWhile (/= '.') (drop (length ("assets/spells/" :: String)) path), spell)
+      )
+      formulaExamples
+  parallelReport
   defaultMain
     [ bgroup
         "castSpell (compile only)"
@@ -300,4 +512,50 @@ main = do
         | n <- capCandidates
         , let spell = syntheticSpell n
         ]
+    , -- func-spec 0022 S6 ----------------------------------------------
+      -- The Expr acceleration ladder's second and third rungs, against the
+      -- reference AST walk they replace. Func-spec 0022 §2.2 predicts a
+      -- modest win here (0010 measured the sampling hot spot to be
+      -- sin/cos/hashChan, not Expr dispatch); this is where that prediction
+      -- is either confirmed or corrected.
+      bgroup
+        "Expr evaluation (10k evaluations)"
+        ( concat
+            [ [ bench (name ++ " / AST (evalExpr)") (whnf (astExprCost (prepared e)) 10000)
+              , bench (name ++ " / bytecode (evalCode)") (whnf (codeExprCost (prepared e)) 10000)
+              ]
+            | (name, e) <- benchExprs
+            ]
+        )
+    , bgroup
+        "compile a formula (once per cast, not per particle)"
+        [ bench name (nf (codeSize . compileExpr . prepared) e)
+        | (name, e) <- benchExprs
+        ]
+    , -- The measurement the round exists for. Run the binary at -N1, -N2,
+      -- -N4, -N8 and read the speed-up off the same rows; the sequential
+      -- row is the invariant baseline the parallel one is divided by, and
+      -- the two produce identical buffers (law 2), so this is a pure
+      -- time comparison of one answer computed two ways.
+      bgroup
+        "sample: which path sample picks (CPU time, single-threaded)"
+        [ bench (show n ++ " particles") (whnf (\s -> sampleCost s (Time 2.5)) spell)
+        | n <- [parallelThreshold - 1, parallelThreshold]
+        , let spell = syntheticSpell n
+        ]
+    , -- The question the two groups above cannot answer between them: does
+      -- routing a /real/ spell's formulas through the bytecode make its
+      -- frame cheaper? 'stripCode' is the same spell with the compiled
+      -- programs removed, so the sampler falls back to walking the AST —
+      -- the same buffer, bit for bit (law 1), by the evaluator this round
+      -- replaced.
+      bgroup
+        "sample a formula-carrying spell: bytecode vs AST"
+        ( concat
+            [ [ bench (name ++ " / bytecode") (whnf (\s -> sampleCost s (Time 2.5)) spell)
+              , bench (name ++ " / AST") (whnf (\s -> sampleCost s (Time 2.5)) (stripCode spell))
+              ]
+            | (name, spell) <- formulaSpells
+            ]
+        )
     ]
