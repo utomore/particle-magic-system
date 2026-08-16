@@ -2,16 +2,17 @@
 id: func-0025
 type: spec
 title: spatial-output-anchors
-status: open
+description: 空間資訊輸出與多發動點錨點
+status: done
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 depends-on: [func-0018]
 related-adr: [adr-0003, adr-0006, adr-0007, adr-0008, adr-0011, adr-0012, adr-0019]
 ---
 
 # Func-Spec 0025：空間資訊輸出與多發動點
 
-> 狀態：**設計定案，待實作**
+> 狀態：**已完成**（2026-08-16 驗收，見 §8）
 > 性質：**重大基建功能** —— 本 spec 定義系統對外的**第三種輸出**（前兩種是 `RenderBatch` 與錯誤）：空間摘要。`OrientedBox`／`OccupancyGrid` 的語意、格網的索引序與框的決定方式、`"anchors"` 的 JSON 形狀交付即凍結，且它們是未來碰撞偵測、AoE 判定、視錐剔除的共同地基。同輪交付 **ADR-0019**。
 > 前置依賴：**spec 0018（需已完成）**；0016／0017 亦須已交付（**兩者已於 2026-08-15 完成**）。前者：本 spec 加 7 個 C 匯出，觸及 `src/ffi`＋`include`＋`.def`＋`bindings`，恰為 0018 鎖住的檔案集合。後者：本 spec 改 `src/core/Magic/Compile.hs` 的 `compile` fold 與 `emitterBounds` 鄰近——該檔在 0016（`SpawnPattern`／`formationEmittersFor`）與 0017（`formEnvFor` 兩參數化、`kcExprFor` 刪除、`formationEmittersFor` 去參數）之後才定形，本 spec 以其**交付後**的形狀為起點。7 個匯出中的 `pm_scene_spell_bounds` 另建立在 0018 的 `PmScene*` 之上。**與 spec 0020 平行**（0020 明文只碰 `Sigil.hs`／`Analytic.hs` 且其 §2.2 證明不碰 `Compile.hs`——逐檔交集 = ∅，§0.2）。**與 spec 0019、0024 的 `tools/` 半場亦平行**。
 > 依據：architecture **§7**（「發射器層級剔除……**視錐判定本身是宿主責任**——核心沒有相機概念」，0010 §8-3 的分工）、**§4.7**（`RenderBatch` 是目前唯一的輸出格式）、§5.2（輸出零 raylib 依賴）、§7「明確不做」的**空間分割結構**與 §11 的**粒子對粒子互動**（本 spec 為何**不**牴觸這兩條，見 §2.1）；ADR-0003（槽位固定職責與九宮格——格網座標系的語意根據）、ADR-0006（SoA——一趟掃描即得格網）、ADR-0007（核心零 IO、引用透明）、ADR-0008（核心在抽象 3D、投影屬外殼）、ADR-0011 D7（header only-add）、ADR-0012（合成與場景層）；spec 0006 §9（**「`Anchor` 的玩家面 JSON 控制」的原始記帳**）、0010 §9.3（`emitterBounds` 凍結）、0018 §8（`pm_scene_*` 的既有面）。
@@ -284,15 +285,17 @@ flowchart LR
 
 ## 6. Todo List 與 1-to-1 測試對應
 
+全部 7 項於 2026-08-16 完成，對應測試全綠（見 §8）。
+
 | # | Todo | 測試 |
 |---|---|---|
-| S1 | `Magic.Space`：`OrientedBox`／`emitterBox`（分軸區間算術）／`boxToAABB`／`spellBounds`／`spellBox` | `test/SpaceBoundsSpec.hs`（**保守性 property**：任意 `t ≤ horizon`、任意粒子，`particlePosition` 落在 `emitterBox` 內（全部範例陣 × 隨機時刻）；三軸正交且為單位向量；**`emitterBounds` 逐位元不變**（對全部範例陣的每個發射器逐值比對——凍結見證）；`boxToAABB . emitterBox` 的體積 ≤ `emitterBounds` 的體積（貼合度見證，含「沿法線行進」的具體案例）；`spellBox` 涵蓋每個 `emitterBox`） |
-| S2 | `OccupancyGrid`／`occupancyOf`／`occupancyMask`（N=3 的 `Word32` 快路徑） | `test/OccupancySpec.hs`（計數總和 ≡ `pbCount`（property，無粒子遺漏或重複計數）；索引序 `(k*N+j)*N+i` 的見證；`occupancyMask` 的第 c 位為 1 ⟺ `ogCounts ! c > 0`（N=3，property）；框外粒子被夾制到邊界格；`N = 1` 退化為單格＝全部粒子；空 buffer ⇒ 全零與遮罩 0；決定論；**框不隨幀變動**：同一法術不同 `t` 的 `ogFrame` 相同（§2.7 的可比較性律）） |
-| S3 | `Circle.circleAnchors`＋`"anchors"` 的 Codec 編解碼與驗證＋`docs/spell-schema.md` | `test/AnchorCodecSpec.hs`（round-trip `saveCircle`→`loadCircle` 恆等（property）；缺鍵、`null`、空陣列三者的分別（前二為「無」，第三為錯誤）；零 `normal`／超過 16 個各一個失敗見證＋錯誤訊息含鍵路徑；**既有 13 個範例陣的解碼結果 `circleAnchors == Nothing`**；`SchemaDocSpec` 連帶全綠） |
-| S4 | `compile` fold 產出 N 個 casting emitter（能量等分、預算守恆） | `test/MultiAnchorSpec.hs`（**opt-in 逐位元律**：`circleAnchors == Nothing` 的 13 個範例陣 `FrameOutput` 240 幀逐位元不變；**能量等分律**：N 個 anchor 的 `spellBudget` ≡ 同陣單 anchor 時的值（property）；casting emitter 數 ≡ `length anchors`；各 emitter 的 `emAnchor` ≡ 對應的 anchor；陣形發射器不受影響（仍由 `circlePhases` 決定）；`compileMany` 下各成分陣的 anchors 各自生效） |
-| S5 | boundary 加法匯出：`emitterBoxOf`／`spellBoundsOf`／`spellBoxOf`／`occupancyOf`／`occupancyMask` | `test/SpaceInterfaceSpec.hs`（boundary 匯出 ≡ 核心函數逐位元（型別穿越無語意）；`ActiveSpell` 的當前 `Time` 被正確當成 horizon；**`FrameOutput` 零變更**的見證（其建構子與欄位集合不變）；`BoundarySpec` 連帶全綠——`Magic.Space` 屬 magic-core，boundary 不外洩其內部） |
-| S6 | 7 個 C 匯出＋`PM_OCCUPANCY_DIM_DEFAULT`＋header／`.def`／C# 綁定 | `test/FFISpaceSpec.hs`（各進入點 ≡ 對應的 Haskell 函數逐位元；`pm_occupancy` 容量不足 → `PM_ERR_CAPACITY` 零寫出；`pm_occupancy_mask` 對 NULL handle 回 0；`pm_emitter_box` 索引越界 → `PM_ERR_ARGS`；`pm_scene_spell_bounds` 對未知 id → `PM_ERR_ARGS`；軸矩陣的列主序見證；**`FFIContractSpec`／`BindingContractSpec` 連帶更新後全綠**：進入點 21→28、`PM_ABI_VERSION` 仍為 1） |
-| S7 | 端到端＋`assets/spells/twin-lance.json`（雙發動點）＋ADR-0019 | `test/Acceptance25Spec.hs`（`twin-lance` 240 幀決定論；其兩束粒子確實分居兩側（以 `occupancyMask` 見證：左右格有粒子、中央格空）；`spellBounds` 涵蓋兩束；`magic-validate` exit 0；**空間查詢零副作用**：呼叫任何空間查詢前後，`observeSpell` 的輸出逐位元相同） |
+| ✅ S1 | `Magic.Space`：`OrientedBox`／`emitterBox`（分軸區間算術）／`boxToAABB`／`spellBounds`／`spellBox` | `test/SpaceBoundsSpec.hs`（**保守性 property**：任意 `t ≤ horizon`、任意粒子，`particlePosition` 落在 `emitterBox` 內（全部範例陣 × 隨機時刻）；三軸正交且為單位向量；**`emitterBounds` 逐位元不變**（對全部範例陣的每個發射器逐值比對——凍結見證）；`boxToAABB . emitterBox` 的體積 ≤ `emitterBounds` 的體積（貼合度見證，含「沿法線行進」的具體案例）；`spellBox` 涵蓋每個 `emitterBox`） |
+| ✅ S2 | `OccupancyGrid`／`occupancyOf`／`occupancyMask`（N=3 的 `Word32` 快路徑） | `test/OccupancySpec.hs`（計數總和 ≡ `pbCount`（property，無粒子遺漏或重複計數）；索引序 `(k*N+j)*N+i` 的見證；`occupancyMask` 的第 c 位為 1 ⟺ `ogCounts ! c > 0`（N=3，property）；框外粒子被夾制到邊界格；`N = 1` 退化為單格＝全部粒子；空 buffer ⇒ 全零與遮罩 0；決定論；**框不隨幀變動**：同一法術不同 `t` 的 `ogFrame` 相同（§2.7 的可比較性律）） |
+| ✅ S3 | `Circle.circleAnchors`＋`"anchors"` 的 Codec 編解碼與驗證＋`docs/spell-schema.md` | `test/AnchorCodecSpec.hs`（round-trip `saveCircle`→`loadCircle` 恆等（property）；缺鍵、`null`、空陣列三者的分別（前二為「無」，第三為錯誤）；零 `normal`／超過 16 個各一個失敗見證＋錯誤訊息含鍵路徑；**既有 13 個範例陣的解碼結果 `circleAnchors == Nothing`**；`SchemaDocSpec` 連帶全綠） |
+| ✅ S4 | `compile` fold 產出 N 個 casting emitter（能量等分、預算守恆） | `test/MultiAnchorSpec.hs`（**opt-in 逐位元律**：`circleAnchors == Nothing` 的 13 個範例陣 `FrameOutput` 240 幀逐位元不變；**能量等分律**：N 個 anchor 的 `spellBudget` ≡ 同陣單 anchor 時的值（property）；casting emitter 數 ≡ `length anchors`；各 emitter 的 `emAnchor` ≡ 對應的 anchor；陣形發射器不受影響（仍由 `circlePhases` 決定）；`compileMany` 下各成分陣的 anchors 各自生效） |
+| ✅ S5 | boundary 加法匯出：`emitterBoxOf`／`spellBoundsOf`／`spellBoxOf`／`occupancyOf`／`occupancyMask` | `test/SpaceInterfaceSpec.hs`（boundary 匯出 ≡ 核心函數逐位元（型別穿越無語意）；`ActiveSpell` 的當前 `Time` 被正確當成 horizon；**`FrameOutput` 零變更**的見證（其建構子與欄位集合不變）；`BoundarySpec` 連帶全綠——`Magic.Space` 屬 magic-core，boundary 不外洩其內部） |
+| ✅ S6 | 7 個 C 匯出＋`PM_OCCUPANCY_DIM_DEFAULT`＋header／`.def`／C# 綁定 | `test/FFISpaceSpec.hs`（各進入點 ≡ 對應的 Haskell 函數逐位元；`pm_occupancy` 容量不足 → `PM_ERR_CAPACITY` 零寫出；`pm_occupancy_mask` 對 NULL handle 回 0；`pm_emitter_box` 索引越界 → `PM_ERR_ARGS`；`pm_scene_spell_bounds` 對未知 id → `PM_ERR_ARGS`；軸矩陣的列主序見證；**`FFIContractSpec`／`BindingContractSpec` 連帶更新後全綠**：進入點 21→28、`PM_ABI_VERSION` 仍為 1） |
+| ✅ S7 | 端到端＋`assets/spells/twin-lance.json`（雙發動點）＋ADR-0019 | `test/Acceptance25Spec.hs`（`twin-lance` 240 幀決定論；其兩束粒子確實分居兩側（以 `occupancyMask` 見證：左右格有粒子、中央格空）；`spellBounds` 涵蓋兩束；`magic-validate` exit 0；**空間查詢零副作用**：呼叫任何空間查詢前後，`observeSpell` 的輸出逐位元相同） |
 
 ## 7. 非目標
 
@@ -309,4 +312,106 @@ flowchart LR
 
 ## 8. 驗收紀錄
 
-（實作時回填：日期、`cabal test` 結果；**貼合度實測**——各範例陣 `emitterBox` 與 `emitterBounds` 的體積比；`occupancyOf` 在 16384 粒下的單次成本；`twin-lance` 的手動 smoke 描述；凍結清單：`OrientedBox`／`OccupancyGrid` 的語意與索引序、格網框的決定方式、`"anchors"` JSON 形狀、能量等分律、7 個 C 進入點；與計畫的差異。）
+**日期**：2026-08-16。**平台**：Windows 11 x86_64、GHC 9.14.1、cabal 3.16.1.0。
+
+### 8.1 測試結果
+
+```
+cabal build all   → 綠（magic-core、magic-boundary、demo exe、magic-validate、
+                     foreign-library particle-magic-ffi、bench 全部）
+cabal test        → 1348 examples, 0 failures
+cabal run magic-validate -- --stats assets/spells → exit 0（13 個檔案全 OK）
+```
+
+交付前 1260 → 交付後 1348（+88）。S1–S7 七項全部完成，對應測試模組全綠：
+
+| # | 測試模組 | 狀態 |
+|---|---|---|
+| S1 | `test/SpaceBoundsSpec.hs` | 綠（含 `test/golden/emitter-bounds-0025.txt` 的凍結見證） |
+| S2 | `test/OccupancySpec.hs` | 綠 |
+| S3 | `test/AnchorCodecSpec.hs` | 綠（`SchemaDocSpec` 連帶綠） |
+| S4 | `test/MultiAnchorSpec.hs` | 綠 |
+| S5 | `test/SpaceInterfaceSpec.hs` | 綠（`BoundarySpec` 連帶綠） |
+| S6 | `test/FFISpaceSpec.hs` | 綠（`FFIContractSpec`／`BindingContractSpec` 連帶綠） |
+| S7 | `test/Acceptance25Spec.hs` | 綠 |
+
+**零重錄**：`test/golden/perf-0010/*` 的 8 個 golden 一個都沒動，既有 12 個範例陣的 240 幀輸出逐位元不變——opt-in 律在資料面（無 `anchors` 鍵）與行為面（`compile` 對 `Nothing` 走原路徑）雙重成立。
+
+### 8.2 貼合度實測
+
+`emitterBox` 的世界 AABB 相對 `emitterBounds` 立方體的體積比（`horizon = 2s`、施法者在 `(1,2,3)` 面向 +Y、全發射器合計）：
+
+| 範例陣 | 貼合盒 | 凍結立方體 | 比值 |
+|---|---:|---:|---:|
+| `bare-sigil` | 163.84 | 11294.51 | **1.5%** |
+| `empty` | 163.84 | 11239.42 | **1.5%** |
+| `converge-flame` | 207.36 | 11852.35 | **1.7%** |
+| `ring-fire` | 492.48 | 25412.19 | **1.9%** |
+| `grand-sigil` | 596.16 | 26046.04 | **2.3%** |
+| `gravity-well` | 57.60 | 1906.62 | **3.0%** |
+| `lissajous` | 55.76 | 1204.55 | **4.6%** |
+| `soft-bloom` | 55.49 | 646.58 | **8.6%** |
+| `pulse-ring` | 14.06 | 107.17 | **13.1%** |
+| `square-burst` | 7144.20 | 9261.00 | **77.1%** |
+| `twin-lance` | 0.65 | 4155.10 | **0.02%** |
+| `lattice-seal`／`spiral-spark` | **平面**（厚度 0） | 1113.50／1404.93 | — |
+
+三個值得說的結果：
+
+1. **`square-burst` 是唯一沒什麼改善的**，而原因是設計上的：它用 `radial-outward`，行進軸逐粒子不同且都在面內，所以每一項都得算進三軸（§3.1 的 Haddock 明寫這件事）。這不是 bug，是保守性的代價。
+2. **`lattice-seal` 與 `spiral-spark` 的貼合盒是平面**（`obHalfN = 0`）：它們的施放發射器走 `orbit` 軌跡＋`along-normal`，每一顆粒子都精確地留在初始面上。分軸算術**發現**了這件事，而同半徑立方體永遠說不出來。體積比是 0/V 而非「更小」，所以表中不列比值。
+3. `twin-lance`（本輪新範例）是最極端的：兩道細長的雷矛沿法線飛 7 units，橫向只有 0.08 的環半徑——立方體把 X／Y 也撐到 7 之外。
+
+### 8.3 空間查詢的成本
+
+`-O2` 編譯的獨立程式量測（非 GHCi），`occupancyOf` 對施放中的法術：
+
+| 粒子數 | `occupancyOf 3` | 每粒 | `occupancyMask` | `occupancyOf 8` |
+|---:|---:|---:|---:|---:|
+| 256 | 7.8 µs | 30.5 ns | 7.8 µs | 7.8 µs |
+| 2 048 | 46.9 µs | 22.9 ns | 54.7 µs | 39.1 µs |
+| 16 384（上限） | **398.4 µs** | **24.3 ns** | 414.1 µs | 343.8 µs |
+
+線性如設計，維度幾乎不影響成本（成本在每粒的三個投影，不在格子數）。
+
+**與計畫的差異**：§2.2 估「幾十微秒」。**典型法術（256 粒 ≒ 8 µs）符合，粒子上限處（0.40 ms）高了一個數量級。** 這不改變任何裁決——它仍在渲染關鍵路徑之外、仍是 opt-in、不呼叫就零成本——但它讓 §2.2 的 opt-in 設計從「禮貌」變成「必要」，ADR-0019 D2 據此改寫為實測值。實作上已做過三輪最佳化（單一 `ST` 計數向量取代 `U.accumulate` 的中間向量、除法提到迴圈外、frame 拆成裸 `Float` 避免每粒配置 `V3`），成本仍由每粒三個投影與三次浮點轉整數主導；若日後有宿主每幀都要，值得為 N = 3 做常數摺疊的特化路徑（記帳）。
+
+`spellBox`／`spellBounds`／`emitterBox` 全部是 O(發射器數)，量不到（< 0.5 µs）。
+
+### 8.4 `twin-lance` 的手動 smoke
+
+`cabal run magic-validate -- --stats assets/spells/twin-lance.json` 的輸出即為能量等分律的可見證據：
+
+```
+OK assets/spells/twin-lance.json
+  budget    384 / 16384 particles
+  emitters  2 [192, 192]
+  lifetime  3.300s
+  phases    none (casting starts at 0.000s)
+  fields    0
+  extent    (-6.380, -6.380, -6.980) .. (6.380, 6.380, 6.980)
+```
+
+`power 1.5` ⇒ 384 顆，兩個發動點各 192——**總量與單發動點時相同**。`Acceptance25Spec` 進一步以 `occupancyMask` 見證兩束確實分居兩側：左右格有粒子、**中央格空**；同一張陣把 `anchors` 拿掉之後中央格有粒子。demo 視窗的目視 smoke 未執行（本輪 `app/*` 零觸碰，既有的視覺路徑一行未改）。
+
+### 8.5 凍結清單（下游 spec 可引用）
+
+1. **`OrientedBox`** 的語意：中心、三個單位正交軸（面右／面上／面法線）、三個半長。
+2. **`OccupancyGrid`** 的語意與**索引序** `(k*N + j)*N + i`（`i` 沿 U、`j` 沿 V、`k` 沿法線，U 最快）。
+3. **格網框的決定方式**：框 = 法術**全生命週期**的 `spellBox`，整個生命週期固定（可比較性律，ADR-0019 D4）。框外粒子夾制到邊界格。
+4. **`"anchors"` 的 JSON 形狀**：`[{ "offset": [x,y,z], "normal": [x,y,z] }, …]`，缺鍵／`null` ⇒ 單一原點發動，**空陣列是錯誤**，上限 16，`normal` 非零。
+5. **能量等分律**：N 個發動點的 `spellBudget` **恰等於**同陣單發動點時的值；餘數分給前面幾個，各份相差至多 1。
+6. **7 個 C 進入點**的名稱與簽章：`pm_spell_bounds`／`pm_spell_box`／`pm_emitter_count`／`pm_emitter_box`／`pm_occupancy`／`pm_occupancy_mask`／`pm_scene_spell_bounds`，＋`PM_OCCUPANCY_DIM_DEFAULT = 3`；軸矩陣為 3×3 **列主序**（U、V、法線）。凍結清單 21 → 28 個進入點，`PM_ABI_VERSION` 仍為 **1**。
+7. **`emitterBounds` 逐位元不變**，見證為 `test/golden/emitter-bounds-0025.txt`（改動前 build 擷取，12 個範例陣 × 每個發射器 × 4 個 horizon = 172 行）。
+
+### 8.6 實作備註（與計畫的偏差）
+
+五處與 §0.2／§6 的計畫不同，都不影響任何裁決：
+
+1. **`Anchor` 的宣告從 `Magic.Compile` 下移到 `Magic.Rune`**（§0.2 原寫「`Rune.hs` 明文不碰」）。**必要**：`Circle` 要有 `circleAnchors :: Maybe [Anchor]`，而 `Magic.Circle` 不能 import `Magic.Compile`（解釋器讀陣，不是反過來），否則模組循環。`Magic.Compile` 續行 re-export，**匯出面一字未變**，所有既有 import 照舊。先例是 spec 0015 把 `BillboardShape` 從 boundary 遷入 `Magic.Rune`——同一個理由（某個型別變成玩家詞彙）。
+2. **`Magic.Compile` 加了一組內部匯出**（`Interval`／`IntervalEnv`／`evalInterval`／`maxMagnitude`／`ivSub`／`shapeRadius`），明文標示為非凍結面、僅供 `Magic.Space`。**必要**：`emitterBox` 必須用**同一份**區間算術，否則「新的更緊、舊的不變」會變成兩個獨立演化的東西。第二份拷貝是這裡唯一真正的風險。
+3. **`Magic.Scene` 加了 `lookupSpell`**（§0.2 原寫「`Scene.hs` 明文不碰」）。**必要**：`pm_scene_spell_bounds`（§3.2 要求的 7 個匯出之一）需要以 `SpellId` 取出 `ActiveSpell`，而場景層此前只匯出 id 清單。純加法、唯讀，回傳的 `ActiveSpell` 仍是 opaque，不多給呼叫者任何單張法術路徑沒給的東西。§0.2 的「不碰」清單與 §3.2 的匯出清單本身就互相矛盾，這是修正而非擴權。
+4. **能量等分的實作是「餘數分給前面幾個」而非各拿 `⌈count/N⌉`**。§2.6 的表格同時寫了「各 `⌈count/N⌉`」與「總量守恆」，而兩者在 `count` 不整除時不可兼得。**以總量守恆為準**——它是可測的等式，也是 §2.6 全部理由（不能繞過 `essPower`、`budgetCap` 要繼續是上界）之所繫。各份仍相差至多 1。
+5. **`emitterBounds` 的凍結見證放在 `SpaceBoundsSpec` 而非 `CullSpec`**（§0.2 原記 `CullSpec`）。見證需要一份改動前擷取的 golden 檔，與 S1 的其他斷言（貼合度、保守性）同屬一個主題；拆到兩個模組只會讓「這條律在哪裡受保護」變難回答。`CullSpec` 因此**一行未改**（§0.2 的修改清單少一個檔）。
+
+另外兩處事實與 §1 的文字不符，屬原文計數錯誤：既有範例陣是 **12** 個而非「13 個」（加上本輪的 `twin-lance.json` 才是 13）；`twin-lance.json` 最終**不含 `phases`**——原稿的雙發動點＋畫陣會讓陣形粒子填滿中央格，使 §6 S7 明訂的「中央格空」見證不可能成立。陣形只畫一次（不隨發動點複製）這件事改由 `MultiAnchorSpec` 以合成的相位陣見證。

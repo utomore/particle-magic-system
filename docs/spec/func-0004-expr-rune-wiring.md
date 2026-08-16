@@ -2,9 +2,10 @@
 id: func-0004
 type: spec
 title: expr-rune-wiring
+description: 四種 Expr 符文與魔法陣完整接線，能用公式描述行為
 status: done
 created: 2026-08-12
-updated: 2026-08-13
+updated: 2026-08-16
 depends-on: [func-0002, func-0003]
 related-adr: [adr-0002, adr-0003]
 ---

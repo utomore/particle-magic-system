@@ -140,6 +140,13 @@ zoomPerNotch = 1.15
 -- decides how much of the particle is there, which is not a depth cue
 -- and must not become one. At the default tint of 0 the colour stream is
 -- bit-identical to the untinted one (func-spec 0013 §1-4).
+--
+-- Func-spec 0021 S6 adds the second-tier cues, both of which move
+-- /sizes/ and never positions: 'fvDepthScale' reintroduces the size
+-- gradient orthographic projection deletes, and 'fvOutlineFloor' keeps
+-- the result above the threshold where a quad stops having a readable
+-- edge. Same discipline as the tint — at their defaults the geometry
+-- stream is bit-identical to the pre-0021 one.
 buildFlatQuads :: FlatView -> ParticleBuffer -> QuadBatch
 buildFlatQuads fv pb =
   QuadBatch {qbPositions = positions, qbColors = colors, qbCount = n}
@@ -154,7 +161,7 @@ buildFlatQuads fv pb =
         let !i = order U.! j
             (!sx, !sy) =
               screenOf fv (V3 (pbPosX pb U.! i) (pbPosY pb U.! i) (pbPosZ pb U.! i))
-            !h = (pbSize pb U.! i) * ppu * 0.5
+            !h = halfExtentAt i
             !base = j * 12
             -- su is the world-up sign, so it subtracts on screen.
             vertex k sr su = do
@@ -196,6 +203,41 @@ buildFlatQuads fv pb =
       | otherwise = 1 - tint * ((depthOf i - dNear) / range)
     depthOf i =
       snd (orthographic (fvPlane fv) (V3 (pbPosX pb U.! i) (pbPosY pb U.! i) (pbPosZ pb U.! i)))
+
+    -- Depth as a fraction of the batch's own range: 0 at the near end,
+    -- 1 at the far end — the same normalisation 'shadeAt' uses, so the
+    -- two cues agree about which particle is in front.
+    depthFrac i = (depthOf i - dNear) / range
+
+    -- Second-tier top-view readability (func-spec 0021 S6).
+    --
+    -- Zero-ripple law, the convention func-spec 0013 set for the tint:
+    -- with both knobs at their defaults the whole thing branches away
+    -- rather than multiplying by one, so the geometry stream is the one
+    -- func-spec 0008 shipped, bit for bit — not merely equal to it.
+    flatten = fvDepthScale fv
+    outline = fvOutlineFloor fv
+    readabilityOff = flatten == 1 && outline <= 0
+
+    halfExtentAt i
+      | readabilityOff = plain
+      | otherwise = max (outline * 0.5) (plain * flattenAt i)
+      where
+        plain = (pbSize pb U.! i) * ppu * 0.5
+
+    -- k at the near end, 1/k at the far end, 1 in the middle: a size
+    -- gradient the orthographic projection cannot produce on its own,
+    -- because it maps every depth to the same scale by definition. The
+    -- exponent is linear in depth, so the ordering is preserved exactly.
+    --
+    -- Off (and so exactly 1) when the batch has no depth range to
+    -- normalise against — the same guard 'shadeAt' takes, and for the
+    -- same reason: with every particle at one depth there is no gradient
+    -- to show, and scaling them all by the near-end factor would be a
+    -- depth cue announcing a depth that is not there.
+    flattenAt i
+      | flatten <= 0 || range <= 0 = 1
+      | otherwise = flatten ** (1 - 2 * depthFrac i)
 
 -- | Scale a colour channel by a brightness factor. A factor of exactly 1
 -- is the identity on every byte (@round (fromIntegral b * 1) == b@ for

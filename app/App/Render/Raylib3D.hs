@@ -44,7 +44,7 @@ import Raylib.Types
   , Color (..)
   , ConfigFlag (WindowResizable)
   , Image (..)
-  , KeyboardKey (KeyLeft, KeyR, KeyRight, KeyT, KeyTab, KeyV)
+  , KeyboardKey (KeyG, KeyLeft, KeyR, KeyRight, KeyT, KeyTab, KeyV)
   , Material
   , Matrix
   , Mesh (..)
@@ -396,6 +396,7 @@ pollInputIO = do
   backend <- RL.isKeyPressed KeyTab
   plane <- RL.isKeyPressed KeyV
   tint <- RL.isKeyPressed KeyT
+  readability <- RL.isKeyPressed KeyG
   dragging <- RL.isMouseButtonDown MouseButtonLeft
   Vector2 dx dy <- RL.getMouseDelta
   wheel <- RL.getMouseWheelMove
@@ -411,6 +412,7 @@ pollInputIO = do
       , diToggleBackend = backend
       , diTogglePlane = plane
       , diToggleTint = tint
+      , diToggleReadability = readability
       , diOrbitDrag = drag
       , diPanDrag = drag
       , diWheel = wheel

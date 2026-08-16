@@ -50,7 +50,8 @@ import Magic.Interface
   , castSpell
   , observeSpell
   )
-import System.Directory (createDirectoryIfMissing, doesFileExist)
+import Data.List (isSuffixOf, sort)
+import System.Directory (createDirectoryIfMissing, doesFileExist, listDirectory)
 import Test.Hspec
 
 -- | Every shipped example, so no spell shape (fieldless, phased, formula
@@ -62,11 +63,23 @@ examples =
   , "empty"
   , "grand-sigil"
   , "gravity-well"
+  , "lattice-seal"
   , "lissajous"
   , "pulse-ring"
   , "ring-fire"
+  , "soft-bloom"
   , "spiral-spark"
   , "square-burst"
+  , -- The three below are func-spec 0021's own two and func-spec 0025's
+    -- one, the latter joining the net when the two parallel rounds were
+    -- integrated. Their baselines are necessarily recorded on the build
+    -- that introduced them, so they are the net a later round inherits,
+    -- not evidence about this one — the twelve above are that. Order
+    -- matters: this list is compared against the asset directory's own
+    -- sorted listing.
+    "twin-lance"
+  , "wuxing-seal"
+  , "yin-yang"
   ]
 
 -- | 4 seconds at 60 Hz: past the spawn window of every example, so the
@@ -86,8 +99,19 @@ goldenDir = "test/golden/perf-0010"
 goldenPath :: String -> FilePath
 goldenPath name = goldenDir ++ "/" ++ name ++ ".txt"
 
+spellDir :: FilePath
+spellDir = "assets/spells"
+
 spellPath :: String -> FilePath
-spellPath name = "assets/spells/" ++ name ++ ".json"
+spellPath name = spellDir ++ "/" ++ name ++ ".json"
+
+-- | Every @*.json@ under 'spellDir', extension stripped, sorted.
+shippedSpellNames :: IO [String]
+shippedSpellNames = do
+  entries <- listDirectory spellDir
+  pure (sort [dropExtension e | e <- entries, ".json" `isSuffixOf` e])
+  where
+    dropExtension e = take (length e - length (".json" :: String)) e
 
 -- | @(particle count, column digest)@ of one observed frame.
 type Frame = (Int, Word64)
@@ -145,8 +169,15 @@ spec :: Spec
 spec = describe "pre-refactor golden net (func-spec 0010 §7 S1)" $ do
   mapM_ goldenExample examples
 
-  it "covers every shipped example spell" $
-    length examples `shouldBe` 10
+  -- Derived from the asset directory rather than counted by hand
+  -- (func-spec 0021): a round that ships a new example must either put it
+  -- in the net or say why, instead of quietly leaving it uncovered — which
+  -- is how 'soft-bloom' and 'lattice-seal' went three rounds without a
+  -- golden. Their baselines were recorded on the pre-0021 build, so the
+  -- net they join is a real one.
+  it "covers every shipped example spell" $ do
+    shipped <- shippedSpellNames
+    examples `shouldBe` shipped
 
 goldenExample :: String -> Spec
 goldenExample name = it (name ++ " renders the golden frames, " ++ law) $ do

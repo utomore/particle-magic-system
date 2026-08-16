@@ -2,9 +2,10 @@
 id: func-0010
 type: spec
 title: performance-budget
+description: 效能與粒子預算治理：熱路徑 unboxed 與結構化預算
 status: done
 created: 2026-08-14
-updated: 2026-08-15
+updated: 2026-08-16
 depends-on: []
 related-adr: [adr-0006, adr-0007]
 ---

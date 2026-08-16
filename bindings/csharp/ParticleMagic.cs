@@ -51,6 +51,10 @@ namespace ParticleMagic
         public const int PlaneSideXY = 0;       // PM_PLANE_SIDE_XY: (x, y), depth = -z
         public const int PlaneTopXZ = 1;        // PM_PLANE_TOP_XZ:  (x, z), depth = -y
 
+        // 3*3*3 = 27 cells, one per bit of the uint pm_occupancy_mask
+        // returns. Bits 27..31 are always clear.
+        public const int OccupancyDimDefault = 3; // PM_OCCUPANCY_DIM_DEFAULT
+
         // --- Runtime lifecycle ---
         //
         // pm_init() once per process, before anything else. Do NOT call
@@ -166,6 +170,47 @@ namespace ParticleMagic
 
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
         public static extern int pm_scene_spells(IntPtr scene, int[] outIds, int maxIds);
+
+        // --- Where a spell is (func-spec 0025) ---
+        //
+        // Optional: a purely visual spell never needs any of it, and a
+        // host that calls none of these pays nothing. Nothing here
+        // advances a clock or touches a particle, so it is safe to ask
+        // between Advance and Observe.
+        //
+        // outAxes is 9 floats, ROW MAJOR: [0..2] = U (face right),
+        // [3..5] = V (face up), [6..8] = the face normal. The oriented
+        // box is much tighter than its AABB for a beam-shaped spell;
+        // pm_spell_bounds is the axis-aligned answer if your collision
+        // layer only speaks AABB.
+
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int pm_spell_bounds(IntPtr spell, float[] outMin, float[] outMax);
+
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int pm_spell_box(IntPtr spell, float[] outCenter,
+                                              float[] outAxes, float[] outHalf);
+
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int pm_emitter_count(IntPtr spell);
+
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int pm_emitter_box(IntPtr spell, int index, float[] outCenter,
+                                                float[] outAxes, float[] outHalf);
+
+        // outCounts needs dim*dim*dim ints; a short array gets
+        // ErrCapacity and is left untouched.
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int pm_occupancy(IntPtr spell, int dim, int[] outCounts, int capacity);
+
+        // Bit c set == cell c of a 3x3x3 grid holds particles. One call,
+        // no array: a broad-phase overlap test is (a & b) != 0.
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern uint pm_occupancy_mask(IntPtr spell);
+
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int pm_scene_spell_bounds(IntPtr scene, int spellId,
+                                                       float[] outMin, float[] outMax);
 
         // --- 2D projection (optional; a 3D host ignores these) ---
 

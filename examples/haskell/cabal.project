@@ -1,0 +1,23 @@
+-- This example lives outside the parent project on purpose (enhance-0001
+-- §2.1): `cabal build all` at the repo root does NOT cover it, so
+-- building it is a second command -- exactly like examples/c/main.c
+-- needing its own gcc invocation.
+--
+-- The relative path is what makes the example buildable from a plain
+-- checkout, with no network and no published tag. A real host would
+-- write this instead, and nothing else in this package would change:
+--
+--   source-repository-package
+--     type:     git
+--     location: https://github.com/utomore/particle-magic-system.git
+--     tag:      <commit-or-tag>
+--
+-- (see docs/integration.md §3).
+packages: .
+          ../..
+
+-- Inherited verbatim from the repo root's cabal.project. It is here
+-- because the solver has to find a plan for every local package, and
+-- ../.. contains the h-raylib demo executable -- even though this
+-- example never builds it and never links a renderer.
+allow-newer: h-raylib:template-haskell, h-raylib:base, h-raylib:containers

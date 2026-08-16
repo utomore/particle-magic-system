@@ -2,9 +2,10 @@
 id: func-0017
 type: spec
 title: sigil-persistence
+description: 陣的駐留：陣活到法術結束，取消收束曲線
 status: done
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 depends-on: [func-0016]
 related-adr: [adr-0003, adr-0010, adr-0014, adr-0015]
 ---

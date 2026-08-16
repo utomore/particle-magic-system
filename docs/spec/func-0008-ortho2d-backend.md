@@ -2,9 +2,10 @@
 id: func-0008
 type: spec
 title: ortho2d-backend
+description: 2D 正交後端：正交投影與 painter 排序
 status: done
 created: 2026-08-14
-updated: 2026-08-14
+updated: 2026-08-16
 depends-on: []
 related-adr: [adr-0008]
 ---

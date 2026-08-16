@@ -2,9 +2,10 @@
 id: func-0014
 type: spec
 title: authoring-tools
+description: 作者工具：驗證 CLI、schema 手冊與熱掃描
 status: done
 created: 2026-08-14
-updated: 2026-08-15
+updated: 2026-08-16
 depends-on: [func-0010, func-0013]
 related-adr: [adr-0005]
 ---

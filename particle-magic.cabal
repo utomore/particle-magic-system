@@ -32,10 +32,20 @@ extra-doc-files:    README.md
 -- The C# reference binding joins them in func-spec 0011: same purpose,
 -- next language along (test/BindingContractSpec.hs keeps it in step with
 -- the header).
+-- examples/haskell/ joins them in enhance-0001, closing the odd gap that
+-- the two non-native routes had runnable proof and the native one did
+-- not. It is a package of its own (not a stanza below) precisely so it
+-- consumes this one from the outside; test/ExampleHostSpec.hs asserts
+-- that every file of it is listed here.
 extra-source-files: include/particle_magic.h
                     examples/c/main.c
                     examples/c/scene.c
                     bindings/csharp/ParticleMagic.cs
+                    examples/haskell/Main.hs
+                    examples/haskell/particle-magic-example.cabal
+                    examples/haskell/cabal.project
+                    examples/haskell/expected-output.txt
+                    examples/haskell/README.md
 
 source-repository head
     type:     git
@@ -57,6 +67,7 @@ library magic-core
                       Magic.Circle
                       Magic.Sigil
                       Magic.Compile
+                      Magic.Space
                       Magic.Particle.Analytic
                       Magic.Particle.Field
                       Magic.Project
@@ -294,6 +305,22 @@ test-suite spec
                     , SigilMotionSpec
                     , SigilMotionWiringSpec
                     , Acceptance20Spec
+                    , ElementVocabSpec
+                    , FaceShapeVocabSpec
+                    , TrajectoryVocabSpec
+                    , FieldVocabSpec
+                    , VocabCodecSpec
+                    , FlatReadabilitySpec
+                    , Acceptance21Spec
+                    , SpaceExamples
+                    , SpaceBoundsSpec
+                    , OccupancySpec
+                    , AnchorCodecSpec
+                    , MultiAnchorSpec
+                    , SpaceInterfaceSpec
+                    , FFISpaceSpec
+                    , Acceptance25Spec
+                    , ExampleHostSpec
                     , App.Effects
                     , App.HotReload
                     , App.Loop

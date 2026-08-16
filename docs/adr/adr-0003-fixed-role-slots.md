@@ -2,9 +2,10 @@
 id: adr-0003
 type: adr
 title: fixed-role-slots
+description: 槽位職責固定，變化交給符文
 status: accepted
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-16
 related-adr: []
 related-spec: []
 ---

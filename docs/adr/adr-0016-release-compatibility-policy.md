@@ -2,6 +2,7 @@
 id: adr-0016
 type: adr
 title: release-compatibility-policy
+description: 發布與相容性政策：平台分級、版本語意與決定論範圍
 status: accepted
 created: 2026-08-16
 updated: 2026-08-16

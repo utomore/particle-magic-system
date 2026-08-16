@@ -2,9 +2,10 @@
 id: func-0012
 type: spec
 title: multi-circle-composition
+description: 多陣合成與場景層全域配額
 status: done
 created: 2026-08-14
-updated: 2026-08-15
+updated: 2026-08-16
 depends-on: [func-0010, func-0011]
 related-adr: [adr-0004, adr-0010, adr-0011, adr-0012]
 ---

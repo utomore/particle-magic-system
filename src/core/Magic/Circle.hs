@@ -15,7 +15,7 @@ module Magic.Circle
   , emptyCircle
   ) where
 
-import Magic.Rune (BridgeRune, EssenceRune, ForceField, InnerRune, NodeRune, OuterRune)
+import Magic.Rune (Anchor, BridgeRune, EssenceRune, ForceField, InnerRune, NodeRune, OuterRune)
 import Magic.Types (Seconds)
 
 -- | A fixed pair of ring layers. Convention: 'ringA' is the inner layer,
@@ -45,6 +45,19 @@ data Circle = Circle
   -- slot — a property of the circle as a whole, like 'circlePhases'.
   -- @[]@ (the 'emptyCircle' value) is the zero-field compatibility case:
   -- the whole field layer is branched around, not computed to zero.
+  , circleAnchors :: !(Maybe [Anchor])
+  -- ^ Where the main effect comes out (func-spec 0025). The third
+  -- circle-level property after 'circlePhases' and 'circleFields', and
+  -- it follows their convention exactly: not a rune, in no slot, opt-in,
+  -- and 'Nothing' (the 'emptyCircle' value) means the single origin
+  -- anchor the interpreter has always used — the pre-0025 path, branched
+  -- around rather than reconstructed.
+  --
+  -- @Just []@ is unrepresentable in a loaded circle: the codec rejects an
+  -- empty array rather than letting it collide with "no key" (func-spec
+  -- 0025 §3.1). Handed one anyway, 'Magic.Compile.compile' produces a
+  -- spell with no casting emitter — the honest reading of "fires from
+  -- nowhere", not a special case.
   }
   deriving (Eq, Show)
 
@@ -89,4 +102,5 @@ emptyCircle =
     , core = Core {coreCenter = Nothing, coreNodes = Nodes Nothing Nothing Nothing Nothing}
     , circlePhases = Nothing
     , circleFields = []
+    , circleAnchors = Nothing
     }

@@ -2,9 +2,10 @@
 id: adr-0010
 type: adr
 title: force-field-composition
+description: 力場的組合點語意、粒子身分穩定性與熱重載政策
 status: accepted
 created: 2026-08-13
-updated: 2026-08-13
+updated: 2026-08-16
 related-adr: [adr-0001, adr-0003]
 related-spec: [func-0007]
 ---

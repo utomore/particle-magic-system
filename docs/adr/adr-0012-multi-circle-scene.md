@@ -2,9 +2,10 @@
 id: adr-0012
 type: adr
 title: multi-circle-scene
+description: 多陣合成的代數與場景層全域配額的分配政策
 status: accepted
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 related-adr: [adr-0002, adr-0004, adr-0006, adr-0010, adr-0011]
 related-spec: [func-0012]
 ---

@@ -26,6 +26,7 @@ module Magic.Scene
   , newScene
   , sceneSpells
   , sceneBudget
+  , lookupSpell
 
     -- * Admission
   , CastRefusal (..)
@@ -105,6 +106,16 @@ sceneSpells = map fst . sceneList
 -- summed from the live spells' compiled budgets on demand.
 sceneBudget :: Scene -> (Int, Int)
 sceneBudget scene = (usedBudget scene, scGlobalCap (sceneConfig scene))
+
+-- | One live spell by id, or 'Nothing' for an id that is stale, already
+-- finished or never issued (func-spec 0025 S6).
+--
+-- Read-only, and the smallest opening that lets a per-spell query — the
+-- spatial summary is the first — be asked of a scene at all. It hands
+-- back an 'ActiveSpell', which is opaque, so it grants a caller nothing
+-- the single-cast path does not already grant.
+lookupSpell :: SpellId -> Scene -> Maybe ActiveSpell
+lookupSpell sid = lookup sid . sceneList
 
 usedBudget :: Scene -> Int
 usedBudget = sum . map (budgetOf . snd) . sceneList

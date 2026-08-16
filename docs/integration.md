@@ -1,8 +1,21 @@
+---
+id: integration-guide
+type: reference
+title: host-integration-guide
+description: 各語言宿主怎麼接上本系統的整合指南與資料合約
+status: done
+created: 2026-08-14
+updated: 2026-08-16
+related-adr: [adr-0008, adr-0011, adr-0012]
+related-spec: [func-0009, func-0011, func-0018]
+---
+
 # 宿主整合指南
 
-> 版本：1.2（2026-08-16，spec 0018 交付後：場景層整個上 C ABI——新增 §4.6、`PM_ERR_QUOTA` 進 §4.3 的錯誤表、§3.2 與 §8 的「只在 Haskell 面」收窄為「不進場景的合成只在 Haskell 面」。ABI version 仍為 1——全部是加法。1.1 為 spec 0011 交付後：投影三件套上 C ABI、C# 參考綁定與 Unity 範例成為真檔案）
+> 版本：1.3（2026-08-16，enhance-0001 落地後：**母語路線補上可跑的範例**——§1 的路線表加一欄「可跑的範例」、§3 開頭補齊 `bytestring`／`vector` 兩個容易漏的依賴並指向 [`examples/haskell/`](../examples/haskell/)、新增 **§3.3「2D／像素風宿主食譜」**（五步，不分語言，§4.5 交叉指路）、§8 新增一列誠實記帳「像素風只有食譜，沒有像素風的參考實作」。合約零變更：沒有新語意、沒有動 JSON schema、ABI version 仍為 1）
+> 1.2（2026-08-16，spec 0018 交付後：場景層整個上 C ABI——新增 §4.6、`PM_ERR_QUOTA` 進 §4.3 的錯誤表、§3.2 與 §8 的「只在 Haskell 面」收窄為「不進場景的合成只在 Haskell 面」。ABI version 仍為 1——全部是加法。1.1 為 spec 0011 交付後：投影三件套上 C ABI、C# 參考綁定與 Unity 範例成為真檔案）
 > 對象：想把這套粒子魔法系統接進自己遊戲的人——Unity、Godot、C/C++ 引擎、Haskell 專案，或完全自製的前端。
-> 相關文件：[architecture.md](architecture.md)（系統設計）、[roadmap.md](roadmap.md)（還缺什麼）、[`include/particle_magic.h`](../include/particle_magic.h)（凍結的 C 合約）、[`bindings/csharp/ParticleMagic.cs`](../bindings/csharp/ParticleMagic.cs)（C# 參考綁定）、[`examples/unity/`](../examples/unity/)（Unity 最小範例）
+> 相關文件：[architecture.md](architecture.md)（系統設計）、[roadmap.md](roadmap.md)（還缺什麼）、[`include/particle_magic.h`](../include/particle_magic.h)（凍結的 C 合約）、[`bindings/csharp/ParticleMagic.cs`](../bindings/csharp/ParticleMagic.cs)（C# 參考綁定）、[`examples/haskell/`](../examples/haskell/)（Haskell 最小宿主）、[`examples/c/`](../examples/c/)（C 最小宿主）、[`examples/unity/`](../examples/unity/)（Unity 最小範例）
 
 ---
 
@@ -20,12 +33,14 @@
 
 ## 1. 選一條路
 
-| 你的宿主是…… | 走這條 | 章節 |
-|---|---|---|
-| Haskell 專案 | cabal sublibrary，直接 import | [§3](#3-路線-ahaskell-宿主) |
-| Unity（C#） | C ABI＋P/Invoke | [§5](#5-路線-cunity-c) |
-| Godot、Unreal、自製 C/C++ 引擎 | C ABI，直接 `#include` | [§4](#4-路線-bcc-宿主) |
-| 其他任何能載入共享庫的語言（Rust、Zig、Python…） | C ABI，用該語言的 FFI | [§6](#6-路線-d自製前端與其他語言) |
+| 你的宿主是…… | 走這條 | 章節 | 可跑的範例 |
+|---|---|---|---|
+| Haskell 專案 | cabal sublibrary，直接 import | [§3](#3-路線-ahaskell-宿主) | [`examples/haskell/`](../examples/haskell/) |
+| Unity（C#） | C ABI＋P/Invoke | [§5](#5-路線-cunity-c) | [`examples/unity/`](../examples/unity/) |
+| Godot、Unreal、自製 C/C++ 引擎 | C ABI，直接 `#include` | [§4](#4-路線-bcc-宿主) | [`examples/c/`](../examples/c/) |
+| 其他任何能載入共享庫的語言（Rust、Zig、Python…） | C ABI，用該語言的 FFI | [§6](#6-路線-d自製前端與其他語言) | 同上 |
+
+**畫面是 2D 或像素風的話**，選完路線再看 [§3.3](#33-2d像素風宿主食譜)——那一節不分語言，只講「怎麼把抽象 3D 座標落到你的像素格上」。
 
 除了第一條，全部走同一份合約：`include/particle_magic.h`。那份 header **就是全部的合約**，而且是凍結的——只會增加宣告，不會改動或移除既有的任何一個。`pm_abi_version()` 讓你在啟動時確認手上的 `.dll` 與你編譯時的 header 同一代。
 
@@ -125,9 +140,15 @@ source-repository-package
 ```cabal
 -- your-game.cabal
 build-depends: particle-magic:magic-boundary
+             , bytestring     -- loadCircle 吃原始位元組
+             , vector         -- ParticleBuffer 是 Data.Vector.Unboxed 上的 SoA
 ```
 
-你只 import 三個模組，其他一律不是合約的一部分：
+後兩個容易漏：**編碼與緩衝表徵都是宿主的事**。`Magic.Codec.loadCircle` 收的是檔案的原始位元組（庫不猜編碼），而 `ParticleBuffer` 的六條欄是 `Data.Vector.Unboxed`（[ADR-0006](adr/adr-0006-soa-unboxed-buffer.md)），所以任何要**讀**那六條欄的宿主都需要 `vector`。
+
+**這一整節現在有一個編得起來、跑得動的版本**：[`examples/haskell/`](../examples/haskell/)——一個不畫圖的最小宿主，載入一張陣、跑 120 個固定時步、每幀印一行。它是**獨立的 cabal package**（根目錄的 `cabal build all` 不涵蓋它），因為只有這樣它才真的走過一次外部消費者走的路。逐幀輸出凍結在 `expected-output.txt`，而 `test/ExampleHostSpec.hs` 用兩條各自獨立的路徑（`Magic.Interface` 與 C ABI）重算並比對它。
+
+你只 import 下面這幾個模組，其他一律不是合約的一部分：
 
 ```haskell
 import Magic.Codec      (loadCircle, renderLoadError)
@@ -195,6 +216,36 @@ visibleEmitters ctx spell =
   ]
 ```
 
+#### 3.1.1 更緊的盒與佔用格網（func-spec 0025 新增）
+
+`emitterBounds` 的立方體很鬆——一道沿法線射出 8 units 的光束，X／Y 兩軸也被撐到 8。0025 補上一組**貼合**的查詢，全部同樣從 `Magic.Interface` 匯出、全部是純函數、全部 **opt-in**（不呼叫就零成本，`FrameOutput` 一個欄位都沒加）：
+
+```haskell
+emitterBoxOf  :: ActiveSpell -> EmitterSpec -> OrientedBox   -- 這個發射器「目前」到哪
+spellBoundsOf :: ActiveSpell -> (V3, V3)                     -- 整道法術「這輩子」的 AABB
+spellBoxOf    :: ActiveSpell -> OrientedBox                  -- 同上，有向盒
+occupancyOf   :: Int -> ActiveSpell -> OccupancyGrid          -- N³ 佔用計數
+occupancyMask :: ActiveSpell -> Word32                        -- N = 3 的快路徑
+
+data OrientedBox = OrientedBox
+  { obCenter :: V3
+  , obAxisU, obAxisV, obAxisN :: V3   -- 單位正交：面右、面上、面法線
+  , obHalfU, obHalfV, obHalfN :: Float
+  }
+```
+
+三件要知道的事：
+
+1. **有向盒比 AABB 緊得多**（實測各範例陣是 `emitterBounds` 體積的 1.5%–13%），因為行進距離只算進法線軸。你的碰撞層若只吃 AABB，用 `boxToAABB` 轉一次即可。
+2. **兩種時窗，刻意不同**：`emitterBoxOf` 用**當前年齡**（這一幀該不該剔除它），`spellBoundsOf`／`spellBoxOf` 用**整個生命週期**（這道法術會不會碰到那面牆）。後者因此在法術全程**不變**。
+3. **格網的框固定不動**（＝`spellBoxOf`）。第 5 格在第 10 幀和第 11 幀指的是同一塊空間，所以「粒子進入某區域」這種事件偵測才寫得出來。索引序是 `(k*N + j)*N + i`，`i` 沿 U、`j` 沿 V、`k` 沿法線。
+
+N = 3 時 27 格恰好塞進一個 `Word32`：`occupancyMask` 一次查詢就給你「哪些格子是活的」，broad phase 是一次 `popCount` 或位元 AND，零配置。
+
+這些查詢**只讀**：呼叫前後 `observeSpell` 的輸出逐位元相同。核心仍然不做視錐剔除也不做碰撞判定——它交的是資訊，判定是你的（ADR-0019）。
+
+成本誠實說：`occupancyOf` 是單趟 O(粒子數)，實測 **24 ns／粒**（256 粒 ≒ 8 µs，粒子上限 16384 粒 ≒ 0.40 ms）。典型法術可以每幀問；上限附近的法術每幀問就要自己算一下預算。
+
 ### 3.2 多陣合成與場景層（func-spec 0012 新增；場景層已於 0018 上 C ABI）
 
 **合成**——把幾張陣當成一個法術施放：
@@ -238,6 +289,64 @@ frame fi scene = let scene' = advanceScene fi scene in (scene', observeScene sce
 進階配額策略（按強度加權、優先權搶佔）刻意不做：庫給的是拒收與剩餘量，要先 `dismiss` 掉什麼是遊戲的決定，不是粒子系統的（ADR-0012 D6）。
 
 **這一節的每一行,C 宿主現在也有**（func-spec 0018,見 §4.6）。上表左欄逐項對應 `pm_scene_*`,語意一字不差——C 面是這張匯出表的型別穿越,沒有第三件事。**合成**（`castSpells` → 不進場景的 `ActiveSpell`）則仍只在 Haskell 面:C 宿主要合成,開一個 `global_cap` 夠大的場景、用 `pm_scene_cast_many` 即可。
+
+### 3.3 2D／像素風宿主食譜
+
+**這一節不分語言。** 它掛在 §3 底下只是編號的方便：除了第 1 步的程式碼片段是 Haskell 的，其餘每一條對 C／C# 宿主一字不差適用（C 側的投影入口是 `pm_project`／`pm_depth_order`，見 [§4.5](#45-2d-宿主投影與深度排序0011-新增)）。
+
+庫這一側該給的都給了：`orthographic` 丟一軸、`depthOrder` 給 painter 置換、`rbShape` 只是一個 tag、16384 的上限對像素風是天文級的過剩。但一個實際要動手的 2D 宿主會撞到五件庫**不會**替你決定的事——而且**五件都不會報錯**，做錯只會讓畫面「怪但說不出哪裡怪」。
+
+#### 1. 先選視角，再選 `casterFacing`（唯一一條錯了會靜默塌掉的）
+
+法術的幾何是這樣長出來的：**初始面垂直於 `casterFacing`，立體擴充沿著 `casterFacing` 前進**（`Magic.Compile` 的 `Anchor`：局部 +Z ＝ facing，骨架法線 ＝ +Z）。所以**視角丟掉哪一軸，facing 就絕對不能指向那一軸**。
+
+| 遊戲類型 | `ViewPlane` | 丟掉的軸 | `casterFacing` 該躺在 | 例 |
+|---|---|---|---|---|
+| 側視卷軸（platformer、橫向 STG） | `SideXY` | Z | XY 平面內 | `V3 0 1 0`——地上一個陣、光柱往畫面上方射 |
+| 俯視（Zelda 式、twin-stick） | `TopXZ` | Y | XZ 平面內 | `V3 0 0 1`——陣立在地面上、往角色前方延伸 |
+| 斜俯視 3/4 | 目前用 3D 相機拉俯角，不是正交平面 | — | 隨遊戲 | 見下方註 |
+
+**選錯的症狀**：俯視宿主留著 `V3 0 1 0`（很自然的預設，demo 用的就是它），擴充方向恰好是被丟掉的那一軸，**整根柱子塌成它自己的足跡**。你會看到陣，但看不到它在動。沒有錯誤碼、沒有崩潰——這一條的性質和 [§5.5](#55-座標系轉換) 的手性完全一樣（翻錯 Z 只有 `vortex` 轉反）。
+
+> **3/4 斜俯視**：`ViewPlane` 目前只有正的兩個平面，沒有帶俯角的建構子。斜俯視的做法是**用 3D 相機拉俯角**（demo 的 `App.Camera`，elevation 約 35–45°），深度排序照 3D 那條路走。把帶俯角的正交投影變成正式支援的輸出平面是一份獨立的 spec，不在目前的合約裡。
+
+#### 2. 選 pixels-per-unit
+
+`size` 是**世界單位的半邊長**，billboard 的邊長 ＝ `2 × size`。落到像素：
+
+```
+邊長（像素） = 2 × size × PPU
+```
+
+最省事的慣例是 **1 世界單位 = 1 tile，PPU = 一個 tile 的像素數**。16×16 的 tile 就 `PPU = 16`，於是魔法陣 JSON 裡的半徑直接讀作 tile 數——作者調 `size: 3.0` 時心裡想的是「三格寬」，不必換算。
+
+Haskell 宿主要**現成的螢幕映射**（原點、PPU、y 翻轉、平移、游標定錨縮放、視窗 resize）可以照抄 `app/App/Render/Flat.hs` 的 `screenOf`／`panBy`／`zoomAt`／`resizeTo`——約 50 行純函數，不依賴 renderer。它**刻意不在 boundary 裡**（[ADR-0008](adr/adr-0008-dimension-agnostic-3d-first.md)：投影屬外殼，螢幕映射是呈現選擇，不凍結），所以照抄時請一併帶走它的性質律，那才是難的部分：
+
+- **pan 是線性的**：`screenOf (panBy d fv) p == screenOf fv p + d`，零位移是恆等。
+- **zoom 有定點**：游標底下的世界點在縮放後仍在游標底下——**精確**成立，不是近似。做法是原點與縮放係數同乘一個因子，並且**從 clamp 之後的 PPU 反推**該因子，否則縮到上下限時畫面會從游標底下滑走。
+
+`app/App/Render/Flat.hs` 的 `buildFlatQuads` 則**不要**照抄：它輸出 raylib dynamic mesh 專用的 `QuadBatch`，是貨真價實的引擎專屬品。
+
+#### 3. 像素對齊：放大整個畫面，不要 round 每一顆
+
+位置是 `Float`。逐顆 `round` 到像素格會讓慢速粒子**抖動**（連續移動被量化成一格一格的跳動，而且不同粒子在不同幀跳，看起來像雜訊）。
+
+標準解法是**別碰粒子座標**：把整個場景畫到一張**原生解析度的 render target**（例如 320×180），再**整數倍**放大（nearest-neighbour）貼到視窗上。粒子與美術素材自然落在同一格上，而且魔法的所有次像素運動仍然存在於低解析畫布裡，只是被統一量化了一次。
+
+#### 4. 顏色：連續 ramp ↔ limited palette 的張力
+
+`color` 是**沿顏色曲線依 `life` 內插出來的連續漸層**（`0xRRGGBBAA`，見 [§2.1](#21-六條欄位)）——一顆粒子從生到死會掃過整條曲線。像素風通常是受限調色盤。兩條路：
+
+- **後處理量化**：在 shader 裡把最終畫面查最近色映回調色盤。整個畫面一致，美術素材與粒子同一套規則。
+- **端點對齊**：把屬性的 ramp 兩端設計成剛好命中調色盤裡的顏色，中間的內插值仍然是連續的，但視覺上只會在少數幾階之間走。
+
+這是美術方向的決定，庫不插手；文件只負責讓你在做完之後才發現這個張力之前先知道它存在。
+
+#### 5. 貼圖：`rbShape` 是 tag，不是資產
+
+`rbShape`（C 側 `batch_info[+3]`）是四個無參數的碼：`square`／`soft-dot`／`ring`／`spark`，由魔法陣的 `style` 符文指定。**它不帶任何資產**——demo 用 64×64 程序生成的 alpha 貼圖是 demo 的選擇，你的宿主把它換成自己的 8×8 像素圖完全合法，也是像素風應該做的事。不認得的碼照 `square` 畫即可。
+
+RGB 一律來自頂點色（貼圖只提供 alpha 形狀），所以同一張 8×8 圖能吃下所有屬性的顏色。
 
 ---
 
@@ -365,7 +474,7 @@ for (int k = 0; k < total; k++) draw_quad(sx[order[k]], sy[order[k]], /* ... */)
 三點值得記住：
 
 1. **不吃 handle**：投影是位置的函數，跟法術狀態無關。你可以投任何來源的位置欄——`pm_observe` 的輸出、其中一段批次，或你自己的粒子。
-2. **螢幕座標仍然是你的事**：庫只做「丟軸＋深度」，原點、pixels-per-unit、y 軸方向都由你決定（`Magic.Projection` 對 Haskell 宿主也是同一條線）。
+2. **螢幕座標仍然是你的事**：庫只做「丟軸＋深度」，原點、pixels-per-unit、y 軸方向都由你決定（`Magic.Projection` 對 Haskell 宿主也是同一條線）。怎麼決定——包含 `PM_PLANE_TOP_XZ` 與 `casterFacing` 那個會靜默塌掉的組合——見 [§3.3](#33-2d像素風宿主食譜)，那一節不分語言。
 3. **加法批次不需要排序**（加法可交換），只有 alpha 批次需要。想只排一段就把該段的起點指標與長度傳進去即可。
 
 跨界等價律（`test/Acceptance11Spec.hs`）保證這條路徑與 Haskell 的 `orthographic`／`depthOrder` 逐位元相同，9 個範例陣 × 2 個平面 × 120 幀。
@@ -409,6 +518,37 @@ pm_scene_free(sc);
 
 跨界等價律（`test/Acceptance18Spec.hs`）:對生成的操作序列,每一步之後 `pm_scene_observe` 與 `observeScene` 逐位元相同,收碼分類與 `castInto` 的 `Either CastRefusal` 一致,`pm_scene_budget` 與 `sceneBudget` 相同。
 
+### 4.7 這道法術佔哪裡（0025 新增）
+
+§3.1.1 的空間摘要整套上了 C ABI，7 個純增補進入點，`PM_ABI_VERSION` 仍是 **1**：
+
+```c
+float lo[3], hi[3];
+pm_spell_bounds(spell, lo, hi);            /* 整道法術一輩子的世界 AABB */
+
+float c[3], axes[9], half[3];              /* axes 是 3x3 列主序：U, V, 法線 */
+pm_spell_box(spell, c, axes, half);        /* 同上，但是有向盒——緊得多 */
+
+int n = pm_emitter_count(spell);
+pm_emitter_box(spell, 0, c, axes, half);   /* 單一發射器「目前」的盒 */
+
+int counts[27];
+pm_occupancy(spell, PM_OCCUPANCY_DIM_DEFAULT, counts, 27);   /* 3x3x3 計數 */
+uint32_t mask = pm_occupancy_mask(spell);  /* 同一件事，一個字，零配置 */
+
+/* 場景裡的某一道：pm_scene_spells 給 id，這裡給界 */
+pm_scene_spell_bounds(scene, id, lo, hi);
+```
+
+broad phase 因此是一行：兩道法術的 mask 做 AND，非零才需要細算。
+
+要記住的三件事與 §3.1.1 相同（有向盒比 AABB 緊、兩種時窗刻意不同、格網的框全程固定）。C 面另外兩點：
+
+- `pm_occupancy` 的 `capacity` 不足時回 `PM_ERR_CAPACITY` 且**一個位元都不寫**，與 `pm_observe` 同一條 all-or-nothing 規則；`dim` ≤ 0 是 `PM_ERR_ARGS`。
+- `pm_occupancy_mask` 對 `NULL` handle 回 0，位元 27..31 恆為 0。
+
+跨界等價律（`test/FFISpaceSpec.hs`）：每個進入點與對應的 `Magic.Interface` 函數逐位元相同，13 個範例陣 × 3 種維度。
+
 ---
 
 ## 5. 路線 C：Unity（C#）
@@ -419,7 +559,7 @@ Unity 走的就是 §4 的 C ABI，只是隔著 P/Invoke。
 
 | 檔案 | 是什麼 |
 |---|---|
-| [`bindings/csharp/ParticleMagic.cs`](../bindings/csharp/ParticleMagic.cs) | 參考綁定：13 個 `DllImport`、全部常數、顏色拆包與 Z 翻轉助手。**不依賴 Unity**，Godot C#／純 .NET 照用 |
+| [`bindings/csharp/ParticleMagic.cs`](../bindings/csharp/ParticleMagic.cs) | 參考綁定：30 個 `DllImport`（0011 的 13 個 ＋ 0018 的場景 10 個 ＋ 0025 的空間 7 個）、全部常數、顏色拆包與 Z 翻轉助手。**不依賴 Unity**，Godot C#／純 .NET 照用 |
 | [`examples/unity/SpellRenderer.cs`](../examples/unity/SpellRenderer.cs) | 一個真的會畫東西的 `MonoBehaviour`：固定時步、緩衝重用、Z 翻轉、alpha 批次用 `pm_depth_order` 排序 |
 | [`examples/unity/PmSmoke.cs`](../examples/unity/PmSmoke.cs) | 一行指令跑完整個 smoke（`unity run … -executeMethod PmSmoke.Run`），驗 marshaller、投影、排序與 Mesh |
 | [`examples/unity/README.md`](../examples/unity/README.md) | 放置步驟、材質設定、預期畫面、smoke 指令與人眼 checklist |
@@ -575,6 +715,10 @@ void Update()
 | **只有 win64 被完整實測** | `.so` / `.dylib` 由 cabal stanza 天然涵蓋，但沒有列入驗收 |
 | **billboard 形狀是無參數列舉** | func-spec 0015 起有四種形狀碼（square／soft-dot／ring／spark），但形狀**永遠不帶參數**（拉伸、旋轉需另開查詢，ADR-0013）；怎麼畫每種形狀由宿主自行決定（demo 用 64×64 程序生成 alpha 貼圖，RGB 全白、顏色仍來自頂點色） |
 | **只有 Unity 被實測過** | C# 綁定在 Unity 6000.5.7f1 batchmode 實測通過（[0011 §9.3](spec/func-0011-host-integration-surface.md)，可用 `examples/unity/PmSmoke.cs` 一鍵複驗）；Godot／Unreal／其他 .NET 宿主只有合約保證，沒有實測 |
+| **空間摘要交資訊，不交判定** | func-spec 0025 給的是包絡與佔用格網（§3.1.1／§4.7），**不是**碰撞判定：「粒子撞到牆會怎樣」是遊戲層的規則。真要做碰撞回饋（粒子反彈）需要把結果送回模擬，那會是輸出第一次影響輸入，屬於另一輪。視錐剔除同理——核心沒有相機概念（ADR-0008） |
+| **發動點是編譯期常數** | `"anchors"` 的位置與法線在施法時定下，**不隨時間移動**（跟隨施法者的發動點做不到）。與 0007 的時變場參數是同一筆記帳，應一起做，記在 func-spec 0025 §7-8 |
+| **各發動點共用同一份符文** | N 個發動點只有位置與法線不同；「左手火、右手冰」是**兩張陣**，用 `castSpells`／`pm_scene_cast_many` 各帶自己的 `anchors`（func-spec 0025 §7-9） |
+| **像素風只有食譜，沒有像素風的參考實作** | enhance-0001 補上了 §3.3 的五步與 [`examples/haskell/`](../examples/haskell/)（可跑，但不畫圖）。真正**畫出來**的 2D 參考實作只有 demo 的 flat view（`App.Render.Flat`），而它是連續色彩＋64×64 程序貼圖——§3.3 第 3、4 條（低解析 render target 整數倍放大、調色盤量化）**沒有任何範例走過**，只有做法 | 
 
 ---
 

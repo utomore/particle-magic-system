@@ -2,6 +2,7 @@
 id: release-policy
 type: reference
 title: release-and-compatibility
+description: 發一版的流程、版本語意與對外相容性承諾
 status: done
 created: 2026-08-16
 updated: 2026-08-16
@@ -111,4 +112,4 @@ source-repository-package
 
 **對宿主的一句話**：在同一台機器上重播錄影，用相等比較；跨機器比對，用容差比較。
 
-**對本專案的一句話**：逐位元 golden 的摘要半場只在錄製它的平台（目前 windows/x86_64）斷言，每幀粒子數到處斷言——見 `test/GoldenPlatform.hs`。新增參考平台＝錄一份該平台的 golden ＋ 放寬 `referencePlatform`，三個 golden spec 的其他部分不動。
+**對本專案的一句話**：逐位元 golden 的摘要半場只在錄製它的平台（目前 windows/x86_64）斷言，每幀粒子數到處斷言——見 `test/GoldenPlatform.hs`。新增參考平台＝錄一份該平台的 golden ＋ 放寬 `referencePlatform`，其他 golden spec 的部分不動。**這條規則適用於每一份 golden**，包括 `examples/haskell/expected-output.txt`（enhance-0001 §8.3：它漏套過一次，代價是 CI 的 Linux 腳紅在一個 checksum 的最後一位小數）。

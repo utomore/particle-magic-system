@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "name": "twin-lance",
+  "circle": {
+    "anchors": [
+      { "offset": [ 0.6, 0, 0], "normal": [0, 0, 1] },
+      { "offset": [-0.6, 0, 0], "normal": [0, 0, 1] }
+    ],
+    "phases": null,
+    "outer": [
+      { "rune": "shape", "shape": { "kind": "ring", "rInner": 0.02, "rOuter": 0.08 } },
+      { "rune": "style", "billboard": "spark" }
+    ],
+    "bridge": null,
+    "inner": [
+      { "rune": "trajectory", "kind": "forward", "speed": 7.0 },
+      { "rune": "timing", "delay": 0.0, "duration": 2.4, "lifetime": 0.9 }
+    ],
+    "core": {
+      "center": { "element": "lightning", "power": 1.5 },
+      "nodes": {
+        "north": null,
+        "south": null,
+        "east": null,
+        "west": null
+      }
+    },
+    "fields": []
+  }
+}

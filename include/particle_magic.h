@@ -122,6 +122,12 @@ extern "C" {
    pm_scene_cast* entry points can return it. */
 #define PM_ERR_QUOTA (-5)
 
+/* Grid dimension whose cell count fits one uint32_t: 3*3*3 = 27 <= 32,
+   which is what lets pm_occupancy_mask answer without an array
+   (func-spec 0025). 27 is this system's own nine-grid -- up/down/left/
+   right plus center -- extruded along the face normal. */
+#define PM_OCCUPANCY_DIM_DEFAULT 3
+
 /* Which axis the orthographic camera looks along, for pm_project and
    pm_depth_order (ADR-0008: "2D = drop one axis and pick a depth-sorting
    strategy"). Anything else is PM_ERR_ARGS. */
@@ -311,6 +317,78 @@ int pm_scene_count(const PmScene* scene);
    Returns the number written, or PM_ERR_CAPACITY (nothing written) when
    they do not fit in max_ids -- ask pm_scene_count first. */
 int pm_scene_spells(const PmScene* scene, int* out_ids, int max_ids);
+
+/* --- Where a spell is (func-spec 0025, ADR-0019) ------------------------
+ *
+ * The library's third output, after the six particle columns and errors:
+ * a spatial summary, for broad-phase collision, AoE tests and frustum
+ * culling. It is a QUERY, not part of pm_observe -- most spells are pure
+ * visuals and should pay nothing for it.
+ *
+ * Read-only in the strongest sense: calling any of these advances no
+ * clock and changes no particle, so the same pm_observe before and after
+ * gives bit-identical columns.
+ *
+ * The core does not cull for you. It has no camera concept at all (the
+ * abstract space does not know which dimension it is drawn in), so what
+ * it owes a host is the envelope; the DECISION is the host's.
+ *
+ * An "oriented box" is a center, three orthonormal axes and three
+ * half-extents along them. The axes come out as 9 floats, ROW MAJOR:
+ * out_axes[0..2] = U (face right), [3..5] = V (face up), [6..8] = the
+ * face normal. A box is much tighter than its AABB for the usual
+ * spell -- a beam that flies 8 units forward does not claim 8 units
+ * sideways -- so prefer it if your host can carry one; pm_spell_bounds
+ * is the axis-aligned answer for hosts that would rather not.
+ */
+
+/* The whole spell's world AABB over its ENTIRE life (not just up to now),
+   as two corners. PM_OK, or PM_ERR_ARGS with nothing written. */
+int pm_spell_bounds(const PmSpell* spell, float out_min[3], float out_max[3]);
+
+/* The same extent as an oriented box, in the caster's frame. Constant for
+   the spell's whole life, and the frame pm_occupancy divides up. */
+int pm_spell_box(const PmSpell* spell, float out_center[3],
+                 float out_axes[9], float out_half[3]);
+
+/* How many emitters this spell compiled to: the index range
+   pm_emitter_box accepts. 0 for a NULL handle. */
+int pm_emitter_count(const PmSpell* spell);
+
+/* One emitter's box, fitted to what it can have reached BY NOW (unlike
+   pm_spell_box, which covers the whole life). An index outside
+   [0, pm_emitter_count) is PM_ERR_ARGS with nothing written. */
+int pm_emitter_box(const PmSpell* spell, int index, float out_center[3],
+                   float out_axes[9], float out_half[3]);
+
+/* How many live particles fall in each cell of a dim*dim*dim grid over
+   pm_spell_box's frame. Cell (k*dim + j)*dim + i counts the particles at
+   step i along the box's U axis, j along V and k along the normal -- U
+   fastest.
+
+   The frame is fixed for the spell's whole life on purpose: cell 5 means
+   the same region on frame 10 and frame 11, which is what makes "these
+   particles entered that region" expressible at all. Early on, most
+   cells are empty; that is information, not waste.
+
+   Returns the number of cells written (dim*dim*dim), PM_ERR_ARGS for a
+   non-positive dim or a NULL handle, or PM_ERR_CAPACITY when
+   capacity < dim*dim*dim -- with nothing written at all. */
+int pm_occupancy(PmSpell* spell, int dim, int* out_counts, int capacity);
+
+/* The PM_OCCUPANCY_DIM_DEFAULT fast path: bit c is set exactly when cell
+   c of a 3x3x3 pm_occupancy would be non-zero. One call, no array to
+   size, no capacity to check -- an overlap test is one popcount or one
+   bitwise AND. Bits 27..31 are always clear; a NULL handle answers 0. */
+uint32_t pm_occupancy_mask(PmSpell* spell);
+
+/* pm_spell_bounds for one spell inside a scene: pm_scene_spells hands out
+   the ids, this hands out the boxes. An unknown id -- stale, finished,
+   never issued -- is PM_ERR_ARGS with nothing written. There is no
+   whole-scene union on purpose: folding these is three lines in the host,
+   and a box around everything is a number almost nothing can use. */
+int pm_scene_spell_bounds(const PmScene* scene, int spell_id,
+                          float out_min[3], float out_max[3]);
 
 #ifdef __cplusplus
 }
