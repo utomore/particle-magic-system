@@ -2,16 +2,16 @@
 id: func-0018
 type: spec
 title: scene-c-abi
-status: open
+status: done
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 depends-on: []
 related-adr: [adr-0011, adr-0012]
 ---
 
 # Func-Spec 0018：場景層上 C ABI（`pm_scene_*`）
 
-> 狀態：**設計定案，待實作**
+> 狀態：**已完成**（2026-08-16 驗收，見 §9）
 > 性質：一般 —— 新增的 10 個 C 匯出、`PmScene` handle 與 `PM_ERR_QUOTA` 交付即凍結（只加不改，ADR-0011 D7 延續）。
 > 前置依賴：**無**（0009 交付 C ABI 外殼、0011 交付契約守護與 C# 綁定、0012 交付 `Magic.Scene`，皆已完成；本 spec 全部是它們之上的加法；0016／0017 亦已交付，本 spec 不依賴其內容）。**與 spec 0019／0020 三方平行**：本 spec 鎖 `src/ffi`＋`include`＋`.def`＋契約測試＋`bindings/`＋`examples/`，0019 鎖 `.github/`＋README＋cabal metadata，0020 鎖 `src/core/Magic/{Sigil,Particle/Analytic}.hs`——檔案零交集（§0.2 附證明）。**與 spec 0025 則為序列**（它是本 spec 的下游，同碰 `src/ffi`＋`include`）。
 > 依據：[ADR-0011](../adr/adr-0011-ffi-c-abi-boundary.md)（C ABI 消費模式全部決策沿用：handle 生命週期、copy-out、錯誤協定、跨界決定論）；[ADR-0012](../adr/adr-0012-multi-circle-scene.md) **D8**（「場景層 v1 不上 C ABI」——其延後條件是「場景層的 API 形狀應先在 Haskell 面用過一輪再凍結成 C 合約」，0012 已於 2026-08-15 交付並驗收，**該條件已達成，本 spec 解除延後**）；[roadmap.md](../roadmap.md) §3.3（`pm_scene_*` 不存在的記帳）、0009 §9-7、0011 §8-2、0012 §8-1；[integration.md](../integration.md) §3.2（目前明文「僅 Haskell 面」的那一節）。
@@ -278,12 +278,12 @@ flowchart LR
 
 | # | Todo | 測試 |
 |---|---|---|
-| S1 | header +10 宣告 +`PmScene` opaque +`PM_ERR_QUOTA` +Scenes 註解段；`.def` +10 行；`FFI.hs` +10 `foreign export`（此步可為 stub）＋`pmErrQuota`；`FFIContractSpec` 凍結清單 11→21、新錯誤碼斷言、`global_cap` 哨兵 | `test/FFIContractSpec.hs`（更新後全綠：header↔export↔`.def` 三向一致 21 個、`PM_ERR_QUOTA == pmErrQuota == -5`、`PM_ABI_VERSION` 仍為 1、註解哨兵存在、依賴白名單不變） |
-| S2 | `SceneCell` handle＋`pm_scene_new`／`free`／`count`／`spells`／`budget`／`dismiss`／`advance` | `test/FFISceneSpec.hs`（新場景 `count==0`／`budget==(0,cap)`；`dismiss` 未知 id 是 no-op；`spells` 容量不足 → `PM_ERR_CAPACITY` 零寫出；每個進入點對 `NULL` handle 的中性值；負 `global_cap` 建得起來且拒收一切；`advance` 到法術結束後配額自動釋放） |
-| S3 | `pm_scene_cast`／`pm_scene_cast_many`／`pm_scene_observe`＋`refusalCode`＋`pm_observe` copy-out 抽取 | `test/FFISceneCastSpec.hs`（四種錯誤碼分類 ≡ `castInto` 的 `Either CastRefusal`；`PM_ERR_QUOTA` 後場景三項查詢與拒收前完全相同；`cast_many` ≡ `castManyInto`；`observe` 的六欄＋`batch_info` ≡ `observeScene` 逐位元；容量不足零寫出；`count == 0` 的空合成） |
-| S4 | `bindings/csharp/ParticleMagic.cs` +10 `DllImport` +`ErrQuota` +`PmScene` 用法註解 | `test/BindingContractSpec.hs`（既有邏輯不改；雙向集合相等要求新函數與新 `#define` 都同步——未同步即紅） |
-| S5 | `examples/c/scene.c`（兩張陣共存 → 第三張被 `PM_ERR_QUOTA` 拒 → 一張結束後配額釋放 → 第三張成功）＋`examples/unity/README.md` 補場景模式一節 | **手動 smoke**：以 `cabal build flib:particle-magic-ffi` 產出的真實 `.dll` 編譯連結執行，輸出軌跡貼入 §9 |
-| S6 | 端到端場景等價律 | `test/Acceptance18Spec.hs`（QuickCheck 產生 `cast`／`cast_many`／`dismiss`／`advance` 的操作序列，以既有範例陣為素材；每一步後 `pm_scene_observe` ≡ `observeScene` 逐位元、回傳碼分類一致、`pm_scene_budget` ≡ `sceneBudget`；120 幀） |
+| **S1 ✅** | header +10 宣告 +`PmScene` opaque +`PM_ERR_QUOTA` +Scenes 註解段；`.def` +10 行；`FFI.hs` +10 `foreign export`（此步可為 stub）＋`pmErrQuota`；`FFIContractSpec` 凍結清單 11→21、新錯誤碼斷言、`global_cap` 哨兵 | `test/FFIContractSpec.hs`（更新後全綠：header↔export↔`.def` 三向一致 21 個、`PM_ERR_QUOTA == pmErrQuota == -5`、`PM_ABI_VERSION` 仍為 1、註解哨兵存在、依賴白名單不變） |
+| **S2 ✅** | `SceneCell` handle＋`pm_scene_new`／`free`／`count`／`spells`／`budget`／`dismiss`／`advance` | `test/FFISceneSpec.hs`（新場景 `count==0`／`budget==(0,cap)`；`dismiss` 未知 id 是 no-op；`spells` 容量不足 → `PM_ERR_CAPACITY` 零寫出；每個進入點對 `NULL` handle 的中性值；負 `global_cap` 建得起來且拒收一切；`advance` 到法術結束後配額自動釋放） |
+| **S3 ✅** | `pm_scene_cast`／`pm_scene_cast_many`／`pm_scene_observe`＋`refusalCode`＋`pm_observe` copy-out 抽取 | `test/FFISceneCastSpec.hs`（四種錯誤碼分類 ≡ `castInto` 的 `Either CastRefusal`；`PM_ERR_QUOTA` 後場景三項查詢與拒收前完全相同；`cast_many` ≡ `castManyInto`；`observe` 的六欄＋`batch_info` ≡ `observeScene` 逐位元；容量不足零寫出；`count == 0` 的空合成） |
+| **S4 ✅** | `bindings/csharp/ParticleMagic.cs` +10 `DllImport` +`ErrQuota` +`PmScene` 用法註解 | `test/BindingContractSpec.hs`（既有邏輯不改；雙向集合相等要求新函數與新 `#define` 都同步——未同步即紅） |
+| **S5 ✅** | `examples/c/scene.c`（兩張陣共存 → 第三張被 `PM_ERR_QUOTA` 拒 → 一張結束後配額釋放 → 第三張成功）＋`examples/unity/README.md` 補場景模式一節 | **手動 smoke**：以 `cabal build flib:particle-magic-ffi` 產出的真實 `.dll` 編譯連結執行，輸出軌跡貼入 §9 |
+| **S6 ✅** | 端到端場景等價律 | `test/Acceptance18Spec.hs`（QuickCheck 產生 `cast`／`cast_many`／`dismiss`／`advance` 的操作序列，以既有範例陣為素材；每一步後 `pm_scene_observe` ≡ `observeScene` 逐位元、回傳碼分類一致、`pm_scene_budget` ≡ `sceneBudget`；120 幀） |
 
 ## 8. 非目標
 
@@ -299,4 +299,105 @@ flowchart LR
 
 ## 9. 驗收紀錄
 
-（實作時回填：日期、環境、`cabal test` 數字、S5 的真實 DLL 輸出軌跡、凍結清單、與計畫的差異。）
+### 9.1 環境與結果
+
+| | |
+|---|---|
+| 日期 | 2026-08-16 |
+| 環境 | Windows 11 Pro 10.0.26200、GHC 9.14.1（ghcup）、cabal-install 3.16.1.0 |
+| `cabal test` | **1191 examples, 0 failures**（29.7 s）。0017 交付時為 1156，本輪 +35 |
+| `cabal build flib:particle-magic-ffi` | 綠。`Magic.FFI` 零警告（`-Wall`） |
+| 本輪新增測試 | `FFISceneSpec` 13、`FFISceneCastSpec` 16、`Acceptance18Spec` 4（其一為 50 次 × 120 步的 QuickCheck 序列）；`FFIContractSpec` 由 16 → 18 |
+
+§1 的七條完成定義逐條成立：三份文本一致且凍結清單 21 個（S1）、場景等價律（S6）、配額語意跨界（S2／S3）、NULL 與越界零崩潰（S2）、C# 雙向一致（S4）、真實 DLL 軌跡（S5，§9.2）、`PM_ABI_VERSION` 仍為 1。
+
+### 9.2 S5：真實 DLL 的手動 smoke
+
+```
+cabal build flib:particle-magic-ffi
+cp dist-newstyle/.../particle-magic-ffi.dll .
+clang -Iinclude examples/c/scene.c particle-magic-ffi.dll -o pm_scene.exe
+./pm_scene.exe assets/spells/ring-fire.json
+```
+
+（`gcc` 不在 PATH 上；GHC 9.14.1 隨附的 C 工具鏈是 `<ghcup>/ghc/9.14.1/mingw/bin/clang.exe`，與 h-raylib 用的是同一份。）
+
+```
+spell: assets/spells/ring-fire.json
+one cast costs 384 particles; global_cap = 768 (room for two)
+
+cast A -> id 0   (spells 1, quota 384/768)
+frame  60  spells 1 [0]  batches  1  particles    97  quota 384/768
+cast B -> id 1   (spells 2, quota 768/768)
+frame  90  spells 2 [0 1]  batches  2  particles   193  quota 768/768
+cast C -> PM_ERR_QUOTA (-5): scene quota exceeded: needs 384 particles, 0 left   (spells 2, quota 768/768)
+   after the refusal, the scene is untouched: frame  90  spells 2 [0 1]  batches  2  particles   193  quota 768/768
+
+running until A ends ...
+frame 120  spells 2 [0 1]  batches  2  particles   290  quota 768/768
+frame 180  spells 2 [0 1]  batches  2  particles   577  quota 768/768
+frame 240  spells 2 [0 1]  batches  2  particles   768  quota 768/768
+frame 300  spells 2 [0 1]  batches  2  particles   671  quota 768/768
+frame 360  spells 2 [0 1]  batches  2  particles   478  quota 768/768
+frame 390  spells 1 [1]  batches  1  particles   287  quota 384/768
+
+cast C (retried) -> id 2   (spells 2, quota 768/768)
+
+running to the end ...
+frame 420  spells 2 [1 2]  batches  2  particles   192  quota 768/768
+frame 480  spells 1 [2]  batches  1  particles   193  quota 384/768
+frame 540  spells 1 [2]  batches  1  particles   384  quota 384/768
+frame 600  spells 1 [2]  batches  1  particles   384  quota 384/768
+frame 660  spells 1 [2]  batches  1  particles   383  quota 384/768
+frame 720  spells 1 [2]  batches  1  particles   191  quota 384/768
+frame 780  spells 0 []  batches  0  particles     0  quota 0/768
+
+refused code -5, retried id 2, spells left 0
+```
+
+§1 完成定義 6 的四個事件全部在軌跡裡，順序如設計：**兩張共存**（frame 90，`quota 768/768`、`batches 2`）→ **第三張被 `PM_ERR_QUOTA` 拒且場景一位元未變**（同一幀的兩行輸出完全相同）→ **A 自然結束、配額自動回到 384/768**（frame 390，沒有任何 `dismiss`）→ **第三張成功**（id 2，且 id 不重用）。
+
+一個順帶的觀察：frame 240 的 `particles 768` 剛好等於 `global_cap`——配額是**編譯期預算**的加總，而執行期的活粒子數在峰值恰好把它填滿。這正是「六欄要照 `global_cap` 開」那條 header 註解的實測依據：照 `pm_max_particles()`（單一法術上限）開會在這一幀溢位。
+
+### 9.3 與計畫的差異
+
+| # | 差異 | 說明 |
+|---|---|---|
+| 1 | S1 沒有走 stub 這一步 | §6 建議 S1 的 `FFI.hs` 先放 stub 以便看紅燈。實作時十個進入點的本體都是三五行的型別穿越，先 stub 再回填純屬改寫，於是一次寫到位;S1→S6 的**驗證**順序仍逐步進行（每一步各自跑到綠才進下一步）。純屬順序，設計零變更 |
+| 2 | 測試共用碼放在 `FFISceneSpec` 而非新模組 | §0.2 的新增檔清單只有 4 個，且 `FFIHarness` 明文不在修改清單。三個新測試模組都需要同一組場景 marshalling helper（`withSceneHandle`／`sceneCast`／`sceneObserve`／…），於是照 `FFIContractSpec` → `BindingContractSpec` 的既有先例,由 `FFISceneSpec` 匯出、另外兩個 import。**`FFIHarness` 一行未改**，新增檔仍是 4 個 |
+| 3 | `FFI.hs` 多了四個私有 helper | §3.3 只點名 `refusalCode`。實作另加 `refusalMessage`（`CastRefusal` → `err_buf` 文字）、`withCast`（兩個 cast 進入點共用的參數檢查＋`CastContext` 組裝）、`admitInto`（把 `Either CastRefusal` 落到 cell 與 `out_id`）、`castFail`。皆為私有、皆不進匯出面，屬 0009 §4.4 明文可自由重構的範圍 |
+| 4 | `copyOut` 的抽取如計畫，且確認零行為變更 | §3.3 預告的純重構已完成:`pm_observe` 與 `pm_scene_observe` 現在呼叫同一個 `copyOut`。`FFIObserveSpec`／`Acceptance9Spec` 這張回歸網全綠，未動一行 |
+| 5 | 文件改動比計畫多一節 | §0.2 記的是 `docs/integration.md`（其 §3.2）。實際上該文件新開了 **§4.6「一次好幾張陣:場景」**（C 宿主的完整用法),並修了 §4.3 錯誤表與 §8 限制表的兩列陳舊敘述;`examples/unity/README.md` 亦新增 §8（原 §8 順延為 §9）——後者是 S5 明列的工作 |
+| 6 | `Acceptance18Spec` 用 `withNumTests` | `withMaxSuccess` 在此版 QuickCheck 已 deprecated |
+
+實作中沒有遇到需要偏離設計的技術障礙：`Magic.Scene` 的匯出面直接可穿越，flib 的依賴白名單如 §0.1 所料完全不必動，`particle-magic.cabal` 只加了 test-suite 的 3 行 `other-modules` 與 1 行 `extra-source-files`。
+
+**一個被等價律當場抓到的錯誤**（值得記一筆，因為它正是這條律存在的理由）：`FFISceneCastSpec` 的參照路徑起初寫 `DeltaTime (1/60)`——`Double` 的 1/60。C 路徑收的是 `float` 再加寬，`float2Double (1/60 :: Float)` 與 `1/60 :: Double` 是**不同的數**，於是第一次跑就在某一幀報「particle total: 1 vs 0」。逐位元的律沒有「差不多」這個選項,連測試自己的 dt 都得走宿主的捨入。
+
+### 9.4 交付即凍結的清單
+
+以下自本輪交付起只加不改（ADR-0011 D7 延續）：
+
+1. **10 個 C 進入點的名稱與簽章**：`pm_scene_new`、`pm_scene_free`、`pm_scene_cast`、`pm_scene_cast_many`、`pm_scene_dismiss`、`pm_scene_advance`、`pm_scene_observe`、`pm_scene_budget`、`pm_scene_count`、`pm_scene_spells`（宣告見 §3.1，三份文本一致由 `FFIContractSpec` 守護）。
+2. **`typedef struct PmScene PmScene;`** —— opaque，內部表示（目前 `StablePtr (IORef Scene)`）不是合約。
+3. **`PM_ERR_QUOTA = -5`** —— 值永久凍結;宿主的 `switch` 會把數字編譯進去。
+4. **所有權規則**：場景獨佔其法術（場景內法術無 `PmSpell*`;不可在兩種模式間搬移）。這是 API 形狀的一部分,不是實作細節——鬆綁它會在 C 面造出 Haskell 面沒有的別名。
+5. **輸出佈局的沿用**：`pm_scene_observe` 的六欄與 `batch_info` 與 `pm_observe` **完全相同**（含 `PM_BATCH_INFO_STRIDE = 4`、all-or-nothing 錯誤路徑）。
+6. **`PM_ABI_VERSION` 仍為 1**。
+
+**未凍結**（`Magic.FFI` 內部，可自由重構）：`SceneCell`、`nullScene`／`isNullScene`／`withScene`、`copyOut`、`refusalCode`／`refusalMessage`、`withCast`／`admitInto`／`castFail`，以及 `err_buf` 裡的**文字內容**（分類碼才是合約）。
+
+### 9.5 檔案盤點事後核對（與 0019／0020 的零交集）
+
+實際觸及的檔案與 §0.2 的預測逐項比對：
+
+- **修改（6）**：`src/ffi/Magic/FFI.hs`、`include/particle_magic.h`、`particle-magic-ffi.def`、`test/FFIContractSpec.hs`、`bindings/csharp/ParticleMagic.cs`——**如預測**。`test/BindingContractSpec.hs` **一行未改**即涵蓋新函數與新 `#define`（§0.2 預測「無需改邏輯」，事後成立;它確實在 C# 綁定同步之前先變紅了）。改為 6 的另一份是 `examples/unity/README.md`（S5 明列，§0.2 漏記在修改表裡）。
+- **新增（4）**：`test/FFISceneSpec.hs`、`test/FFISceneCastSpec.hs`、`test/Acceptance18Spec.hs`、`examples/c/scene.c`——**如預測**。
+- **共用**：`particle-magic.cabal`、`SKILL.md`、`docs/roadmap.md`、`docs/integration.md`、`CHANGELOG.md`——**如預測**，全為行級聯集。
+- **明文不碰的部分全部沒碰**：`src/core/*`、`src/boundary/*`（含 `Magic/Scene.hs`）、`app/*`、`bench/*`、`tools/*`、`cbits/pm_init.c`、`assets/*`、`docs/spell-schema.md` 皆零改動。
+
+與 0019（`.github/`＋`README.md`＋`docs/release.md`＋cabal metadata 行）、0020（`src/core/Magic/{Sigil,Particle/Analytic}.hs`＋四個 sigil 測試＋兩個 golden）逐檔比對：**交集 = ∅**，§0.2 的三方平行證明事後成立。
+
+### 9.6 下游解除
+
+spec **0025**（空間資訊輸出與多發動點，重大基建）的唯一前置是本 spec，**門檻自 2026-08-16 起解除**。它會再碰 `src/ffi`＋`include`，起點是本輪交付後的 header 形狀（23 → 30 個宣告）。

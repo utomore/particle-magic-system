@@ -1,6 +1,6 @@
 # 宿主整合指南
 
-> 版本：1.1（2026-08-14，spec 0011 交付後：投影三件套上 C ABI、C# 參考綁定與 Unity 範例成為真檔案。ABI version 仍為 1——全部是加法）
+> 版本：1.2（2026-08-16，spec 0018 交付後：場景層整個上 C ABI——新增 §4.6、`PM_ERR_QUOTA` 進 §4.3 的錯誤表、§3.2 與 §8 的「只在 Haskell 面」收窄為「不進場景的合成只在 Haskell 面」。ABI version 仍為 1——全部是加法。1.1 為 spec 0011 交付後：投影三件套上 C ABI、C# 參考綁定與 Unity 範例成為真檔案）
 > 對象：想把這套粒子魔法系統接進自己遊戲的人——Unity、Godot、C/C++ 引擎、Haskell 專案，或完全自製的前端。
 > 相關文件：[architecture.md](architecture.md)（系統設計）、[roadmap.md](roadmap.md)（還缺什麼）、[`include/particle_magic.h`](../include/particle_magic.h)（凍結的 C 合約）、[`bindings/csharp/ParticleMagic.cs`](../bindings/csharp/ParticleMagic.cs)（C# 參考綁定）、[`examples/unity/`](../examples/unity/)（Unity 最小範例）
 
@@ -195,7 +195,7 @@ visibleEmitters ctx spell =
   ]
 ```
 
-### 3.2 多陣合成與場景層（func-spec 0012 新增，僅 Haskell 面）
+### 3.2 多陣合成與場景層（func-spec 0012 新增；場景層已於 0018 上 C ABI）
 
 **合成**——把幾張陣當成一個法術施放：
 
@@ -236,6 +236,8 @@ frame fi scene = let scene' = advanceScene fi scene in (scene', observeScene sce
 ```
 
 進階配額策略（按強度加權、優先權搶佔）刻意不做：庫給的是拒收與剩餘量，要先 `dismiss` 掉什麼是遊戲的決定，不是粒子系統的（ADR-0012 D6）。
+
+**這一節的每一行,C 宿主現在也有**（func-spec 0018,見 §4.6）。上表左欄逐項對應 `pm_scene_*`,語意一字不差——C 面是這張匯出表的型別穿越,沒有第三件事。**合成**（`castSpells` → 不進場景的 `ActiveSpell`）則仍只在 Haskell 面:C 宿主要合成,開一個 `global_cap` 夠大的場景、用 `pm_scene_cast_many` 即可。
 
 ---
 
@@ -326,6 +328,7 @@ int main(void)
 | 想知道**為什麼**失敗 | 改用 `pm_cast_ex(..., &spell)`：回 `PM_OK` / `PM_ERR_JSON`（JSON 不合法或符文 tag 不認識）/ `PM_ERR_BUDGET`（合法，但要求的粒子數超過上限） |
 | `pm_observe` 空間不足 | `PM_ERR_CAPACITY`，**一個位元組都不寫**——不會有半更新的幀 |
 | `pm_project` / `pm_depth_order` 參數不合法 | `PM_ERR_ARGS`（`NULL` 指標、負長度、未知 plane），同樣**一個位元組都不寫** |
+| `pm_scene_cast` / `pm_scene_cast_many` 失敗 | 同樣四碼加一：`PM_ERR_JSON` / `PM_ERR_BUDGET`（單張陣自己就編不出來）/ **`PM_ERR_QUOTA`**（編得出來，但場景放不下——見 §4.6）/ `PM_ERR_ARGS`（`NULL` 場景、`NULL out_id`、負 count）。四種都寫人類可讀原因進 `err_buf`，且**場景完全未變** |
 
 錯誤訊息與 demo HUD 上顯示的是同一句（共用 `Magic.Codec.renderLoadError`），含 JSON 路徑，例如
 `spell JSON error: Error in $.circle.bridge: unknown rune tag "bogus"`。
@@ -366,6 +369,45 @@ for (int k = 0; k < total; k++) draw_quad(sx[order[k]], sy[order[k]], /* ... */)
 3. **加法批次不需要排序**（加法可交換），只有 alpha 批次需要。想只排一段就把該段的起點指標與長度傳進去即可。
 
 跨界等價律（`test/Acceptance11Spec.hs`）保證這條路徑與 Haskell 的 `orthographic`／`depthOrder` 逐位元相同，9 個範例陣 × 2 個平面 × 120 幀。
+
+### 4.6 一次好幾張陣:場景（0018 新增）
+
+§4.2 的迴圈驅動**一張**陣。要同時有好幾張,不必自己開一個 `PmSpell*` 陣列記帳——`Magic.Scene`(§3.2)整個上了 C ABI:
+
+```c
+int cap = 8192;                       /* 這個場景所有法術加起來的粒子上限 */
+PmScene *sc = pm_scene_new(cap);
+char err[512];
+int  id;
+
+if (pm_scene_cast(sc, json, pos, facing, 42, err, sizeof err, &id) != PM_OK)
+    fprintf(stderr, "%s\n", err);     /* PM_ERR_QUOTA 時可以先 dismiss 再重試 */
+
+for (;;) {
+    pm_scene_advance(sc, 1.0f/60.0f); /* 推進全部,已結束的自動移除＝配額回收 */
+    int n = pm_scene_observe(sc, px, py, pz, size, life, color,
+                             cap, info, MY_MAX_BATCHES);
+    /* 六欄與 batch_info 的佈局、PM_BATCH_INFO_STRIDE、all-or-nothing 全部同 pm_observe */
+}
+pm_scene_free(sc);
+```
+
+十個進入點與 §3.2 那張表逐項對應:`pm_scene_new`／`_free`／`_cast`／`_cast_many`／`_dismiss`／`_advance`／`_observe`／`_budget`／`_count`／`_spells`。完整可跑的軌跡見 [`examples/c/scene.c`](../examples/c/scene.c)（兩張共存 → 第三張被配額拒 → 一張自然結束後配額釋放 → 第三張成功）。
+
+四件與單張陣不同、而且做錯是**靜默**的事:
+
+| | 說明 |
+|---|---|
+| **六欄開多大** | 用你傳給 `pm_scene_new` 的 `global_cap`,**不要**用 `pm_max_particles()`——後者界定的是**單一法術**。搞反的症狀是第二張陣進場後 `pm_scene_observe` 開始回 `PM_ERR_CAPACITY`,而且照慣例整幀不寫,看起來像閃爍不像錯誤 |
+| **新錯誤碼 `PM_ERR_QUOTA`（−5）** | 法術編得起來,只是場景滿了——這是唯一值得**反應**（先 `pm_scene_dismiss` 再重試）而不只是記 log 的失敗。被拒的那一次**場景一個位元都沒變**,`pm_scene_count`／`_spells`／`_budget` 三者皆與拒收前相同 |
+| **場景獨佔其法術** | 進了場景的法術**沒有** `PmSpell*`;不能丟給 `pm_free`,也不能把既有的 `PmSpell*` 搬進場景。每次施法二選一 |
+| **一個 scene 一個執行緒** | 與 `PmSpell*` 同一條紀律,庫內仍然無鎖 |
+
+`SpellId` 遞增不重用,所以陳舊的 id 是**惰性**而非歧義:`pm_scene_dismiss` 對未知／已結束的 id 是 no-op,宿主不必先查法術還活著沒有,也不需要 generation counter。
+
+**`batch_info` 不會告訴你某個 batch 屬於哪一張陣**——`observeScene` 自己也不知道,C 面刻意不比 Haskell 面多知道一件事。真有需求時的做法（先在 boundary 加 `observeSceneBy`,C 面再加一個平行 out 陣列,**不動 `PM_BATCH_INFO_STRIDE`**）記在 func-spec 0018 §8-1。
+
+跨界等價律（`test/Acceptance18Spec.hs`）:對生成的操作序列,每一步之後 `pm_scene_observe` 與 `observeScene` 逐位元相同,收碼分類與 `castInto` 的 `Either CastRefusal` 一致,`pm_scene_budget` 與 `sceneBudget` 相同。
 
 ---
 
@@ -524,7 +566,8 @@ void Update()
 | 限制 | 說明 |
 |---|---|
 | **粒子上限 16384** | **這是護欄值，不是速度上限**：func-spec 0010 已把熱路徑做到 100 000 粒 6.5 ms（60 fps 預算的 39%）；func-spec 0012 依「單幀純 CPU ≤ 2 ms」的規則把值定在 16384（實測 1.45 ms）。超過上限的魔法陣在 `pm_cast`／`castSpell` 就會被擋下（`PM_ERR_BUDGET`），不會在執行期爆掉。**請用執行期查詢，不要把數字抄進程式碼**——它已經變過一次：Haskell 宿主用 `Magic.Interface.maxSpellParticles`，C 宿主用 `pm_max_particles()`（`PM_MAX_PARTICLES` 是 ABI 第 1 代的 4096，永久凍結） |
-| **合成與場景層只在 Haskell 面** | func-spec 0012 交付了多陣合成（`castSpells`）與全域配額場景層（`Magic.Scene`），但**沒有對應的 C ABI**（`pm_scene_*` 不存在，ADR-0012 D8）。C／Unity 宿主仍是「一個 handle 一個法術」，多法術的總量控制是你的事（配額邏輯是十行加法） |
+| **不進場景的合成只在 Haskell 面** | 場景層已於 func-spec 0018 上 C ABI（§4.6，ADR-0012 D8 的延後已解除）。仍只在 Haskell 面的是 `castSpells`——把幾張陣合成一個**獨立** `ActiveSpell`。C 宿主要合成,開一個 `global_cap` 夠大的場景用 `pm_scene_cast_many` 即可,差別只在多了一個場景 handle |
+| **場景不報批次歸屬** | `pm_scene_observe`（與 `observeScene`）都不告訴你某個 batch 屬於哪一張陣;要按法術分別上色／分別剔除的宿主目前得自己開多個場景。做法已知且為純加法，記在 func-spec 0018 §8-1 |
 | **合成後只有一個 blend mode** | 合成法術渲染成一個 batch，混合模式取第一張陣的（ADR-0012 D5）。把火（additive）與水（alpha）疊起來，整體以第一張的模式繪製 |
 | **單執行緒 handle** | 庫內無鎖 |
 | **RTS 不可重啟** | `pm_shutdown()` 之後不能再 `pm_init()`；一個 process 一份 GHC RTS |
