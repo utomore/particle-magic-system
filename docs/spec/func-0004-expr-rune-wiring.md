@@ -15,7 +15,7 @@ related-adr: [adr-0002, adr-0003]
 > 狀態：已完成（2026-08-13 驗收，見 §10）——自動化驗收全綠、開窗手動 smoke 已人工確認；§4.7 凍結範圍自此生效
 > 性質：一般 —— 本 spec 交付的符文語意與 JSON tag 完成後依 0002 §2 的可擴充 sum 合約凍結，但它不是後續 spec 的共同地基（生命週期、力場各自依賴 0002/0003，不依賴本 spec）。
 > 前置依賴：spec 0002（**已完成**，2026-08-12 驗收）＋ spec 0003（**已完成**，2026-08-12 驗收）——重大基建動工門檻已解除，本 spec 可認領實作。0003 交付與設計零偏差（其 §10 無實作期修訂），本 spec §0.2 引用的凍結介面全數如列交付；環境紀錄：megaparsec 9.8.1 × parser-combinators 1.3.1 × GHC 9.14.1，無需 allow-newer。
-> 依據：[architecture.md](../architecture.md) §4.1（四符文原始定義）、§4.2（Expr 設計要點）、§6 對照表（「收束強度」「數學式」）；ADR-0002（分層 DSL）、ADR-0003（固定職責槽位）
+> 依據：[architecture.md](../arch/architecture.md) §4.1（四符文原始定義）、§4.2（Expr 設計要點）、§6 對照表（「收束強度」「數學式」）；ADR-0002（分層 DSL）、ADR-0003（固定職責槽位）
 > 範圍：四種 Expr 符文（`RangeRune`／`ConvergeRune`／`AmplifyRune`／`FormulaRune`）與魔法陣的完整接線——Rune sum 加建構子、`ExprV3` 定型、fold 加 case、Codec 加 tag（公式字串 ⇄ `parseExpr`/`renderExpr`）、`sample` 建 `ExprEnv` 求值。玩家第一次能在 JSON 裡寫 `"sin(t*6)*0.4"` 讓粒子照數學式運動。
 
 ---

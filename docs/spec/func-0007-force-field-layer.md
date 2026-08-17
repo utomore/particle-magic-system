@@ -15,7 +15,7 @@ related-adr: [adr-0001, adr-0010]
 > 狀態：已完成（2026-08-14 交付，驗收紀錄見 §10）
 > 性質：一般 —— `ForceField`／`FieldState`／`Field.step` 交付後成為凍結詞彙，供未來效能 spec（`FieldState` SoA 化）與多陣合成 spec 引用，但本 spec 不是它們的動工門檻。
 > 前置依賴：**spec 0006（需已完成）**。本 spec 修改 `Circle.hs`／`Compile.hs`／`Codec.hs`——恰為 0006 §0.2 修改清單的全集，SKILL.md 規則 4 禁止平行修改同一模組檔，故 **0006 完成驗收前不得動工**；且本 spec 直接引用 0006 交付後凍結的 `Phase`/`emPhase` 詞彙（ADR-0010 D6）。設計以 0006 §10 承諾凍結的介面為準，現在定案；動工等門檻解除。
-> 依據：[ADR-0001](../adr/adr-0001-hybrid-particle-model.md)（混合模型的力場半邊）、[ADR-0010](../adr/adr-0010-force-field-composition.md)（本輪新立：組合點語意 D1–D9，本文件處處引用）、[architecture.md](../architecture.md) §3.2（每幀流的 FieldStep 分支）、§4.6（`step` 簽名草圖）、§7（僅場對粒子）、§8.3（熱重載政策）、§11（固定時步公理）
+> 依據：[ADR-0001](../adr/adr-0001-hybrid-particle-model.md)（混合模型的力場半邊）、[ADR-0010](../adr/adr-0010-force-field-composition.md)（本輪新立：組合點語意 D1–D9，本文件處處引用）、[architecture.md](../arch/architecture.md) §3.2（每幀流的 FieldStep 分支）、§4.6（`step` 簽名草圖）、§7（僅場對粒子）、§8.3（熱重載政策）、§11（固定時步公理）
 > 範圍：ADR-0001 混合模型的另一半落地——系統第一個跨幀狀態。帶 `circleFields` 的魔法陣，粒子渲染位置＝解析位置＋確定性場位移（重力／點吸引子／渦流）；零場的陣逐位元不變。**`app/*` 零觸碰**——每步積分天然發生在 0005 交付的 `advanceSpell ×n` 迴圈內。
 
 ---

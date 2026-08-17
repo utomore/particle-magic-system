@@ -13,7 +13,7 @@ related-spec: [func-0017]
 # ADR-0015：陣駐留到法術結束——取消陣形收束，逐位元邊界收窄
 
 - 狀態：已採納（2026-08-15）
-- 相關：[architecture.md §3.3（生命週期——本 ADR 修訂其狀態圖）](../architecture.md)；ADR-0010 D6（只有施放粒子吃力場）、**ADR-0014 D5（其逐位元豁免邊界由本 ADR 取代）**；spec 0006 §4.3（陣形包絡推導鏈——本 ADR 撤銷其第 2／3 步）、spec 0016 §1-5（Casting 相位零影響律——本 ADR 撤銷）；落地 spec：0017
+- 相關：[architecture.md §3.3（生命週期——本 ADR 修訂其狀態圖）](../arch/architecture.md)；ADR-0010 D6（只有施放粒子吃力場）、**ADR-0014 D5（其逐位元豁免邊界由本 ADR 取代）**；spec 0006 §4.3（陣形包絡推導鏈——本 ADR 撤銷其第 2／3 步）、spec 0016 §1-5（Casting 相位零影響律——本 ADR 撤銷）；落地 spec：0017
 
 ## 背景
 

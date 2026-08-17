@@ -15,7 +15,7 @@ related-adr: [adr-0003]
 > 狀態：已完成（2026-08-13，驗收紀錄見 §10）
 > 性質：一般 —— `Phase`/`PhasePlan` 交付後成為凍結詞彙，供未來力場 spec（`FieldState` 的階段感知）與多陣合成 spec 引用，但本 spec 不是它們的動工門檻。
 > 前置依賴：spec 0002／0003／0004（皆**已完成**）。**與 spec 0005 平行**：0005（設計定案，待實作）鎖定 `src/boundary/Magic/Interface.hs`、`app/*` 全部、`bench/*` 與 cabal 的 executable/benchmark stanza——本 spec 檔案清單與之**零交集**（§0.2 附盤點證明），兩 spec 可同時認領實作。
-> 依據：[architecture.md](../architecture.md) §3.3（四階段生命週期、「魔法陣本身的幾何就是繪製階段的粒子來源」、空陣 skip 規則）、§4.4（`spellPhases`/`phase` 草圖）、§6 步驟 5（`Circle 幾何 → Vector EmitterSpec`）、§10（「新生命週期階段」擴充點）；ADR-0003（陣形幾何依槽位固定職責導出）；0002 §4.4（`spellEmitters` 的 `Vector` 明文為本 spec 預留）
+> 依據：[architecture.md](../arch/architecture.md) §3.3（四階段生命週期、「魔法陣本身的幾何就是繪製階段的粒子來源」、空陣 skip 規則）、§4.4（`spellPhases`/`phase` 草圖）、§6 步驟 5（`Circle 幾何 → Vector EmitterSpec`）、§10（「新生命週期階段」擴充點）；ADR-0003（陣形幾何依槽位固定職責導出）；0002 §4.4（`spellEmitters` 的 `Vector` 明文為本 spec 預留）
 > 範圍：回答 Init.md 的核心提問「如何先生成魔法陣（粒子），再收束發出粒子魔法」。魔法獲得完整的四階段弧線：**Drawing（繪陣）→ Converging（收束）→ Casting（發動）→ Dissipating（消散）**，陣形粒子由 `Circle` 的幾何直接導出。**取樣器 `Analytic.hs` 一行不改**——全部階段機制編譯成既有取樣詞彙（§2 核心洞察）。
 
 ---

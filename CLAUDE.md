@@ -4,17 +4,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Status
 
-This is a **greenfield project with a completed architecture design, but no code yet**. No cabal project or build setup exists. Authoritative documents:
+This is a **working implementation, not a greenfield project**. The cabal project builds, the hspec suite is green on Windows and Linux (CI matrix), and func-specs 0001–0025 plus enhance-0001 are all delivered and accepted. An interface a delivered spec calls frozen IS frozen — changing one needs an ADR, not a judgement call. Authoritative documents:
 
-- `docs/architecture.md` — the system architecture design (Traditional Chinese): module structure, data flow, core type sketches, JSON input format, interpreter design, performance strategy, risk analysis. Read this before any design or implementation work.
+- `docs/arch/architecture.md` — the system architecture design (Traditional Chinese): module structure, data flow, core type sketches, JSON input format, interpreter design, performance strategy, risk analysis. Read this before any design or implementation work.
+- `docs/arch/subarch-NNNN-*.md` — subsystem architectures, one per subsystem listed in the main doc's `subarchs` frontmatter field and its §2.1 table. Each expands one subsystem inward: component split, internal data flow, external interface, key algorithms, and a feature roadmap whose delivered rows link back to func-specs. Read the one covering the code you are about to touch; the main architecture stays at subsystem-boundary granularity.
 - `docs/adr/adr-NNNN-*.md` — Architecture Decision Records. Do not silently contradict these; if a decision must change, update the ADR.
-- `docs/spec/func-NNNN-*.md` — function specs, one per module/implementation iteration: ADTs, techniques, data structures, pipeline, build order, and a Todo list with 1-to-1 test mapping. Write the spec BEFORE implementing an iteration; a Todo is only done when its paired test is green. First one: `func-0001-framework-skeleton.md` (package boundaries, IO/core boundary, walking skeleton).
+- `docs/spec/func-NNNN-*.md` — function specs, one per module/implementation iteration: ADTs, techniques, data structures, pipeline, build order, and a Todo list with 1-to-1 test mapping. Write the spec BEFORE implementing an iteration; a Todo is only done when its paired test is green. 0001–0025 are all `status: done` — read the one that owns the code you are about to touch. `docs/roadmap.md` is the ordered candidate list for what comes next; its §3 is the accounted backlog, where every unlanded item is charged to some spec's §9.
 - `docs/bugfix/bug-NNNN-*.md`, `docs/enhance/enhance-NNNN-*.md`, `docs/analysis/report-YYYY-MM-DD-*.md` — defect records, improvement proposals, and health-check reports. Created on demand; only `analysis/report-*` is date-named, everything else is four-digit numbered.
 - Every doc starts with YAML frontmatter (`id`, `type`, `title`, `description`, `status`, `created`, `updated`, `depends-on`, `related-adr`, `related-spec`) — see SKILL.md 「文檔 metadata 標準」. `description` is mandatory on every doc: one Traditional-Chinese sentence, max 40 characters, no trailing period, stating the document's theme (not its details). The `dev-flow` skill's `scan-status.mjs` reads only that block, so keep `status` and `updated` current whenever a doc changes.
 - `SKILL.md` — the documentation system and work cycle rules (doc types, metadata standard, func-spec template, Todo↔test discipline, multi-collaborator mode). Follow it when adding docs or starting an implementation round. Key rules: one Claude session owns at most ONE func-spec; specs must be decoupled (depend only on permanent interfaces and completed specs); specs marked **重大基建功能** (critical infrastructure) must be fully accepted before dependent specs start, and their permanent interfaces are frozen once delivered.
 - `Init.md` — the original vision notes (superseded in detail by the architecture doc).
 
-Key settled decisions (see ADRs for rationale): hybrid particle model, analytic-first with optional force-field layer (ADR-0001); three-layer DSL — circle structure ADT + parameter records + small math `Expr` AST, no deep GADT DSL (ADR-0002); fixed-role slots with runes, interpreted inside-out: core=essence, inner=behavior, bridge=modulation, outer=presentation (ADR-0003); dataflow architecture, no ECS (ADR-0004); JSON + hot reload as the input interface (ADR-0005); SoA + unboxed vectors, target 10k–100k particles (ADR-0006); effectful only in the `App.*` shell, `Magic.*` core has zero IO and no `Eff` in signatures (ADR-0007); dimension-agnostic core in abstract 3D space, raylib 3D backend first (ADR-0008).
+Key settled decisions (see ADRs for rationale): hybrid particle model, analytic-first with optional force-field layer (ADR-0001); three-layer DSL — circle structure ADT + parameter records + small math `Expr` AST, no deep GADT DSL (ADR-0002); fixed-role slots with runes, interpreted inside-out: core=essence, inner=behavior, bridge=modulation, outer=presentation (ADR-0003); dataflow architecture, no ECS (ADR-0004); JSON + hot reload as the input interface (ADR-0005); SoA + unboxed vectors, target 10k–100k particles (ADR-0006); effectful only in the `App.*` shell, `Magic.*` core has zero IO and no `Eff` in signatures (ADR-0007); dimension-agnostic core in abstract 3D space, raylib 3D backend first (ADR-0008). Later rounds settled: dynamic quad mesh rather than instancing (ADR-0009, whose "no custom shader" premise is superseded by ADR-0018); force-field composition — additive displacement, stable slot identity, reload resets state (ADR-0010); the C ABI boundary — foreign-library, JSON in, SoA copy-out, handle lifecycle (ADR-0011); multi-circle composition and the scene-layer quota, first-come-first-served (ADR-0012); the billboard vocabulary (ADR-0013); the sigil derived from a frozen circle digest (ADR-0014), persisting through the cast (ADR-0015) and spinning (ADR-0020); release compatibility — same-platform bit-exact, cross-platform structural + 2 ulp (ADR-0016); parallel-sampling determinism via pure Strategies (ADR-0017); custom shaders in the shell plus the six→nine column widening (ADR-0018); spatial summary as output, not simulation structure (ADR-0019).
+
+## Where the code lives
+
+| Path | cabal target | What |
+|---|---|---|
+| `src/core/` | `magic-core` (public sublibrary) | Pure core, zero IO. build-depends whitelist: base, vector, deepseq, parallel |
+| `src/boundary/` | `magic-boundary` (public sublibrary) | JSON codec, `Magic.Interface`, scene layer, expression grammar, projection re-export |
+| `src/ffi/` | `particle-magic-ffi` (foreign-library) | C ABI shell; 31 exported symbols, contract frozen in `include/particle_magic.h` |
+| `app/` | `particle-magic` (executable) | h-raylib demo shell — every line of IO in the project lives here |
+| `tools/` | `magic-validate`, `magic-inspect`, `magic-schema` | Authoring CLIs; `magic-schema` deliberately depends on no part of the library |
+| `test/`, `bench/` | `spec`, `bench` | hspec suite (headless — no window, no h-raylib) and tasty-bench baselines |
+| `assets/`, `include/`, `bindings/`, `examples/` | — | Shaders and spell files, the C header, the C# binding, three reference hosts |
+
+The layering is enforced by package structure, not by discipline: the executable, the CLIs and the FFI shell depend on `magic-boundary` only, so they physically cannot import core internals. `test/BoundarySpec.hs` guards it, and the dependency whitelists are part of the contract rather than an accident of what happened to be needed.
 
 ## What This Project Is
 
@@ -32,9 +47,9 @@ Magic circle structure (all slots optional, freely combinable by the player):
 
 - **Language**: Haskell (GHC 9.14.1 installed via ghcup; use the machine's latest versions)
 - **Build**: cabal (cabal-install 3.16.1.0)
-- **Libraries**: h-raylib (rendering), Aeson (serialization), effectful (effect system)
+- **Libraries**: h-raylib (rendering), Aeson (serialization), effectful (effect system), megaparsec (formula grammar), vector (unboxed buffers), parallel (Strategies-based parallel sampling)
 - **Explicitly NOT using an ECS architecture**
-- Performance direction to consider: dense grid, SoA (Structure of Arrays) with unboxed vectors
+- **Performance**: SoA (Structure of Arrays) with unboxed vectors — delivered and measured (100k particles sampled in 6.5 ms single-threaded, 2.5 ms across 16 capabilities). The dense grid in the original notes was never needed: the analytic model has no neighbour queries, and particle-to-particle interaction is a permanent non-goal.
 
 ## Design Principles (from Init.md)
 
@@ -47,13 +62,17 @@ Magic circle structure (all slots optional, freely combinable by the player):
 
 ## Commands
 
-Once the cabal project is initialized, standard commands apply:
+The project is initialized; all of these work today:
 
 ```
-cabal build
-cabal run <executable>
+cabal build all
 cabal test
 cabal test --test-options='--match "pattern"'   # single test (hspec)
+cabal run particle-magic                        # the h-raylib demo shell
+cabal run magic-validate -- <file|dir> [--json] # load and cast a spell file
+cabal run magic-inspect  -- <file>              # what a spell file adds up to
+cabal run magic-schema   -- --check             # JSON Schema golden comparison
+cabal bench
 cabal repl
 ```
 

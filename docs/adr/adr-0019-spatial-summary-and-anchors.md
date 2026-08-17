@@ -13,7 +13,7 @@ related-spec: [func-0025]
 # ADR-0019：空間摘要是系統的第三種輸出，發動點是形狀而非強度
 
 - 狀態：已採納（2026-08-16）
-- 相關：[architecture.md §7（發射器層級剔除、「明確不做」的空間分割結構）、§4.7（`RenderBatch` 是唯一輸出格式）、§11（粒子對粒子互動為永久非目標）](../architecture.md)；ADR-0003（槽位固定職責）、ADR-0006（SoA）、ADR-0007（核心零 IO、引用透明）、ADR-0008（核心無相機概念）、ADR-0011 D7（header only-add）、ADR-0012 D3（不得用合成繞過上限）；落地 spec：[func-0025](../spec/func-0025-spatial-output-anchors.md)
+- 相關：[architecture.md §7（發射器層級剔除、「明確不做」的空間分割結構）、§4.7（`RenderBatch` 是唯一輸出格式）、§11（粒子對粒子互動為永久非目標）](../arch/architecture.md)；ADR-0003（槽位固定職責）、ADR-0006（SoA）、ADR-0007（核心零 IO、引用透明）、ADR-0008（核心無相機概念）、ADR-0011 D7（header only-add）、ADR-0012 D3（不得用合成繞過上限）；落地 spec：[func-0025](../spec/func-0025-spatial-output-anchors.md)
 
 ## 背景
 

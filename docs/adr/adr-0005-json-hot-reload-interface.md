@@ -13,7 +13,7 @@ related-spec: []
 # ADR-0005：JSON（Aeson）＋熱重載作為系統輸入介面
 
 - 狀態：已採納（2026-08-11）
-- 相關：[architecture.md §5.1](../architecture.md)
+- 相關：[architecture.md §5.1](../arch/architecture.md)
 
 ## 背景
 

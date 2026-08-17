@@ -13,7 +13,7 @@ related-spec: []
 # ADR-0002：分層式 DSL，不採深度 GADT DSL
 
 - 狀態：已採納（2026-08-11）
-- 相關：[architecture.md §4](../architecture.md)
+- 相關：[architecture.md §4](../arch/architecture.md)
 
 ## 背景
 

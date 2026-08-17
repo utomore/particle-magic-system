@@ -5,17 +5,18 @@ title: particle-magic-architecture
 description: 以魔法陣為資料、由解釋器驅動的粒子魔法系統架構
 status: done
 created: 2026-08-11
-updated: 2026-08-16
+updated: 2026-08-18
 depends-on: []
 related-adr: []
 related-spec: []
+subarchs: [subarch-0001, subarch-0002, subarch-0003, subarch-0004, subarch-0005, subarch-0006]
 ---
 
 # 粒子魔法系統 — 系統架構設計書
 
-> 版本：1.2（2026-08-16：spec 0023 的收尾修訂——§4.5 `ParticleBuffer` 更新為九欄並說明 opt-in 不變量、§5.2 的「輸出零 raylib 型別」保證加註被正面檢驗並維持、§7「明確不做」補上軟粒子／後處理的邊界修訂（三項永久非目標一字不動）、§11 第 3 列補上加欄的方式與實測代價、§12 補 ADR 0017／0018／0019 三列。語意設計不變）；1.1（2026-08-13：對齊 spec 0001–0005 交付現實——§4.3/§5.1 Expr 合約更正、§5.3 函數清單、§7/§9.2 渲染路線改依 ADR-0009、型別落點註記；語意設計不變）
+> 版本：1.3（2026-08-18：本檔遷入 `docs/arch/`，並依 dev-flow 慣例補上 §2.1「子系統劃分」與 frontmatter 的 `subarchs` 權威清單——六份 `subarch-*` 承接子系統內部的元件、資料流與演算法細節，本檔自此只寫到子系統邊界的顆粒度。同輪把 §2 的模組圖補到與程式碼一致——加入七個早已存在卻未入圖的模組（`Magic.Sigil`／`Magic.Space`／`Magic.Expr.Code`／`Magic.Expr.Parse`／`Magic.Columns`／`Magic.Step`／`Magic.Types`）、補上 `tools/*` 這條第三種消費路徑，並修掉兩處與 import 圖不符的邊（`App.HotReload → Magic.Codec` 這條 import 實際不存在——讀檔的 `Magic.Codec` 呼叫在 `App.Loop`，而 `App.HotReload` 的 IO 半邊由 `App.Effects` 解譯，故改為 `App.Loop → App.HotReload`；FFI 與 2D 後端的虛線在 spec 0009／0008 交付後改為實線）。**既有節號與設計語意一字未動**）；1.2（2026-08-16：spec 0023 的收尾修訂——§4.5 `ParticleBuffer` 更新為九欄並說明 opt-in 不變量、§5.2 的「輸出零 raylib 型別」保證加註被正面檢驗並維持、§7「明確不做」補上軟粒子／後處理的邊界修訂（三項永久非目標一字不動）、§11 第 3 列補上加欄的方式與實測代價、§12 補 ADR 0017／0018／0019 三列。語意設計不變）；1.1（2026-08-13：對齊 spec 0001–0005 交付現實——§4.3/§5.1 Expr 合約更正、§5.3 函數清單、§7/§9.2 渲染路線改依 ADR-0009、型別落點註記；語意設計不變）
 > 狀態：設計定案（POC 實作中）
-> 相關文件：[Init.md](../Init.md)（原始需求）、[ADR 索引](#12-adr-索引)
+> 相關文件：[Init.md](../../Init.md)（原始需求）、[ADR 索引](#12-adr-索引)
 
 ---
 
@@ -51,64 +52,110 @@ related-spec: []
 
 ```mermaid
 flowchart TD
-    subgraph Shell["效果外殼 App.* （effectful，IO 在此）"]
-        Loop["App.Loop<br/>固定時步主迴圈"]
-        HotReload["App.HotReload<br/>JSON 檔案監看與重載"]
-        Render3D["App.Render.Raylib3D<br/>h-raylib 動態 quad mesh 渲染（ADR-0009）"]
-        Render2D["App.Render.Flat<br/>2D 正交後端：投影＋painter 排序＋螢幕映射"]
-        FFIShell["Magic.FFI<br/>foreign-library C ABI 外殼（ADR-0011）"]
+    subgraph Shell["效果外殼 （effectful，IO 全在此）"]
+        HotReload["App.HotReload〔5〕<br/>檔案輪詢與重載決策<br/>（IO 端由 App.Effects 解譯）"]
+        Loop["App.Loop〔5〕<br/>固定時步主迴圈"]
+        Render3D["App.Render.Raylib3D〔5〕<br/>動態 quad mesh＋shader／後處理<br/>（ADR-0009／ADR-0018）"]
+        Render2D["App.Render.Flat〔5〕<br/>2D 正交後端：投影＋painter 排序＋螢幕映射"]
+        Panel["App.Panel〔5〕<br/>參數面板：改正規 JSON 再重載"]
+        FFIShell["Magic.FFI〔4〕<br/>foreign-library C ABI 外殼（ADR-0011）"]
+        Tools["tools/*〔6〕<br/>magic-validate／magic-inspect"]
     end
 
-    subgraph Boundary["邊界層 （純，定義對外格式）"]
-        Interface["Magic.Interface<br/>系統唯一入口：<br/>CastRequest / FrameInput / FrameOutput"]
-        Codec["Magic.Codec<br/>Aeson 編解碼、schema 版本、<br/>數學式文字剖析"]
-        Projection["Magic.Projection<br/>投影面再匯出（外殼取用投影的唯一通道）"]
-        Scene["Magic.Scene<br/>場景層：多法術＋全域配額（純值，spec 0012）"]
+    subgraph Boundary["邊界層 magic-boundary （純，定義對外格式）"]
+        Interface["Magic.Interface〔4〕<br/>系統唯一入口：<br/>CastRequest / FrameInput / FrameOutput"]
+        Codec["Magic.Codec〔4〕<br/>Aeson 編解碼、schema 版本"]
+        ExprParse["Magic.Expr.Parse〔2〕<br/>數學式文字文法：剖析與還原"]
+        Scene["Magic.Scene〔4〕<br/>場景層：多法術＋全域配額（spec 0012）"]
+        Projection["Magic.Projection〔4〕<br/>投影面再匯出（外殼取用投影的唯一通道）"]
+        Columns["Magic.Columns〔4〕<br/>九欄回灌重建緩衝（spec 0023）"]
+        Step["Magic.Step〔3〕<br/>固定時步規劃（外殼與 C ABI 共用同一份）"]
     end
 
-    subgraph Core["純核心 Magic.* （零 IO）"]
-        Circle["Magic.Circle<br/>魔法陣結構 ADT"]
-        Rune["Magic.Rune<br/>符文定義（依職責分類）"]
-        Expr["Magic.Expr<br/>數學 AST 與純求值器"]
-        Compile["Magic.Compile<br/>解釋器：Circle → CompiledSpell"]
-        Analytic["Magic.Particle.Analytic<br/>解析層：時間函數取樣"]
-        Field["Magic.Particle.Field<br/>力場層：固定時步純積分"]
-        Buffer["Magic.Particle.Buffer<br/>SoA 粒子緩衝"]
-        Project["Magic.Project<br/>投影抽象：project=id（3D）、<br/>orthographic/depthOrder（2D，spec 0008）"]
+    subgraph Core["純核心 magic-core （零 IO）"]
+        Circle["Magic.Circle〔1〕<br/>魔法陣結構 ADT"]
+        Rune["Magic.Rune〔1〕<br/>符文定義（依職責分類）"]
+        Sigil["Magic.Sigil〔1〕<br/>符文陣：摘要→筆畫→自轉<br/>（spec 0016／0020）"]
+        Compile["Magic.Compile〔1〕<br/>解釋器：Circle → CompiledSpell"]
+        Expr["Magic.Expr〔2〕<br/>數學 AST 與參照求值器"]
+        ExprCode["Magic.Expr.Code〔2〕<br/>共同子式消去＋扁平 bytecode（spec 0022）"]
+        Analytic["Magic.Particle.Analytic〔3〕<br/>解析層：時間函數取樣＋平行分片"]
+        Field["Magic.Particle.Field〔3〕<br/>力場層：固定時步純積分"]
+        Buffer["Magic.Particle.Buffer〔3〕<br/>SoA 粒子緩衝（九欄，後三欄 opt-in）"]
+        Space["Magic.Space〔4〕<br/>空間摘要：有向盒＋佔用格網（spec 0025）"]
+        Project["Magic.Project〔4〕<br/>投影抽象：project=id（3D）、<br/>orthographic/depthOrder（2D，spec 0008）"]
+        Types["Magic.Types〔1〕<br/>共用詞彙：V3／Time／Seed／hashChan<br/>（全核心依賴，邊略）"]
     end
 
+    Loop --> HotReload
     Loop --> Interface
-    HotReload --> Codec
+    Loop --> Codec
+    Loop --> Step
     Render3D --> Interface
-    Render2D -.-> Interface
+    Render2D --> Interface
     Render2D --> Projection
-    FFIShell -.-> Interface
-    FFIShell -.-> Codec
+    Panel --> Codec
+    Tools --> Interface
+    Tools --> Codec
+    FFIShell --> Interface
+    FFIShell --> Codec
+    FFIShell --> Scene
+    FFIShell --> Columns
+    FFIShell --> Projection
 
     Scene --> Interface
+    Codec --> Circle
+    Codec --> Rune
+    Codec --> ExprParse
+    ExprParse --> Expr
+    Columns --> Buffer
+    Projection --> Project
     Interface --> Compile
     Interface --> Analytic
     Interface --> Field
-    Codec --> Circle
-    Codec --> Expr
+    Interface --> Space
 
     Compile --> Circle
     Compile --> Rune
-    Compile --> Expr
+    Compile --> Sigil
+    Compile --> ExprCode
+    Sigil --> Circle
+    Sigil --> Rune
     Circle --> Rune
     Rune --> Expr
+    ExprCode --> Expr
+    Analytic --> Compile
+    Analytic --> Sigil
+    Analytic --> ExprCode
     Analytic --> Buffer
     Field --> Rune
-    Interface --> Project
-    Projection --> Project
+    Space --> Compile
+    Space --> Buffer
     Project --> Buffer
 ```
+
+節點標籤的〔n〕是 §2.1 的第 n 個子系統，讓這張模組圖與子系統劃分對得起來。
 
 **關鍵約束**：
 
 - `Magic.*` 之間不 import 任何 `App.*` 或 IO；以模組邊界＋cabal sublibrary 依賴清單強制（`BoundarySpec` 機械守護；`magic-core`/`magic-boundary` 為 `visibility: public` 的公開 sublibrary，外部專案可直接依賴）。
 - 外殼只透過 `Magic.Interface` 使用核心——它是系統對外的**唯一依賴點**（Init.md「完美的介面化」目標）。
 - `Magic.Codec` 屬邊界層而非核心：核心只認識 ADT，不認識 JSON 或數學式文字語法。
+
+### 2.1 子系統劃分
+
+三環之下再切六個**子系統**，每一個對應一份 `docs/arch/subarch-000x-*.md`，承接本節定下的邊界往內展開（元件切分、內部資料流、關鍵演算法、功能路線圖）。切分依據是 cabal 的實際依賴邊界與模組歸屬，不是概念分類——每一塊都指得到具體檔案。
+
+| 子系統 | 所在環 | 職責（做什麼） | 明確不做 | 文件 |
+|---|---|---|---|---|
+| 魔法語意 | 純核心 | 魔法陣 ADT、四類符文詞彙、由內而外解釋器、符文陣幾何與生命週期時間表——「魔法是什麼」 | 不求值數學式、不取樣粒子、不認識 JSON 文字 | [subarch-0001](subarch-0001-magic-semantics.md) |
+| 數學式 Expr | 核心＋邊界（縱切） | 玩家可寫的小型算式語言：AST、求值器、常數摺疊／CSE／bytecode、文字文法剖析與還原 | 不決定式子掛在哪個槽位（那是語意子系統的事） | [subarch-0002](subarch-0002-expr-language.md) |
+| 粒子模擬 | 純核心（＋邊界的 `Magic.Step`） | `CompiledSpell` × 時間 → `ParticleBuffer`：解析取樣、力場積分、SoA 緩衝、固定時步、平行與預算 | 不編譯魔法陣、不繪製、不做粒子間互動 | [subarch-0003](subarch-0003-particle-simulation.md) |
+| 邊界與宿主整合 | 邊界層＋FFI 外殼 | 系統對外的唯一合約面：`Magic.Interface`／`Magic.Codec`、場景層、投影與空間查詢、C ABI 與各語言綁定 | 不含任何魔法語意，不選繪圖 API | [subarch-0004](subarch-0004-boundary-host.md) |
+| 渲染外殼 | 效果外殼 | demo 遊戲外殼與全部 IO：主迴圈、熱重載、raylib 3D／2D 後端、quad mesh、shader 與後處理、HUD 與參數面板 | 不定義任何對外合約；整組可替換 | [subarch-0005](subarch-0005-render-shell.md) |
+| 作者工具與工程化 | 執行期之外 | 寫陣的人與發布的人用的東西：三支 CLI、JSON Schema、文件↔程式碼守門測試、CI 矩陣與發布政策 | 不進庫、不影響任何執行期行為 | [subarch-0006](subarch-0006-authoring-engineering.md) |
+
+**劃分原則**：1 與 3 都住 `magic-core` 卻分開，因為前者答「魔法是什麼」、後者答「這一幀長什麼樣」，兩者的變更理由完全不同；2 是唯一橫跨核心與邊界的**縱切**子系統，理由是同一個語言的 AST 在核心、文字語法在邊界（核心不認識文字，ADR-0002）；4 把 `src/ffi` 這個外殼位階的元件收進來，因為它與邊界層共用同一份合約、只是換一種呼叫慣例；6 不在三環裡，它的產物一行都不進出貨的庫。
 
 ---
 
@@ -485,7 +532,7 @@ void     pm_free(PmSpell*);
 | 顏色（屬性） | `EssenceRune.essElement → Appearance` |
 | 依形狀輻射 | `RadiateRune RadiationMode` |
 | 收束強度 | `BridgeRune ConvergeRune`（解析曲線）；需粒子互動時用 `ForceField` |
-| 多個效果疊 | `CompiledSpell` 為 `Semigroup`／`Monoid`：多張魔法陣的編譯結果合併＝發射器與力場串接、預算相加、`PhasePlan` **逐界標取 max**——**已落地**（spec 0012；`compileMany`／`Magic.Interface.castSpells`）。合成總量對同一個 `budgetCap` 檢查、沿用 `BudgetExceeded`；合併律與場作用域（完全融合）的裁決見 [ADR-0012](adr/adr-0012-multi-circle-scene.md)。多法術共存另有場景層 `Magic.Scene`（全域配額，先到先得） |
+| 多個效果疊 | `CompiledSpell` 為 `Semigroup`／`Monoid`：多張魔法陣的編譯結果合併＝發射器與力場串接、預算相加、`PhasePlan` **逐界標取 max**——**已落地**（spec 0012；`compileMany`／`Magic.Interface.castSpells`）。合成總量對同一個 `budgetCap` 檢查、沿用 `BudgetExceeded`；合併律與場作用域（完全融合）的裁決見 [ADR-0012](../adr/adr-0012-multi-circle-scene.md)。多法術共存另有場景層 `Magic.Scene`（全域配額，先到先得） |
 | 強度 | `EssenceRune.essPower` |
 | 數學式 | `FormulaRune ExprV3` |
 
@@ -503,7 +550,7 @@ void     pm_free(PmSpell*);
 | 緩衝重用 | `ParticleBuffer` 底層以預配置的 mutable 緩衝（`ST` 內部、對外仍是純介面）每幀重寫，避免每幀配置十萬元素的新 vector 造成 GC 壓力 | **改判：純介面下不做**（0010 §2／§9.4-10）。`observeSpell` 回傳的 buffer 是宿主可長期持有的**純值**，跨幀重寫同一塊會偷改上一幀，違反 ADR-0007 的引用透明。純介面下的正解是「每幀恰好六次 exact-size 配置、零中介」，已落地；真正的跨幀 mutable 重用需要不同的 API 合約（租借式緩衝或 arena），且量測顯示配置目前不是瓶頸 |
 | 編譯期粒子預算 | `compile` 時即算出各發射器最大粒子數（`ParticleBudget`），緩衝一次配足，執行期零成長 | ✅ 0010 S7：`ParticleBudget`（per-emitter＋total）入 `CompiledSpell.spellBudgetPlan`，經 `Magic.Interface.budgetPlanOf` 對宿主開放 |
 | 發射器層級剔除 | 解析模型下每個發射器的空間包絡可靜態估計上界 → 視錐外整個發射器跳過取樣 | ✅ 兩半都交付，但**分工釐清**：核心交 `emitterBounds`（區間算術得到的保守 AABB，0010 S7），**視錐判定本身是宿主責任**——核心沒有相機概念（ADR-0008）。另加**時間**維度的剔除（0010 S3）：每發射器的存活索引由 `aliveRanges` 以 `O(log n)` 二分求出，死窗發射器零逐粒成本 |
-| 批次渲染（[ADR-0009](adr/adr-0009-dynamic-quad-mesh-rendering.md)） | raylib 端以動態 quad mesh＋`c'` 指標 API 繪製整個 batch，draw call 數 = batch 數而非粒子數（instancing 經實證否決：無 per-instance 顏色、需自訂 shader） | ✅ spec 0005 |
+| 批次渲染（[ADR-0009](../adr/adr-0009-dynamic-quad-mesh-rendering.md)） | raylib 端以動態 quad mesh＋`c'` 指標 API 繪製整個 batch，draw call 數 = batch 數而非粒子數（instancing 經實證否決：無 per-instance 顏色、需自訂 shader） | ✅ spec 0005 |
 | GHC 設定 | `-O2 -fllvm`（視環境）；熱路徑函數 `INLINE`/`SPECIALIZE`；必要時 `-threaded` 讓 GC 與模擬並行 | 部分：`-O2` ✅（0005）、`evalFinite`/`evalFiniteV3` `INLINE`＋`evalExpr` `INLINABLE` ✅（0010 S6）；**多執行緒取樣 ✅ 0022 S4**（`Control.Parallel.Strategies` 逐發射器分片，ADR-0017；exe／tool／test／bench 皆帶 `-threaded -rtsopts "-with-rtsopts=-N"`，foreign library 的能力數由宿主 `hs_init` 決定）；`-fllvm` 仍未做（0022 §8-2：屬建置環境變數，與 CI 一起評估） |
 | **平行取樣**（0022 追加） | 取樣工作按「發射器 × 索引區間」切成分片，以純 Strategies 平行求值後定序串接；決定論由切分方式結構性保證（律 2，ADR-0017 D2） | ✅ 0022 S4。粒子數 ≥ `parallelThreshold`（8192，實測選定）才走此路。同機（8 核 16 緒）實測 16384 粒 **1.4–1.5×**、100k 粒 **3.9×**；閾值以下平行較慢，故不走 |
 | **per-emitter 提升**（0010 追加） | 位置公式中不隨粒子改變的部分（施法者座標系、世界座標錨點、面法線與其平面基底、節點漂移）每發射器每幀算一次，而非每粒子算一次 | ✅ 0010 S2。**這一步就是本輪一半以上的加速**（`observeSpell@4096` 471 → 195 µs）——原本每顆粒子要重算 4 次 `normalize`＋2 次 `basisFromNormal` |
@@ -527,14 +574,14 @@ void     pm_free(PmSpell*);
 
    尚未處理的相鄰瓶頸（0022 §9 量測時浮現）：取樣器每粒子配置約 460 位元組的中介 `V3`。若要再抬 `budgetCap`，去掉它的收益可能大於再加核心。
 3. **熱重載下的狀態遷移**：魔法陣 JSON 改變時，進行中的 `ActiveSpell` 怎麼辦？POC 策略：重載＝重新施法（狀態歸零）——spec 0007 交付力場層後這條由預告變成實際政策（ADR-0010 D8：`castSpell` 一律以全靜止的 `FieldState` 起步，不遷移）。未來若要「編輯中即時 morphing」，解析式模型天然支援（同一個 `t` 用新 spell 取樣即可），但 `FieldState` 無法對應遷移，需定義淡出/淡入規則。
-4. **多魔法並行的緩衝管理**：多個 `ActiveSpell` 各持有預算緩衝，總量需要全域上限與配額策略（先到先得？按 power 分配？）——**已由 spec 0012 落地**：`Magic.Scene` 是 `Magic.Interface` 之上的純值組合層，以 `SceneConfig.scGlobalCap` 表達全域上限、以 `ParticleBudget` 記帳，v1 策略取**先到先得**（拒收回 `QuotaExceeded 需求 剩餘`，場景不變；已用量由現存法術即時求和，法術結束即釋放）。按 power 加權與優先權搶佔明文否決並記在 [ADR-0012](adr/adr-0012-multi-circle-scene.md) D6——它們需要「重要性」這個遊戲層詞彙，庫給的是拒收與剩餘量。**尚未上 C ABI**（同 ADR D8）。
+4. **多魔法並行的緩衝管理**：多個 `ActiveSpell` 各持有預算緩衝，總量需要全域上限與配額策略（先到先得？按 power 分配？）——**已由 spec 0012 落地**：`Magic.Scene` 是 `Magic.Interface` 之上的純值組合層，以 `SceneConfig.scGlobalCap` 表達全域上限、以 `ParticleBudget` 記帳，v1 策略取**先到先得**（拒收回 `QuotaExceeded 需求 剩餘`，場景不變；已用量由現存法術即時求和，法術結束即釋放）。按 power 加權與優先權搶佔明文否決並記在 [ADR-0012](../adr/adr-0012-multi-circle-scene.md) D6——它們需要「重要性」這個遊戲層詞彙，庫給的是拒收與剩餘量。**尚未上 C ABI**（同 ADR D8）。
 5. **h-raylib 的 FFI 邊界開銷**：每幀把 SoA 緩衝交給 raylib instanced 繪製，若 h-raylib 的綁定強制逐元素 marshalling 會抵銷 SoA 的優勢；需要確保走 `unsafeWith`/指標直傳路徑（見 §9）。
 6. **2D 後端實際落地時的投影語意**：正交投影丟一軸在數學上簡單，但「沿法線擴充立體」的魔法在 2D 下的可讀性（深度重疊）需要視覺設計介入，可能要在 `Magic.Project` 加深度排序/壓平策略。——**已由 spec 0008 落地**：`Magic.Project` 加了 `ViewPlane`/`orthographic`/`depthOrder`（painter 穩定置換），demo 可即時切 3D／2D 側視／2D 俯視。深度排序這一半已兌現；**可讀性的視覺設計解仍未做**——俯視就是把重疊問題暴露出來的實驗台，壓平比例、輪廓強調等留給後續視覺 spec。
 
 ## 9. 目前技術困難
 
 1. **h-raylib 在 Windows 的首次建置**：h-raylib 內含 raylib C 原始碼，首次 `cabal build` 需要可用的 C 工具鏈（ghcup 附的 MinGW 可用）且耗時長。GHC 9.14.1 很新，h-raylib 對新版 GHC 的相容性需在骨架階段最先驗證——這是整個技術棧風險最高的一點。
-2. **h-raylib 的 instancing 支援面**：~~raylib C API 有 `DrawMeshInstanced`，但 h-raylib 綁定的完整度與零拷貝傳遞需要實測~~——**已裁決（[ADR-0009](adr/adr-0009-dynamic-quad-mesh-rendering.md)）**：instancing 否決，改走動態 quad mesh＋`c'` 指標路徑；已由 spec 0005 S0 spike 實機確證並交付（0005 §10 驗收，bench 基線：4096 粒 buildQuads ≈71µs、每幀純 CPU ≈0.73ms）。
+2. **h-raylib 的 instancing 支援面**：~~raylib C API 有 `DrawMeshInstanced`，但 h-raylib 綁定的完整度與零拷貝傳遞需要實測~~——**已裁決（[ADR-0009](../adr/adr-0009-dynamic-quad-mesh-rendering.md)）**：instancing 否決，改走動態 quad mesh＋`c'` 指標路徑；已由 spec 0005 S0 spike 實機確證並交付（0005 §10 驗收，bench 基線：4096 粒 buildQuads ≈71µs、每幀純 CPU ≈0.73ms）。
 3. **effectful 與 raylib 命令式 API 的整合**：raylib 是 `IO` 命令式風格（`beginDrawing`/`endDrawing` 配對）。需要一層 `Raylib :: Effect` 封裝配對呼叫（bracket 模式），樣板量中等，但屬一次性成本。
 4. **GC 停頓**：十萬粒子若逐幀產生新 boxed 結構，minor GC 會吃掉幀預算。§7 的緩衝重用＋unboxed 策略是針對性解法，但需要以 `-s`/eventlog 實測驗證，不能只靠推測。
 5. **數學式剖析器**：需要一個小型剖析器（建議 megaparsec）處理文字式子→`Expr`，含錯誤位置回報。技術上成熟，但錯誤訊息品質（玩家會直接面對）需要投入。
@@ -567,22 +614,22 @@ void     pm_free(PmSpell*);
 
 | ADR | 決策 |
 |---|---|
-| [ADR-0001](adr/adr-0001-hybrid-particle-model.md) | 混合粒子模型：解析為主，可選力場層 |
-| [ADR-0002](adr/adr-0002-layered-dsl.md) | 分層式 DSL，不採深度 GADT DSL |
-| [ADR-0003](adr/adr-0003-fixed-role-slots.md) | 槽位固定職責＋符文 |
-| [ADR-0004](adr/adr-0004-no-ecs-dataflow.md) | 不用 ECS，採資料流架構 |
-| [ADR-0005](adr/adr-0005-json-hot-reload-interface.md) | JSON（Aeson）＋熱重載作為系統輸入介面 |
-| [ADR-0006](adr/adr-0006-soa-unboxed-buffer.md) | SoA + Unboxed Vector 粒子緩衝 |
-| [ADR-0007](adr/adr-0007-effectful-boundary.md) | effectful 效果邊界，核心零 IO |
-| [ADR-0008](adr/adr-0008-dimension-agnostic-3d-first.md) | 維度無關核心，3D 優先投影 |
-| [ADR-0009](adr/adr-0009-dynamic-quad-mesh-rendering.md) | 渲染路徑採動態 quad mesh，不採 instancing（其「不自訂 shader」前提已由 ADR-0018 取代；繪製路徑保留） |
-| [ADR-0010](adr/adr-0010-force-field-composition.md) | 力場層組合點語意：加法位移疊加、穩定槽位身分、熱重載歸零 |
-| [ADR-0011](adr/adr-0011-ffi-c-abi-boundary.md) | C ABI FFI 邊界：foreign-library、JSON 進、SoA copy-out、handle 生命週期 |
-| [ADR-0012](adr/adr-0012-multi-circle-scene.md) | 多陣合成與場景層配額 |
-| [ADR-0013](adr/adr-0013-billboard-vocabulary.md) | 告示板詞彙：無參數列舉、型別落點遷移、程序生成貼圖 |
-| [ADR-0014](adr/adr-0014-sigil-from-circle-hash.md) | 符文陣由魔法陣資料導出：摘要即合約、混合導出、逐位元豁免只到 Drawing／Converging（D5 已由 ADR-0015 取代） |
-| [ADR-0015](adr/adr-0015-sigil-persists-through-cast.md) | 陣駐留到法術結束：取消陣形收束、逐位元邊界收窄（D4 已由 ADR-0020 取代） |
-| [ADR-0017](adr/adr-0017-parallel-sampling-determinism.md) | 平行取樣的決定論：以純 Strategies 分片，切分方式結構性保證逐位元；核心依賴白名單 +`parallel` |
-| [ADR-0018](adr/adr-0018-custom-shader-and-columns.md) | 自訂 shader 進殼層（取代 ADR-0009 的「不自訂 shader」前提，繪製路徑保留）、SoA 六欄以「加欄＋新查詢」鬆綁為九欄、速度以固定步長有限差分定義、跨批交錯靠貼圖 atlas 的單次繪製 |
-| [ADR-0019](adr/adr-0019-spatial-summary-and-anchors.md) | 空間摘要是輸出不是模擬結構：貼合有向盒與佔用格網走查詢、格網框的可比較性律、多發動點的能量等分 |
-| [ADR-0020](adr/adr-0020-sigil-spin-bitexact-boundary.md) | 陣會自轉：逐位元邊界收窄至 `t = 0`、兩條零影響律（主效果／無 `phases`）、陣形 golden 改結構性斷言 |
+| [ADR-0001](../adr/adr-0001-hybrid-particle-model.md) | 混合粒子模型：解析為主，可選力場層 |
+| [ADR-0002](../adr/adr-0002-layered-dsl.md) | 分層式 DSL，不採深度 GADT DSL |
+| [ADR-0003](../adr/adr-0003-fixed-role-slots.md) | 槽位固定職責＋符文 |
+| [ADR-0004](../adr/adr-0004-no-ecs-dataflow.md) | 不用 ECS，採資料流架構 |
+| [ADR-0005](../adr/adr-0005-json-hot-reload-interface.md) | JSON（Aeson）＋熱重載作為系統輸入介面 |
+| [ADR-0006](../adr/adr-0006-soa-unboxed-buffer.md) | SoA + Unboxed Vector 粒子緩衝 |
+| [ADR-0007](../adr/adr-0007-effectful-boundary.md) | effectful 效果邊界，核心零 IO |
+| [ADR-0008](../adr/adr-0008-dimension-agnostic-3d-first.md) | 維度無關核心，3D 優先投影 |
+| [ADR-0009](../adr/adr-0009-dynamic-quad-mesh-rendering.md) | 渲染路徑採動態 quad mesh，不採 instancing（其「不自訂 shader」前提已由 ADR-0018 取代；繪製路徑保留） |
+| [ADR-0010](../adr/adr-0010-force-field-composition.md) | 力場層組合點語意：加法位移疊加、穩定槽位身分、熱重載歸零 |
+| [ADR-0011](../adr/adr-0011-ffi-c-abi-boundary.md) | C ABI FFI 邊界：foreign-library、JSON 進、SoA copy-out、handle 生命週期 |
+| [ADR-0012](../adr/adr-0012-multi-circle-scene.md) | 多陣合成與場景層配額 |
+| [ADR-0013](../adr/adr-0013-billboard-vocabulary.md) | 告示板詞彙：無參數列舉、型別落點遷移、程序生成貼圖 |
+| [ADR-0014](../adr/adr-0014-sigil-from-circle-hash.md) | 符文陣由魔法陣資料導出：摘要即合約、混合導出、逐位元豁免只到 Drawing／Converging（D5 已由 ADR-0015 取代） |
+| [ADR-0015](../adr/adr-0015-sigil-persists-through-cast.md) | 陣駐留到法術結束：取消陣形收束、逐位元邊界收窄（D4 已由 ADR-0020 取代） |
+| [ADR-0017](../adr/adr-0017-parallel-sampling-determinism.md) | 平行取樣的決定論：以純 Strategies 分片，切分方式結構性保證逐位元；核心依賴白名單 +`parallel` |
+| [ADR-0018](../adr/adr-0018-custom-shader-and-columns.md) | 自訂 shader 進殼層（取代 ADR-0009 的「不自訂 shader」前提，繪製路徑保留）、SoA 六欄以「加欄＋新查詢」鬆綁為九欄、速度以固定步長有限差分定義、跨批交錯靠貼圖 atlas 的單次繪製 |
+| [ADR-0019](../adr/adr-0019-spatial-summary-and-anchors.md) | 空間摘要是輸出不是模擬結構：貼合有向盒與佔用格網走查詢、格網框的可比較性律、多發動點的能量等分 |
+| [ADR-0020](../adr/adr-0020-sigil-spin-bitexact-boundary.md) | 陣會自轉：逐位元邊界收窄至 `t = 0`、兩條零影響律（主效果／無 `phases`）、陣形 golden 改結構性斷言 |

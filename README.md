@@ -15,7 +15,7 @@ demo draws that one output through both a 3D perspective backend and a real
 ## Architecture in one paragraph
 
 Three rings, dependencies pointing strictly inward
-(details: [docs/architecture.md](docs/architecture.md), ADRs in
+(details: [docs/arch/architecture.md](docs/arch/architecture.md), ADRs in
 [docs/adr/](docs/adr/)):
 
 - **Pure core** (`magic-core`, zero IO): circle ADT, rune vocabulary, a small
@@ -139,7 +139,11 @@ guarantee narrows to structure plus a couple of ulp in the positions
 
 ## Repository layout
 
-- `docs/architecture.md` — the system design (Traditional Chinese)
+- `docs/arch/architecture.md` — the system design (Traditional Chinese)
+- `docs/arch/subarch-0001..0006-*.md` — the six subsystem architectures the
+  main design splits into: magic semantics, the Expr language, particle
+  simulation, the boundary/host surface, the render shell, and authoring
+  plus engineering
 - `docs/integration.md` — host integration guide: Haskell, C/C++, Unity (C#)
   and any other shared-library host — data contract, coordinate system,
   pitfalls, current limits

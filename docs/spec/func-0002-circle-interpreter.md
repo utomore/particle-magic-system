@@ -15,7 +15,7 @@ related-adr: [adr-0002, adr-0003, adr-0005]
 > 狀態：已完成（2026-08-12，驗收紀錄見 §10）
 > 性質：**重大基建功能** —— 本 spec 定義真實的 `Circle` 結構 ADT、符文型別、`CompiledSpell` 內部結構（`EmitterSpec`／`Motion`／`Appearance`）與 JSON 完整槽位 schema，是 Expr 符文接線 spec（0004）、生命週期 spec、力場 spec 的共同地基。本 spec 完成驗收前，依賴它的 spec 不得動工；完成後 §4 未標 ⚠ 的永久型別即凍結（可擴充 sum 的擴充合約見 §2）。
 > 前置依賴：spec 0001（**已完成**，2026-08-12 驗收）—— 0001 為重大基建，其驗收紀錄中的「凍結介面清單」與五條實作期修訂是本 spec 的起點（§0 已據實對齊）。
-> 依據：[architecture.md](../architecture.md) §3.1、§4.1–§4.4、§5.1、§6；ADR-0002、0003、0005
+> 依據：[architecture.md](../arch/architecture.md) §3.1、§4.1–§4.4、§5.1、§6；ADR-0002、0003、0005
 > 範圍：把魔法陣從空殼變成真語意——真實 `Circle` 結構、**參數層**符文子集、由內而外解釋器、真實解析取樣、完整槽位 JSON schema。**不含 Expr 數學式子系統**（Expr 語言本身是 spec 0003、與本 spec 平行進行；四種 Expr 符文的接線留給 spec 0004，見 §9）。
 
 ---

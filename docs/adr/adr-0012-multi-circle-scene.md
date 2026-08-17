@@ -13,7 +13,7 @@ related-spec: [func-0012]
 # ADR-0012：多陣合成的代數與場景層配額——`Monoid CompiledSpell`、逐界標 max、先到先得
 
 - 狀態：已採納（2026-08-15）
-- 相關：[architecture.md §6](../architecture.md)（Init.md 參數對照表「多個效果疊」列）、§8.1（預算閘門）、§8.4（多法術並行）；ADR-0002（三層 DSL）、ADR-0004（dataflow，非 ECS）、ADR-0006（SoA 與 1 萬–10 萬粒目標）、ADR-0010（力場層組合點）、ADR-0011（C ABI 邊界）；落地 spec：[0012](../spec/func-0012-multi-circle-composition.md)
+- 相關：[architecture.md §6](../arch/architecture.md)（Init.md 參數對照表「多個效果疊」列）、§8.1（預算閘門）、§8.4（多法術並行）；ADR-0002（三層 DSL）、ADR-0004（dataflow，非 ECS）、ADR-0006（SoA 與 1 萬–10 萬粒目標）、ADR-0010（力場層組合點）、ADR-0011（C ABI 邊界）；落地 spec：[0012](../spec/func-0012-multi-circle-composition.md)
 
 ## 背景
 

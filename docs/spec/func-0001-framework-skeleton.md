@@ -15,7 +15,7 @@ related-adr: [adr-0004, adr-0007]
 > 狀態：已完成（2026-08-12，驗收紀錄見 §10）
 > 性質：**重大基建功能** —— 本 spec 建立套件邊界、`Magic.Interface` 對外合約、`ParticleBuffer` 與固定時步等永久介面，是**所有後續 func-spec 的共同地基**。本 spec 完成驗收前，任何依賴它的 spec 不得動工；完成後其「永久型別」（§4 未標 ⚠ 者）即凍結，變更需先修訂 ADR/架構書。
 > 前置依賴：無
-> 依據：[architecture.md](../architecture.md) §2、§3；ADR-0004、0007
+> 依據：[architecture.md](../arch/architecture.md) §2、§3；ADR-0004、0007
 > 範圍：建構整個系統的**外圍輪廓**——套件邊界、IO 邊界、核心邊界、端到端資料流。不實作真正的魔法陣語意（DSL、解釋器、力場留給後續 spec）。
 
 ---

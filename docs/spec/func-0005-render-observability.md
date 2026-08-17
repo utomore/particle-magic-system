@@ -15,7 +15,7 @@ related-adr: [adr-0005, adr-0007]
 > 狀態：已完成（驗收紀錄見 §10）
 > 性質：一般 —— 本 spec 兌現 architecture §5.2/§7 對渲染宿主的既定承諾並補齊觀測面；它不是後續 spec 的共同地基，但其量測基線（§8 S8）是未來 10k–100k 效能 spec 的動工前提資料。
 > 前置依賴：spec 0001／0002／0003（皆**已完成**）。**與 spec 0004 平行**：0004（設計定案，待實作）鎖定 `Magic/Rune.hs`、`Magic/Compile.hs`、`Magic/Particle/Analytic.hs`、`Magic/Expr.hs`、`Magic/Codec.hs`——本 spec 檔案清單與之**零交集**（§0.3 附盤點證明），兩 spec 可同時認領實作。
-> 依據：[architecture.md](../architecture.md) §5.2（宿主責任：blend 管線狀態、instanced 繪製）、§7（「draw call 數 = batch 數而非粒子數」、GHC 設定）、§8 風險 5（h-raylib FFI 邊界開銷，「需實測不能推測」）、§9.2（instancing 支援面是開放問題）；ADR-0005（負面：「錯誤訊息品質需要投入」）、ADR-0007（效果只在殼層）
+> 依據：[architecture.md](../arch/architecture.md) §5.2（宿主責任：blend 管線狀態、instanced 繪製）、§7（「draw call 數 = batch 數而非粒子數」、GHC 設定）、§8 風險 5（h-raylib FFI 邊界開銷，「需實測不能推測」）、§9.2（instancing 支援面是開放問題）；ADR-0005（負面：「錯誤訊息品質需要投入」）、ADR-0007（效果只在殼層）
 > 範圍：渲染路徑從「逐粒子 `drawCubeV` 立方體、blend/billboard 被丟棄」升級為「動態 quad mesh 單 draw call、`rbBlend`/`rbShape` 真正生效」；HUD 與載入錯誤上屏（`renderLoadError` 終於有呼叫點）；鍵盤切換範例魔法陣；全套件 `-O2` 與 benchmark 基線。**核心語意零變更**——本 spec 不碰任何 `Magic.*` 純核心模組。
 
 ---

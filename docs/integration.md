@@ -15,7 +15,7 @@ related-spec: [func-0009, func-0011, func-0018]
 > 版本：1.3（2026-08-16，enhance-0001 落地後：**母語路線補上可跑的範例**——§1 的路線表加一欄「可跑的範例」、§3 開頭補齊 `bytestring`／`vector` 兩個容易漏的依賴並指向 [`examples/haskell/`](../examples/haskell/)、新增 **§3.3「2D／像素風宿主食譜」**（五步，不分語言，§4.5 交叉指路）、§8 新增一列誠實記帳「像素風只有食譜，沒有像素風的參考實作」。合約零變更：沒有新語意、沒有動 JSON schema、ABI version 仍為 1）
 > 1.2（2026-08-16，spec 0018 交付後：場景層整個上 C ABI——新增 §4.6、`PM_ERR_QUOTA` 進 §4.3 的錯誤表、§3.2 與 §8 的「只在 Haskell 面」收窄為「不進場景的合成只在 Haskell 面」。ABI version 仍為 1——全部是加法。1.1 為 spec 0011 交付後：投影三件套上 C ABI、C# 參考綁定與 Unity 範例成為真檔案）
 > 對象：想把這套粒子魔法系統接進自己遊戲的人——Unity、Godot、C/C++ 引擎、Haskell 專案，或完全自製的前端。
-> 相關文件：[architecture.md](architecture.md)（系統設計）、[roadmap.md](roadmap.md)（還缺什麼）、[`include/particle_magic.h`](../include/particle_magic.h)（凍結的 C 合約）、[`bindings/csharp/ParticleMagic.cs`](../bindings/csharp/ParticleMagic.cs)（C# 參考綁定）、[`examples/haskell/`](../examples/haskell/)（Haskell 最小宿主）、[`examples/c/`](../examples/c/)（C 最小宿主）、[`examples/unity/`](../examples/unity/)（Unity 最小範例）
+> 相關文件：[architecture.md](arch/architecture.md)（系統設計）、[roadmap.md](roadmap.md)（還缺什麼）、[`include/particle_magic.h`](../include/particle_magic.h)（凍結的 C 合約）、[`bindings/csharp/ParticleMagic.cs`](../bindings/csharp/ParticleMagic.cs)（C# 參考綁定）、[`examples/haskell/`](../examples/haskell/)（Haskell 最小宿主）、[`examples/c/`](../examples/c/)（C 最小宿主）、[`examples/unity/`](../examples/unity/)（Unity 最小範例）
 
 ---
 
@@ -93,7 +93,7 @@ uint8_t a =  c        & 0xFF;
 
 ### 2.4 固定時步
 
-模擬假設**固定 `dt`**（[architecture §11](architecture.md#11-不容易擴充與改動的地方明知的代價) 把它列為系統公理）。力場層的確定性與可回放性依賴這一點。
+模擬假設**固定 `dt`**（[architecture §11](arch/architecture.md#11-不容易擴充與改動的地方明知的代價) 把它列為系統公理）。力場層的確定性與可回放性依賴這一點。
 
 正確做法是 accumulator：渲染幀率浮動，模擬永遠走固定步。
 
@@ -688,11 +688,11 @@ void Update()
 
 | 你的責任 | 為什麼不在庫裡 |
 |---|---|
-| 頂點緩衝、材質、shader、混合狀態 | 每個引擎都不一樣；輸出格式因此零渲染依賴（[architecture §5.2](architecture.md#52-輸出格式renderbatch-串流)） |
+| 頂點緩衝、材質、shader、混合狀態 | 每個引擎都不一樣；輸出格式因此零渲染依賴（[architecture §5.2](arch/architecture.md#52-輸出格式renderbatch-串流)） |
 | 相機與投影 | 3D 透視是引擎的事；2D 正交的**純數學**部分庫有提供（Haskell 宿主用 `Magic.Projection`，C 宿主用 `pm_project`／`pm_depth_order`，見 §4.5） |
 | 螢幕原點、pixels-per-unit、y 軸方向 | 投影只丟軸與算深度，像素是宿主的座標系 |
 | 3D 的深度排序 | 見 §5.6 |
-| 多個法術同時存在時的管理與總量配額 | 宿主持有多個 handle 即可；全域配額策略屬遊戲層（[architecture §8.4](architecture.md#8-未來可能遇到的問題)），[記帳在候選 spec C](roadmap.md#45-cde-的位置) |
+| 多個法術同時存在時的管理與總量配額 | 宿主持有多個 handle 即可；全域配額策略屬遊戲層（[architecture §8.4](arch/architecture.md#8-未來可能遇到的問題)），[記帳在候選 spec C](roadmap.md#45-cde-的位置) |
 | 魔法陣 JSON 從哪來（檔案？資料庫？玩家編輯器？） | 庫只認得字串 |
 | 熱重載 | 政策是「重載＝重施法」：重新 `pm_cast` 就好，庫不提供遷移中狀態的 API（[ADR-0010 D8](adr/adr-0010-force-field-composition.md)） |
 | 音效、傷害判定、命中框 | 這個庫只管粒子；魔法的**遊戲**語意是你的 |
