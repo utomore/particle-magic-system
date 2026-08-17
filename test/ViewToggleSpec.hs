@@ -24,6 +24,7 @@ import App.Effects
   , ReloadStatus (..)
   , ViewMode (..)
   , noInput
+  , panelViewClosed
   )
 import App.Hud (formatHud)
 import App.Render.Post (noEffects)
@@ -243,4 +244,5 @@ baseHud =
     , hvCamera = defaultCamera
     , hvFlat = flatViewFor (1280, 720) SideXY
     , hvVisual = noEffects
+    , hvPanel = panelViewClosed
     }

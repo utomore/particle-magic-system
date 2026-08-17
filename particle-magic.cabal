@@ -129,9 +129,17 @@ executable particle-magic
                     , App.Render.Post
                     , App.Scene
                     , App.Hud
+                    , App.Panel
     build-depends:    base       ^>=4.22
                     , particle-magic:magic-boundary
                     , h-raylib   ^>=5.6
+                    -- func-spec 0024 S4: the parameter panel edits a
+                    -- circle through its canonical JSON, because this
+                    -- layer cannot see the ADT -- magic-core is out of
+                    -- reach by design and Magic.Interface exports Circle
+                    -- opaquely. App.Panel's haddock argues that this is
+                    -- the better of the two designs, not a workaround.
+                    , aeson      ^>=2.3
                     , effectful  ^>=2.6
                     , bytestring ^>=0.12
                     , vector     ^>=0.13
@@ -166,6 +174,49 @@ executable magic-validate
     default-language: GHC2021
     -- Same reason as the demo executable (func-spec 0022 S5): the CLI casts
     -- spells, so it samples, so it wants the cores.
+    ghc-options:      -Wall -O2 -threaded -rtsopts "-with-rtsopts=-N"
+
+-- The machine-readable half of the authoring surface (func-spec 0024 S1).
+-- Prints (or checks) the JSON Schema for a spell file, so an editor's JSON
+-- completion and a CI schema step can consume the format without reading
+-- Haskell. Narrower than magic-validate on purpose: the schema is a
+-- hand-written declaration table (func-spec 0024 §7-5), so this tool casts
+-- nothing and does not depend on the library at all -- which is also what
+-- makes 'magic-schema --check' a golden comparison rather than a second
+-- opinion.
+executable magic-schema
+    main-is:          SchemaMain.hs
+    hs-source-dirs:   tools
+    other-modules:    Schema
+    build-depends:    base       ^>=4.22
+                    , aeson      ^>=2.3
+                    , bytestring ^>=0.12
+                    , text       ^>=2.1
+                    , directory  ^>=1.3
+    default-language: GHC2021
+    ghc-options:      -Wall -O2
+
+-- The human-readable half (func-spec 0024 S2): what a spell file adds up
+-- to, as a report. Every number in it comes from an existing
+-- Magic.Interface query (func-spec 0010 §9.3) -- the tool adds no analysis
+-- of its own, it only lays the answers out. Same dependency discipline as
+-- magic-validate: the boundary layer, no core, no renderer.
+executable magic-inspect
+    main-is:          InspectMain.hs
+    hs-source-dirs:   tools
+    -- 'Validate' comes along because Inspect imports its 'defaultContext'
+    -- and 'lifetimeOf': the two tools report the same cast, and the way to
+    -- guarantee that is to have one definition of it (func-spec 0024 S2).
+    other-modules:    Inspect
+                    , Validate
+    build-depends:    base       ^>=4.22
+                    , particle-magic:magic-boundary
+                    , aeson      ^>=2.3
+                    , bytestring ^>=0.12
+                    , vector     ^>=0.13
+                    , directory  ^>=1.3
+    default-language: GHC2021
+    -- Same reason as magic-validate (func-spec 0022 S5): it casts spells.
     ghc-options:      -Wall -O2 -threaded -rtsopts "-with-rtsopts=-N"
 
 -- The second supported consumption mode (ADR-0011, func-spec 0009): the
@@ -295,6 +346,11 @@ test-suite spec
                     , Acceptance12Spec
                     , Validate
                     , ValidateSpec
+                    , Schema
+                    , JsonSchemaSpec
+                    , Inspect
+                    , InspectSpec
+                    , ValidateJsonSpec
                     , SchemaDocSpec
                     , RescanSpec
                     , Acceptance14Spec
@@ -366,6 +422,10 @@ test-suite spec
                     , App.Render.Post
                     , App.Scene
                     , App.Hud
+                    , App.Panel
+                    , ParamPanelSpec
+                    , PanelWriteBackSpec
+                    , Acceptance24Spec
     build-depends:    base       ^>=4.22
                     , particle-magic:magic-core
                     , particle-magic:magic-boundary

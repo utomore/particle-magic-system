@@ -34,13 +34,14 @@ import qualified Data.ByteString as BS
 import Data.List (elemIndex)
 import Effectful (Eff, (:>))
 import System.FilePath (takeDirectory)
-import Magic.Codec (loadCircle, renderLoadError)
+import Magic.Codec (loadCircle, renderLoadError, saveCircle)
 import Magic.Interface
   ( ActiveSpell
   , CastContext
   , CastRequest (..)
   , Circle
   , DeltaTime (..)
+  , emptyCircle
   , FrameInput (..)
   , FrameOutput (..)
   , RenderBatch (..)
@@ -73,6 +74,7 @@ import App.Effects
   , drawFrame
   , drawHud
   , now
+  , panelViewClosed
   , pollInput
   , readBytes
   , scanDir
@@ -80,8 +82,19 @@ import App.Effects
   , windowSize
   , withFrame
   , withWindow
+  , writeBytes
   )
 import App.Hud (fpsEma)
+import App.Panel
+  ( PanelAction (..)
+  , PanelState (..)
+  , discardedNote
+  , panelClosed
+  , panelViewOf
+  , saveFailedNote
+  , savedNote
+  , stepPanel
+  )
 import App.Render.Flat (panBy, resizeTo, zoomAt)
 import App.Render.Post (VisualSettings (..), noEffects)
 
@@ -363,6 +376,22 @@ data LoopState = LoopState
   -- ^ Which of func-spec 0023's effects are on. Same observation-side
   -- status as 'stView' and 'stCamera': switching one cannot disturb a
   -- running spell, and it survives reloads and re-casts.
+  , stPanel :: !PanelState
+  -- ^ The parameter panel (func-spec 0024). The first piece of shell
+  -- state that is /not/ observation-side: it edits 'stCircle', which is
+  -- what gets cast.
+  , stSelfWrite :: !Bool
+  -- ^ A file change this loop caused itself is waiting to be reported.
+  --
+  -- Set by a panel save, cleared by the next change the watcher reports
+  -- — which is that save's own. Without it, saving would be followed a
+  -- fraction of a second later by a hot reload, and a hot reload re-casts:
+  -- the author would see the spell restart from age zero for no reason
+  -- they can perceive, since the circle that came back is the one they
+  -- already had (func-spec 0024 §2.5's round-trip law is exactly the
+  -- statement that it is). One swallow, not a mode: an external edit that
+  -- lands in the same poll window as a save is missed, and the one after
+  -- it is not.
   }
 
 runLoop
@@ -398,6 +427,8 @@ runLoop cfg =
         , stCamera = vsCamera view0
         , stFlat = vsFlat view0
         , stVisual = vsVisual view0
+        , stPanel = panelClosed
+        , stSelfWrite = False
         }
   where
     view0 = defaultViewState (lcWindowSize cfg) (lcCamera cfg)
@@ -463,16 +494,25 @@ frameLoop cfg st = do
         if target /= stPath st'
           then do
             -- Switching spell: load the new file, re-cast, and let the
-            -- watcher follow the new path from here on.
+            -- watcher follow the new path from here on. Unsaved panel
+            -- edits are dropped and said so (func-spec 0024 §2.5 row 4) —
+            -- writing an author's file without being asked is a worse
+            -- default than losing an adjustment they can redo.
             loaded <- loadAndCast cfg target
-            pure (applyLoad tNow (st' {stPath = target}) loaded)
+            pure (applyLoad tNow (discardEdits "switched spell" st' {stPath = target}) loaded)
           else do
             -- Hot reload: mtime change => reload + re-cast (state reset,
             -- architecture §8.3 POC strategy).
             changed <- checkChanged (stPath st')
-            if changed
-              then applyLoad tNow st' <$> loadAndCast cfg (stPath st')
-              else pure (recastOnRequest cfg input st')
+            case (changed, stSelfWrite st') of
+              -- Our own save coming back to us. The circle on disk IS the
+              -- circle in memory (the round-trip law), so reloading it
+              -- would change nothing except to restart the spell.
+              (True, True) -> pure (recastOnRequest cfg input st' {stSelfWrite = False})
+              (True, False) ->
+                applyLoad tNow (discardEdits "the file changed on disk" st')
+                  <$> loadAndCast cfg (stPath st')
+              (False, _) -> pure (recastOnRequest cfg input st')
 
       -- A finished spell restarts from the kept circle (walking-skeleton
       -- demo keeps the fountain alive).
@@ -481,25 +521,43 @@ frameLoop cfg st = do
               | isFinished spell -> recastFrom cfg circle st1
             _ -> st1
 
+      -- The panel (func-spec 0024 S4/S5). After the reload branch, so a
+      -- file that changed underneath wins; before the sampling below, so
+      -- an adjustment is on screen in the same frame the key was pressed
+      -- — which is the entire point of the round.
+      let (st3, panelAction) = applyPanel cfg input st2
+      st4 <- case panelAction of
+        PanelSave -> savePanel st3
+        _ -> pure st3
+
       -- Fixed-step planning (pure), then n pure time advances and exactly
       -- one sampling — the frame's whole render cost, by construction.
-      let StepPlan n acc' = plan (lcSimDt cfg) (lcMaxStepsPerFrame cfg) elapsed (stAcc st2)
-          (spell', stepsRun) = case stSpell st2 of
+      let StepPlan n acc' = plan (lcSimDt cfg) (lcMaxStepsPerFrame cfg) elapsed (stAcc st4)
+          (spell', stepsRun) = case stSpell st4 of
             Nothing -> (Nothing, 0)
             Just spell -> (Just (advanceTimes cfg n spell), max 0 n)
           output' = maybe (FrameOutput []) observeSpell spell'
-          fps' = fpsEma fpsAlpha elapsed (stFpsEma st2)
+          fps' = fpsEma fpsAlpha elapsed (stFpsEma st4)
           hud =
             HudView
               { hvFps = fps'
               , hvParticles = sum (map (pbCount . rbParticles) (batches output'))
-              , hvSpellPath = stPath st2
+              , hvSpellPath = stPath st4
               , hvSpellAge = maybe 0 (\s -> let Time a = spellAge s in a) spell'
-              , hvReload = stReload st2
+              , hvReload = stReload st4
               , hvView = vsMode view'
               , hvCamera = vsCamera view'
               , hvFlat = vsFlat view'
               , hvVisual = vsVisual view'
+              , -- A closed panel reports itself closed, exactly, without
+                -- touching the circle: 'panelViewOf' builds its rows out
+                -- of a save/load round trip, and a demo nobody has
+                -- pressed [P] in should pay for neither that nor a HUD
+                -- line (the zero-input law, func-spec 0024 S4).
+                hvPanel =
+                  if pnOpen (stPanel st4)
+                    then panelViewOf (maybe emptyCircle id (stCircle st4)) (stPanel st4)
+                    else panelViewClosed
               }
 
       withFrame $ do
@@ -519,12 +577,12 @@ frameLoop cfg st = do
 
       frameLoop
         cfg
-        st2
+        st4
           { stSpell = spell'
           , stAcc = acc'
           , stLastTime = tNow
-          , stFrames = stFrames st2 + 1
-          , stSimSteps = stSimSteps st2 + stepsRun
+          , stFrames = stFrames st4 + 1
+          , stSimSteps = stSimSteps st4 + stepsRun
           , stFpsEma = fps'
           , stView = vsMode view'
           , stPlane = vsPlane view'
@@ -532,6 +590,68 @@ frameLoop cfg st = do
           , stFlat = vsFlat view'
           , stVisual = vsVisual view'
           }
+
+-- The panel (func-spec 0024 S4/S5) ---------------------------------------------
+
+-- | One pure panel step, folded into the loop state.
+--
+-- An adjustment re-casts immediately: the circle is the thing being
+-- edited, and a spell already in flight was compiled from the old one.
+-- That the spell restarts at age zero is the honest reading of "this is a
+-- different spell now", and it is also what makes the change visible —
+-- an author dragging @radius@ wants to see the new radius drawn, not to
+-- wait for the current cast to finish.
+applyPanel :: LoopConfig -> DemoInput -> LoopState -> (LoopState, PanelAction)
+applyPanel cfg input st = case stCircle st of
+  -- No circle loaded (the file is broken, or the first load failed): the
+  -- panel can still be opened and closed, it just has nothing to show.
+  -- Saving is refused rather than writing an empty circle over the file
+  -- the author is trying to fix.
+  Nothing ->
+    let (panel', _, _) = stepPanel input emptyCircle (stPanel st)
+     in (st {stPanel = panel'}, PanelIdle)
+  Just circle ->
+    let (panel', circle', action) = stepPanel input circle (stPanel st)
+        st' = st {stPanel = panel', stCircle = Just circle'}
+     in case action of
+          PanelRecast -> (recastFrom cfg circle' st', PanelIdle)
+          other -> (st', other)
+
+-- | @S@: write the edited circle back to the file it came from.
+--
+-- 'saveCircle' is the only path (func-spec 0024 §2.4), so the file comes
+-- back in canonical form — key order, spacing and all. That is a real
+-- cost to an author who formatted their file by hand, which is why the
+-- HUD says it in the same breath as reporting the save rather than
+-- leaving them to discover it in @git diff@.
+savePanel :: (FileWatch :> es) => LoopState -> Eff es LoopState
+savePanel st = case stCircle st of
+  Nothing -> pure st
+  Just circle -> do
+    result <- writeBytes (stPath st) (saveCircle circle)
+    pure $ case result of
+      Right () ->
+        st
+          { stPanel = (stPanel st) {pnDirty = False, pnNote = Just (savedNote (stPath st))}
+          , stSelfWrite = True
+          }
+      Left err ->
+        st
+          { stPanel = (stPanel st) {pnNote = Just (saveFailedNote (stPath st) err)}
+          -- Deliberately NOT clearing 'pnDirty': the edits are still only
+          -- in memory, and telling the author otherwise is how work gets
+          -- lost.
+          }
+
+-- | Drop unsaved panel edits, and say why.
+--
+-- The identity when there is nothing to drop, which is what keeps every
+-- run that never opened the panel bit for bit what it was.
+discardEdits :: String -> LoopState -> LoopState
+discardEdits why st
+  | not (pnDirty (stPanel st)) = st
+  | otherwise =
+      st {stPanel = (stPanel st) {pnDirty = False, pnNote = Just (discardedNote why)}}
 
 -- | @n@ pure time advances, no sampling.
 advanceTimes :: LoopConfig -> Int -> ActiveSpell -> ActiveSpell

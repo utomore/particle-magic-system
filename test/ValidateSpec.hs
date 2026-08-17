@@ -205,17 +205,29 @@ spec = do
   describe "the command line (frozen, §9)" $ do
     it "takes paths in the order given" $
       parseArgs ["a.json", "b.json"]
-        `shouldBe` Right (Options {optStats = False, optPaths = ["a.json", "b.json"]})
+        `shouldBe` Right
+          (Options {optStats = False, optJson = False, optPaths = ["a.json", "b.json"]})
 
+    -- 'optJson' joins the record in func-spec 0024 S3; these two are
+    -- written as record updates on 'defaultOptions' so the next flag does
+    -- not touch them either. What they assert is unchanged: --stats is
+    -- position-free and everything else is a path.
     it "accepts --stats anywhere" $ do
-      parseArgs ["--stats", "a"] `shouldBe` Right (Options True ["a"])
-      parseArgs ["a", "--stats"] `shouldBe` Right (Options True ["a"])
+      parseArgs ["--stats", "a"]
+        `shouldBe` Right defaultOptions {optStats = True, optPaths = ["a"]}
+      parseArgs ["a", "--stats"]
+        `shouldBe` Right defaultOptions {optStats = True, optPaths = ["a"]}
 
     it "refuses to guess when given nothing to check" $
       parseArgs [] `shouldSatisfy` isLeft
 
     it "rejects an unknown option instead of treating it as a path" $
       parseArgs ["--verbose", "a"] `shouldSatisfy` isLeft
+
+-- | Every flag off, no paths — the base a command-line expectation is
+-- written as a change from.
+defaultOptions :: Options
+defaultOptions = Options {optStats = False, optJson = False, optPaths = []}
 
 -- | The tool's numbers must BE the cast's numbers.
 checkAgainstCast :: FilePath -> Expectation

@@ -31,12 +31,15 @@ module App.Effects
   , FileWatch (..)
   , checkChanged
   , readBytes
+  , writeBytes
   , scanDir
   , runFileWatchIO
 
     -- * Observation / input vocabulary (renderer-agnostic)
   , HudView (..)
   , ReloadStatus (..)
+  , PanelView (..)
+  , panelViewClosed
   , DemoInput (..)
   , noInput
 
@@ -62,7 +65,7 @@ import Magic.Interface (RenderBatch, V3)
 import Magic.Projection (ViewPlane)
 import System.IO.Error (catchIOError)
 
-import App.HotReload (checkStampIO, newWatchState, scanDirIO)
+import App.HotReload (checkStampIO, newWatchState, scanDirIO, writeBytesIO)
 import App.Render.Post (VisualSettings)
 
 -- | Renderer-agnostic camera description; the raylib backend converts it.
@@ -139,6 +142,16 @@ data FileWatch :: Effect where
   -- runs. Added the additive way every effect operation has been added
   -- since 0005: a new constructor, no existing signature touched.
   ScanDir :: FilePath -> FileWatch m [FilePath]
+  -- | Write a file (func-spec 0024 S5): the parameter panel's save.
+  --
+  -- The first /write/ in a vocabulary that was read-only for twenty-three
+  -- specs, and added the same additive way 'ScanDir' was — a new
+  -- constructor, no existing signature touched. It lives on 'FileWatch'
+  -- rather than on a new effect because the file being written is the
+  -- file being watched, and a save that the watcher then reports as a
+  -- change is the single most important interaction either of them has
+  -- (func-spec 0024 §2.5).
+  WriteBytes :: FilePath -> BS.ByteString -> FileWatch m (Either String ())
 
 type instance DispatchOf FileWatch = Dynamic
 
@@ -147,6 +160,9 @@ checkChanged = send . CheckChanged
 
 readBytes :: (FileWatch :> es) => FilePath -> Eff es (Either String BS.ByteString)
 readBytes = send . ReadBytes
+
+writeBytes :: (FileWatch :> es) => FilePath -> BS.ByteString -> Eff es (Either String ())
+writeBytes path = send . WriteBytes path
 
 scanDir :: (FileWatch :> es) => FilePath -> Eff es [FilePath]
 scanDir = send . ScanDir
@@ -164,6 +180,7 @@ runFileWatchIO pollInterval scanInterval action = do
         CheckChanged path -> liftIO (checkStampIO st path)
         ReadBytes path -> liftIO (readBytesIO path)
         ScanDir dir -> liftIO (scanDirIO st dir)
+        WriteBytes path bytes -> liftIO (writeBytesIO path bytes)
     )
     action
   where
@@ -199,8 +216,36 @@ data HudView = HudView
   -- ^ Which of func-spec 0023's effects are on. Carried here for the
   -- reason 'hvView' and 'hvCamera' are: the HUD is where a headless test
   -- reads observation-side state off without a window.
+  , hvPanel :: !PanelView
+  -- ^ The parameter panel (func-spec 0024 S4). Same reason again — and
+  -- one more: the panel is the first piece of this demo that can change
+  -- what is /simulated/, so being able to read its whole state off a
+  -- headless frame is what makes S5's laws assertable at all.
   }
   deriving (Eq, Show)
+
+-- | What the HUD shows of the parameter panel.
+--
+-- Plain pairs rather than the panel's own 'App.Panel.ParamSpec': this
+-- record is part of the observation vocabulary, which "App.Panel" imports
+-- — so it must not know about "App.Panel" in return.
+data PanelView = PanelView
+  { pvOpen :: !Bool
+  , pvDirty :: !Bool
+  -- ^ Edited since the last save. Shown, because an author who quits with
+  -- this set loses work, and nothing else on screen would say so.
+  , pvIndex :: !Int
+  , pvParams :: ![(String, Double)]
+  -- ^ Empty while the panel is closed: the list costs a save\/load round
+  -- trip of the circle to build, and a closed panel is not showing it.
+  , pvNote :: !(Maybe String)
+  }
+  deriving (Eq, Show)
+
+-- | The panel as it starts, and as it stays for a demo nobody opens it in.
+panelViewClosed :: PanelView
+panelViewClosed =
+  PanelView {pvOpen = False, pvDirty = False, pvIndex = 0, pvParams = [], pvNote = Nothing}
 
 -- | Outcome of the most recent load attempt. A failure keeps the previous
 -- spell running and puts the full error text on screen (ADR-0005's
@@ -257,6 +302,23 @@ data DemoInput = DemoInput
   -- whichever view is live.
   , diCursor :: !(Float, Float)
   -- ^ Cursor position in screen pixels — the fixed point of the 2D zoom.
+  , diTogglePanel :: !Bool
+  -- ^ P: open and close the parameter panel (func-spec 0024 S4).
+  , diPanelPrev :: !Bool
+  -- ^ @[@: select the previous parameter.
+  , diPanelNext :: !Bool
+  -- ^ @]@: select the next one.
+  --
+  -- Its own pair of keys rather than the arrows, which already switch
+  -- spell: a modal meaning for a key that has a meaning is how a demo
+  -- becomes unpredictable, and the panel is supposed to be the part that
+  -- makes the demo /easier/ to steer.
+  , diPanelDec :: !Bool
+  -- ^ @-@: nudge the selected parameter down one step.
+  , diPanelInc :: !Bool
+  -- ^ @=@: nudge it up one step.
+  , diPanelSave :: !Bool
+  -- ^ S: write the edited circle back to its file.
   }
   deriving (Eq, Show)
 
@@ -278,6 +340,12 @@ noInput =
     , diPanDrag = Nothing
     , diWheel = 0
     , diCursor = (0, 0)
+    , diTogglePanel = False
+    , diPanelPrev = False
+    , diPanelNext = False
+    , diPanelDec = False
+    , diPanelInc = False
+    , diPanelSave = False
     }
 
 -- | Paired-call raylib operations (bracket pattern, higher-order effect)
