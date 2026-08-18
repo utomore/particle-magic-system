@@ -184,6 +184,8 @@ depthOrder   :: ViewPlane -> ParticleBuffer -> Vector Int   -- painter 穩定置
 
 ## 功能規劃
 
+一份 spec 只掛在一個子系統（`/code-audit status` 以此判定歸屬與進度），所以下表只列**主場在本子系統**的 spec；橫跨到別處的那一半記在表後的參與清單。
+
 ### 階段一：唯一入口（M1，已交付）
 
 | # | feature | 一句話說明 | 依賴 | spec |
@@ -224,5 +226,7 @@ depthOrder   :: ViewPlane -> ParticleBuffer -> Vector Int   -- painter 穩定置
 | 14 | ffi-thread-safety | 內部鎖或明文的執行緒模型（0009 §9-2、0011 §8-4：等真實宿主需求） | #3 | - |
 
 **明文不做**（已裁決，不進候選）：熱重載 FFI API（政策為「重載＝重施法」，宿主自行 `pm_cast`）；隔離合成的 per-emitter 場路由（ADR-0012 D4，v1 裁決為完全融合）；按 power 加權與優先權搶佔的配額策略（ADR-0012 D6，需要「重要性」這個遊戲層詞彙）；螢幕映射提升到 `magic-boundary`（enhance-0001 E3：先讓需求出現，再凍結介面）。
+
+**本子系統參與但不擁有的 spec**：無——上表 8 份 spec 全部以本子系統為主場。反過來說，`func-0008` 的殼層半場記在 [subarch-0005](subarch-0005-render-shell.md)、`enhance-0001` 的文件半場記在 [subarch-0006](subarch-0006-authoring-engineering.md)、`func-0012` 的解釋器半場記在 [subarch-0001](subarch-0001-magic-semantics.md)。
 
 小結：共 **14 個 features、5 個階段**，前 8 個已交付，三種消費模式與空間輸出皆已上線；階段五六項全部是加法（新函數／新綁定），沒有一項需要動既有簽名。
