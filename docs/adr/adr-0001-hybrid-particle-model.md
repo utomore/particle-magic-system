@@ -13,7 +13,7 @@ related-spec: []
 # ADR-0001：混合粒子模型——解析為主，可選力場層
 
 - 狀態：已採納（2026-08-11）
-- 相關：[architecture.md §3.2, §4.6](../architecture.md)
+- 相關：[architecture.md §3.2, §4.6](../arch/architecture.md)
 
 ## 背景
 

@@ -13,7 +13,7 @@ related-spec: [func-0009]
 # ADR-0011：C ABI FFI 邊界——foreign-library、JSON 進、SoA copy-out、handle 生命週期
 
 - 狀態：已採納（2026-08-14）
-- 相關：[architecture.md §5](../architecture.md)；ADR-0005（JSON 輸入介面）、ADR-0006（SoA 緩衝）、ADR-0007（核心零 IO）、ADR-0008（維度無關輸出）；落地 spec：0009
+- 相關：[architecture.md §5](../arch/architecture.md)；ADR-0005（JSON 輸入介面）、ADR-0006（SoA 緩衝）、ADR-0007（核心零 IO）、ADR-0008（維度無關輸出）；落地 spec：0009
 
 ## 背景
 

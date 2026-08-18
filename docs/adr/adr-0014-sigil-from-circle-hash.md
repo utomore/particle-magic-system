@@ -13,7 +13,7 @@ related-spec: [func-0016]
 # ADR-0014：符文陣由魔法陣資料導出——摘要即合約、混合導出、逐位元豁免的邊界
 
 - 狀態：已採納（2026-08-15）；**D5 已由 [ADR-0015](adr-0015-sigil-persists-through-cast.md) D4 取代（2026-08-15）**——陣形改為駐留到 `ppEnd`，D5「豁免只到 Drawing／Converging 為止」的前提（陣形於 `castStart` 死盡）不再成立。本文其餘決策不受影響。
-- 相關：[architecture.md §1.1（Circle as Data）、§3.3（生命週期）、§4.3（`hashChan`）、§11（破壞性變更硬點表）](../architecture.md)；ADR-0003（槽位固定職責）、ADR-0007（核心零 IO）、ADR-0010 D4／D9（力場是陣的物理環境、零場逐位元相容律）；落地 spec：0016
+- 相關：[architecture.md §1.1（Circle as Data）、§3.3（生命週期）、§4.3（`hashChan`）、§11（破壞性變更硬點表）](../arch/architecture.md)；ADR-0003（槽位固定職責）、ADR-0007（核心零 IO）、ADR-0010 D4／D9（力場是陣的物理環境、零場逐位元相容律）；落地 spec：0016
 
 ## 背景
 

@@ -16,7 +16,7 @@ related-spec: [func-0005, func-0023]
 - **取代範圍（2026-08-16，func-spec 0023）**：本 ADR 的**決策主體不變**——動態 quad mesh、`c'` 指標 API、每幀 O(1) 次 FFI、draw call 數隨 batch 而非粒子成長，全部仍然成立且仍是現行路徑。被取代的只有「決策」節最後一列的前提：**「頂點色走 raylib 預設 shader，免自訂 shader」**。軟粒子要取樣深度、bloom 要三道全螢幕 pass，兩者在定義上就是 shader 工作，所以 ADR-0018 讓自訂 shader 進場——**但只進殼層**（`assets/shaders/` ＋ `App.Render.*`），本 ADR 真正保護的「渲染細節不進庫」一字未動：`FrameOutput`／`RenderBatch`／`ParticleBuffer` 仍零 raylib 型別。
   另有一項附帶調整：func-spec 0023 S9 把各形態的貼圖併成一張 atlas，形態改由每 quad 的 texcoord 攜帶，於是 texcoord 由「開機寫一次」變成每幀上傳（多一次 `updateMeshBuffer`）。換到的是**一幀最多兩次 draw call**（alpha 一次、additive 一次，不論幾個 batch）——本 ADR 的 draw call 承諾因此更寬裕，不是被打破。
   **「零 shader 維護成本」這條正面後果確實被放棄了**（見下方「後果」節），換到 roadmap 維度 C 剩下的那一半。這是一次有代價的交換。
-- 相關：[architecture.md §7, §9.2](../architecture.md)、[ADR-0006](adr-0006-soa-unboxed-buffer.md)（本 ADR 修訂其「FFI 零轉換」宣稱）、[func-spec 0005 §0.2](../spec/func-0005-render-observability.md)（實證調查紀錄）
+- 相關：[architecture.md §7, §9.2](../arch/architecture.md)、[ADR-0006](adr-0006-soa-unboxed-buffer.md)（本 ADR 修訂其「FFI 零轉換」宣稱）、[func-spec 0005 §0.2](../spec/func-0005-render-observability.md)（實證調查紀錄）
 - 附註：本決策依據 h-raylib 5.6.0.0 **原始碼閱讀**結論；待 func-spec 0005 的 S0 spike 實機確認。若 spike 觸發 0005 §7 的備案階梯（每幀 uploadMesh 重建 → 逐粒子 drawBillboard → instancing＋內嵌 GLSL），本 ADR 狀態欄回填修訂。
 
 ## 背景

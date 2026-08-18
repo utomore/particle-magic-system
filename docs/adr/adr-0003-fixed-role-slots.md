@@ -13,7 +13,7 @@ related-spec: []
 # ADR-0003：槽位固定職責＋符文
 
 - 狀態：已採納（2026-08-11）
-- 相關：[architecture.md §4.1, §4.2, §6](../architecture.md)
+- 相關：[architecture.md §4.1, §4.2, §6](../arch/architecture.md)
 
 ## 背景
 

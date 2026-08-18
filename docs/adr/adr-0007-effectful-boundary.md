@@ -13,7 +13,7 @@ related-spec: []
 # ADR-0007：effectful 效果邊界，核心零 IO
 
 - 狀態：已採納（2026-08-11，effectful 由 Init.md 指定）
-- 相關：[architecture.md §2](../architecture.md)
+- 相關：[architecture.md §2](../arch/architecture.md)
 
 ## 背景
 

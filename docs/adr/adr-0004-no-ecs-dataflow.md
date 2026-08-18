@@ -13,7 +13,7 @@ related-spec: []
 # ADR-0004：不採用 ECS，採資料流架構
 
 - 狀態：已採納（2026-08-11，由 Init.md 直接指定）
-- 相關：[architecture.md §2, §3](../architecture.md)
+- 相關：[architecture.md §2, §3](../arch/architecture.md)
 
 ## 背景
 

@@ -13,7 +13,7 @@ related-spec: [func-0007]
 # ADR-0010：力場層落地——組合點語意、穩定粒子身分、熱重載狀態政策
 
 - 狀態：已採納（2026-08-13）
-- 相關：[ADR-0001](adr-0001-hybrid-particle-model.md)（本 ADR 補齊其自承的缺口）、[ADR-0003](adr-0003-fixed-role-slots.md)（符文歸屬論證）、[architecture.md §3.2/§4.6/§7/§8.3](../architecture.md)、[func-spec 0007](../spec/func-0007-force-field-layer.md)（實作載體）
+- 相關：[ADR-0001](adr-0001-hybrid-particle-model.md)（本 ADR 補齊其自承的缺口）、[ADR-0003](adr-0003-fixed-role-slots.md)（符文歸屬論證）、[architecture.md §3.2/§4.6/§7/§8.3](../arch/architecture.md)、[func-spec 0007](../spec/func-0007-force-field-layer.md)（實作載體）
 
 ## 背景
 

@@ -13,7 +13,7 @@ related-spec: [func-0015]
 # ADR-0013：告示板詞彙——無參數列舉、型別落點遷移、程序生成貼圖
 
 - 狀態：已採納（2026-08-15）
-- 相關：[architecture.md §1.2、§5.2、§10](../architecture.md)；ADR-0003（外圈＝展現）、ADR-0009（動態 quad mesh、不自訂 shader）、ADR-0011 D7（header 只加不改）；落地 spec：0015
+- 相關：[architecture.md §1.2、§5.2、§10](../arch/architecture.md)；ADR-0003（外圈＝展現）、ADR-0009（動態 quad mesh、不自訂 shader）、ADR-0011 D7（header 只加不改）；落地 spec：0015
 
 ## 背景
 

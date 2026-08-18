@@ -13,7 +13,7 @@ related-spec: [func-0022]
 # ADR-0017：平行取樣的決定論，與核心依賴白名單的第一次擴充
 
 - 狀態：已採納（2026-08-16）
-- 相關：[architecture.md §7](../architecture.md)（GHC 設定與吞吐目標）、§8.2（Expr 加速三階梯）、§9.4（GC 停頓）；ADR-0006（SoA 與 1 萬–10 萬粒目標）、**ADR-0007（核心零 IO、簽名中無 `Eff`）**、ADR-0010（力場層的槽位身分）、ADR-0012 §後果（「若日後 Expr bytecode 或多執行緒取樣落地，`budgetCap` 應重新以同一條規則量測」）；落地 spec：[0022](../spec/func-0022-perf-second-tier.md)
+- 相關：[architecture.md §7](../arch/architecture.md)（GHC 設定與吞吐目標）、§8.2（Expr 加速三階梯）、§9.4（GC 停頓）；ADR-0006（SoA 與 1 萬–10 萬粒目標）、**ADR-0007（核心零 IO、簽名中無 `Eff`）**、ADR-0010（力場層的槽位身分）、ADR-0012 §後果（「若日後 Expr bytecode 或多執行緒取樣落地，`budgetCap` 應重新以同一條規則量測」）；落地 spec：[0022](../spec/func-0022-perf-second-tier.md)
 
 ## 背景
 

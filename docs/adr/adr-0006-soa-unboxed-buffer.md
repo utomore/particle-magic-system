@@ -13,7 +13,7 @@ related-spec: [func-0023]
 # ADR-0006：SoA + Unboxed Vector 粒子緩衝
 
 - 狀態：已採納（2026-08-11）；**六欄佈局於 2026-08-16 由 [ADR-0018](adr-0018-custom-shader-and-columns.md) D2 鬆綁為九欄——以「加欄＋新查詢函數」而非「改既有簽名」的方式，見文末**
-- 相關：[architecture.md §4.5, §7](../architecture.md)
+- 相關：[architecture.md §4.5, §7](../arch/architecture.md)
 
 ## 背景
 
