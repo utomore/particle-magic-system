@@ -159,6 +159,8 @@ spinAngle  :: SigilSpin -> PhasePlan -> Time -> Double
 
 ## 功能規劃
 
+一份 spec 只掛在一個子系統（`/code-audit status` 以此判定歸屬與進度），所以下表只列**主場在本子系統**的 spec；橫跨到別處的那一半記在表後的參與清單。
+
 ### 階段一：語意骨架（M1，已交付）
 
 | # | feature | 一句話說明 | 依賴 | spec |
@@ -179,19 +181,24 @@ spinAngle  :: SigilSpin -> PhasePlan -> Time -> Double
 
 | # | feature | 一句話說明 | 依賴 | spec |
 |---|---------|-----------|------|------|
-| 7 | multi-circle-composition | `compileMany` 合成律：逐界標 max、預算相加（場景層半場見 subarch-0004） | #3 | func-0012 |
-| 8 | magic-vocabulary | `Element` 4→9、`FaceShape` 4→8、`Trajectory` 4→8、`RadiationMode` 2→4 | #6 | func-0021 |
+| 7 | magic-vocabulary | `Element` 4→9、`FaceShape` 4→8、`Trajectory` 4→8、`RadiationMode` 2→4 | #6 | func-0021 |
 
 ### 階段四：候選（未動工，逐條有記帳來源）
 
 | # | feature | 一句話說明 | 依賴 | spec |
 |---|---------|-----------|------|------|
-| 9 | sigil-linger-phase | 陣的獨立時間軸：新增 `phases.linger`，讓陣比法術晚收或早收（記帳 0017 §8-3） | #5 | - |
-| 10 | frozen-sigil | 畫完即凍結的靜止陣，取代現行以週期重畫造成的「呼吸」（0017 §8-1） | #5 | - |
-| 11 | node-orbit | 節點群公轉；roadmap 指名應與多發動點合流後做（0020 §8-9） | #6 | - |
-| 12 | time-varying-modulation | 第四種時間掛載點：`Expr` 驅動的時變場參數與非等速自轉（0007 §9、0020 §8-2） | #6 | - |
-| 13 | glyph-semantics | 符文文字表義——現行 `GlyphBand` 只產生線段，不表義（0016 §8-1） | #4 | - |
-| 14 | volumetric-sigil | 3D 立體陣：多層平面沿法線堆疊（0016 §8-4） | #4 | - |
-| 15 | spell-cost-model | 魔法代價閘門，用遊戲層詞彙約束符文組合爆炸（主架構 §8.1） | #8 | - |
+| 8 | sigil-linger-phase | 陣的獨立時間軸：新增 `phases.linger`，讓陣比法術晚收或早收（記帳 0017 §8-3） | #5 | - |
+| 9 | frozen-sigil | 畫完即凍結的靜止陣，取代現行以週期重畫造成的「呼吸」（0017 §8-1） | #5 | - |
+| 10 | node-orbit | 節點群公轉；roadmap 指名應與多發動點合流後做（0020 §8-9） | #6 | - |
+| 11 | time-varying-modulation | 第四種時間掛載點：`Expr` 驅動的時變場參數與非等速自轉（0007 §9、0020 §8-2） | #6 | - |
+| 12 | glyph-semantics | 符文文字表義——現行 `GlyphBand` 只產生線段，不表義（0016 §8-1） | #4 | - |
+| 13 | volumetric-sigil | 3D 立體陣：多層平面沿法線堆疊（0016 §8-4） | #4 | - |
+| 14 | spell-cost-model | 魔法代價閘門，用遊戲層詞彙約束符文組合爆炸（主架構 §8.1） | #7 | - |
 
-小結：共 **15 個 features、4 個階段**，前 8 個（階段一～三）已交付，子系統的核心語意已可交付；階段四七項皆為已記帳的欠款或明列的延後項，不是願望清單。
+**本子系統參與但不擁有的 spec**
+
+| spec | 主場 | 本子系統的那一半 |
+|---|---|---|
+| func-0012 | [subarch-0004](subarch-0004-boundary-host.md) | `compileMany` 的合成律：發射器與力場串接、預算相加、`PhasePlan` 逐界標取 max |
+
+小結：共 **14 個 features、4 個階段**，前 7 個（階段一～三）已交付，子系統的核心語意已可交付；階段四七項皆為已記帳的欠款或明列的延後項，不是願望清單。

@@ -152,41 +152,48 @@ import Magic.Step        -- plan（與 C ABI 的 pm_advance 共用同一個規�
 
 ## 功能規劃
 
+一份 spec 只掛在一個子系統（`/code-audit status` 以此判定歸屬與進度），所以下表只列**主場在本子系統**的 spec；橫跨到別處的那一半記在表後的參與清單。
+
 ### 階段一：畫得出來（M1，已交付）
 
 | # | feature | 一句話說明 | 依賴 | spec |
 |---|---------|-----------|------|------|
 | 1 | render-observability | 動態 quad mesh 單 draw call、HUD、錯誤上屏、熱重載回饋 | - | func-0005 |
-| 2 | ortho2d-shell | 2D 正交後端的殼層半場：投影切換、painter 排序、螢幕映射（核心半場見 subarch-0004） | #1 | func-0008 |
 
 ### 階段二：看得清楚（M2，已交付）
 
 | # | feature | 一句話說明 | 依賴 | spec |
 |---|---------|-----------|------|------|
-| 3 | visual-expressiveness | 3D alpha 深度排序、軌道相機、2D 平移縮放與視窗適配、俯視深度色調 | #2 | func-0013 |
+| 2 | visual-expressiveness | 3D alpha 深度排序、軌道相機、2D 平移縮放與視窗適配、俯視深度色調 | #1 | func-0013 |
 
 ### 階段三：看的是什麼（M3，已交付）
 
 | # | feature | 一句話說明 | 依賴 | spec |
 |---|---------|-----------|------|------|
-| 4 | visual-vocabulary | 依 `(blend, shape)` 分批的多批次繪製 ＋ 逐 batch 程序生成貼圖（詞彙半場見 subarch-0001） | #3 | func-0015 |
+| 3 | visual-vocabulary | 依 `(blend, shape)` 分批的多批次繪製 ＋ 逐 batch 程序生成貼圖（詞彙半場見 subarch-0001） | #2 | func-0015 |
 
 ### 階段四：值得看（M4，已交付）
 
 | # | feature | 一句話說明 | 依賴 | spec |
 |---|---------|-----------|------|------|
-| 5 | production-visuals | 速度驅動的拖尾、bloom 三 pass、深度取樣的軟粒子、貼圖 atlas 的跨批交錯；四項各一鍵、預設全關 | #4 | func-0023 |
-| 6 | param-panel | demo 內即時參數面板與其寫回（走正規 JSON，因為這一層看不到 ADT） | #5 | func-0024 |
+| 4 | production-visuals | 速度驅動的拖尾、bloom 三 pass、深度取樣的軟粒子、貼圖 atlas 的跨批交錯；四項各一鍵、預設全關 | #3 | func-0023 |
 
 ### 階段五：候選（未動工，逐條有記帳來源）
 
 | # | feature | 一句話說明 | 依賴 | spec |
 |---|---------|-----------|------|------|
-| 7 | hdr-tonemapping | HDR 管線與色調映射——bloom 目前在 LDR 下做（0023 §8-5 記帳） | #5 | - |
-| 8 | camera-motion | 相機動畫／過場與慣性阻尼（0013 §8-5） | #3 | - |
-| 9 | pixel-art-reference | 像素風的**畫得出來**的參考實作：低解析 target 整數倍放大 ＋ 調色盤量化。食譜已寫但沒有範例走過（enhance-0001 §8） | #2 | - |
-| 10 | order-introsort | 3D 深度排序目前以 `sortOn` 起步；若成為熱點可套用核心那份 in-place introsort（0013 §8-6） | #3 | - |
+| 5 | hdr-tonemapping | HDR 管線與色調映射——bloom 目前在 LDR 下做（0023 §8-5 記帳） | #4 | - |
+| 6 | camera-motion | 相機動畫／過場與慣性阻尼（0013 §8-5） | #2 | - |
+| 7 | pixel-art-reference | 像素風的**畫得出來**的參考實作：低解析 target 整數倍放大 ＋ 調色盤量化。食譜已寫但沒有範例走過（enhance-0001 §8） | #1 | - |
+| 8 | order-introsort | 3D 深度排序目前以 `sortOn` 起步；若成為熱點可套用核心那份 in-place introsort（0013 §8-6） | #2 | - |
 
 **明文不做**：fsnotify（ADR-0005 既定延後，func-0014 §8-2 再次確認：10 檔規模輪詢零成本）；玩家在 JSON 裡寫 GLSL（永久非目標——會把 GPU API 帶進輸入合約，破壞 ADR-0005 的可攜性）。
 
-小結：共 **10 個 features、5 個階段**，前 6 個已交付，「特效即魔法」在畫面上已經成立；階段五四項皆為精緻化，沒有一項是缺口。
+**本子系統參與但不擁有的 spec**
+
+| spec | 主場 | 本子系統的那一半 |
+|---|---|---|
+| func-0008 | [subarch-0004](subarch-0004-boundary-host.md) | 2D 正交後端的殼層半場：`App.Render.Flat` 的投影切換、painter 排序與螢幕映射 |
+| func-0024 | [subarch-0006](subarch-0006-authoring-engineering.md) | 參數面板的 app 半場：`App.Panel` 的純狀態機與走正規 JSON 的寫回 |
+
+小結：共 **8 個 features、5 個階段**，前 4 個已交付，「特效即魔法」在畫面上已經成立；階段五四項皆為精緻化，沒有一項是缺口。

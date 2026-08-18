@@ -172,6 +172,8 @@ magic-schema [--check] [--out <path>]
 
 ## 功能規劃
 
+一份 spec 只掛在一個子系統（`/code-audit status` 以此判定歸屬與進度），所以下表只列**主場在本子系統**的 spec；橫跨到別處的那一半記在表後的參與清單。
+
 ### 階段一：作者回饋圈（M1，已交付）
 
 | # | feature | 一句話說明 | 依賴 | spec |
@@ -189,18 +191,23 @@ magic-schema [--check] [--out <path>]
 | # | feature | 一句話說明 | 依賴 | spec |
 |---|---------|-----------|------|------|
 | 3 | authoring-tools-2 | `docs/spell.schema.json` ＋ `magic-schema`、`magic-inspect`、`magic-validate --json`（面板半場見 subarch-0005） | #1 | func-0024 |
-| 4 | host-onboarding-docs | `docs/integration.md` 的 Haskell 宿主章節與 2D／像素風食譜（範例半場見 subarch-0004） | #2 | enhance-0001 |
 
 ### 階段四：候選（未動工）
 
 | # | feature | 一句話說明 | 依賴 | spec |
 |---|---------|-----------|------|------|
-| 5 | llvm-backend-eval | `-fllvm` 的評估——屬建置環境變數，roadmap 指名與 CI 一起評估（0022 §8-2 記帳） | #2 | - |
-| 6 | schema-v2-tooling | schema 版本遞增時的遷移工具與雙版本 golden；與 subarch-0004 #12 同一輪 | #3 | - |
-| 7 | visual-editor | 視覺化編輯器／即時預覽 UI——明文「等有非工程作者為止」（0014 §8-1） | #3 | - |
-| 8 | unity-manual-checklist | Unity Editor 的「二次 Play」與視覺／GC 觀察：批次模式驗不到，目前是 README 的人眼 checklist（0011 §9.3） | #2 | - |
-| 9 | bench-in-ci | 把 `bench` 納入 CI 並設回歸門檻——**本輪新提，尚無既有記帳**；動工前應先在某份 spec 的 §9 立帳 | #2 | - |
+| 4 | llvm-backend-eval | `-fllvm` 的評估——屬建置環境變數，roadmap 指名與 CI 一起評估（0022 §8-2 記帳） | #2 | - |
+| 5 | schema-v2-tooling | schema 版本遞增時的遷移工具與雙版本 golden；與 subarch-0004 #12 同一輪 | #3 | - |
+| 6 | visual-editor | 視覺化編輯器／即時預覽 UI——明文「等有非工程作者為止」（0014 §8-1） | #3 | - |
+| 7 | unity-manual-checklist | Unity Editor 的「二次 Play」與視覺／GC 觀察：批次模式驗不到，目前是 README 的人眼 checklist（0011 §9.3） | #2 | - |
+| 8 | bench-in-ci | 把 `bench` 納入 CI 並設回歸門檻——**本輪新提，尚無既有記帳**；動工前應先在某份 spec 的 §9 立帳 | #2 | - |
 
 **明文不做**：上 Hackage（ADR-0016「被否決」節）。
 
-小結：共 **9 個 features、4 個階段**，前 4 個已交付，作者回饋圈與發布流程都已閉合；階段四五項中 #9 是唯一沒有既有記帳來源的一條，依 roadmap §3 的規矩，它應先立帳再動工。
+**本子系統參與但不擁有的 spec**
+
+| spec | 主場 | 本子系統的那一半 |
+|---|---|---|
+| enhance-0001 | [subarch-0004](subarch-0004-boundary-host.md) | `docs/integration.md` 的 Haskell 宿主章節與 2D／像素風接法食譜 |
+
+小結：共 **8 個 features、4 個階段**，前 3 個已交付，作者回饋圈與發布流程都已閉合；階段四五項中 #8 是唯一沒有既有記帳來源的一條，依 roadmap §3 的規矩，它應先立帳再動工。

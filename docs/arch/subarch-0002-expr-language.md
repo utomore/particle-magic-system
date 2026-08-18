@@ -148,27 +148,34 @@ cse               :: [Expr] -> ExprDag                -- 共同子式消去
 
 ## 功能規劃
 
+一份 spec 只掛在一個子系統（`/code-audit status` 以此判定歸屬與進度），所以下表只列**主場在本子系統**的 spec；橫跨到別處的那一半記在表後的參與清單。
+
 ### 階段一：語言可用（M1，已交付）
 
 | # | feature | 一句話說明 | 依賴 | spec |
 |---|---------|-----------|------|------|
 | 1 | expr-subsystem | AST、`evalExpr`、文字文法剖析與還原，文法凍結 | - | func-0003 |
-| 2 | expr-rune-wiring | 四種夾帶式子的符文接線與分層時間軸（語意半場見 subarch-0001） | #1 | func-0004 |
 
 ### 階段二：語言夠快（M2，已交付）
 
 | # | feature | 一句話說明 | 依賴 | spec |
 |---|---------|-----------|------|------|
-| 3 | const-folding | 編譯期常數摺疊，第一階加速；摺疊律逐位元 | #1 | func-0010 |
-| 4 | cse-and-bytecode | hash-consing 共同子式消去 ＋ 扁平 `ExprCode`；編譯律逐位元，`Expr.hs` 零觸碰 | #3 | func-0022 |
+| 2 | cse-and-bytecode | hash-consing 共同子式消去 ＋ 扁平 `ExprCode`；編譯律逐位元，`Expr.hs` 零觸碰 | #1 | func-0022 |
 
 ### 階段三：候選（未動工）
 
 | # | feature | 一句話說明 | 依賴 | spec |
 |---|---------|-----------|------|------|
-| 5 | expr-error-quality | 剖析錯誤訊息的玩家可讀性——目前有位置但沒有建議（主架構 §9.5 記帳） | #1 | - |
-| 6 | expr-vector-ops | 向量層級的運算子與函數，讓 `ExprV3` 不只是三個並排的純量式（主架構 §10 擴充點） | #1 | - |
-| 7 | expr-static-feedback | 把 `evalInterval` 的靜態範圍分析回饋給作者工具，讓寫式子的人在存檔前看到界（現僅供 `emitterBounds` 內部使用） | #4 | - |
-| 8 | expr-fourth-time-mount | 第四種時間掛載點的求值環境（時變場參數／非等速自轉）；與 subarch-0001 #12 同一輪 | #1 | - |
+| 3 | expr-error-quality | 剖析錯誤訊息的玩家可讀性——目前有位置但沒有建議（主架構 §9.5 記帳） | #1 | - |
+| 4 | expr-vector-ops | 向量層級的運算子與函數，讓 `ExprV3` 不只是三個並排的純量式（主架構 §10 擴充點） | #1 | - |
+| 5 | expr-static-feedback | 把 `evalInterval` 的靜態範圍分析回饋給作者工具，讓寫式子的人在存檔前看到界（現僅供 `emitterBounds` 內部使用） | #2 | - |
+| 6 | expr-fourth-time-mount | 第四種時間掛載點的求值環境（時變場參數／非等速自轉）；與 subarch-0001 #11 同一輪 | #1 | - |
 
-小結：共 **8 個 features、3 個階段**，前 4 個已交付，語言本身已凍結且夠快；階段三四項皆為擴充而非修補。
+**本子系統參與但不擁有的 spec**
+
+| spec | 主場 | 本子系統的那一半 |
+|---|---|---|
+| func-0004 | [subarch-0001](subarch-0001-magic-semantics.md) | 四種夾帶式子的符文接線，以及「行為層 `t`＝粒子年齡、調變層 `t`＝施法秒數」這條分層時間軸的語言半場 |
+| func-0010 | [subarch-0003](subarch-0003-particle-simulation.md) | `foldConstants` 編譯期常數摺疊——三階加速梯的第一階，摺疊律逐位元 |
+
+小結：共 **6 個 features、3 個階段**，前 2 個已交付，語言本身已凍結且夠快；階段三四項皆為擴充而非修補。**擁有的 spec 只有兩份，但參與的有四份**——這正是一個縱切子系統該有的形狀：它的程式碼被每一輪動到，主場卻多半在別人那裡。
