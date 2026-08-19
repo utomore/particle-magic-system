@@ -1,5 +1,9 @@
 # SKILL.md — 本專案的文件體系與工作方法
 
+> **本檔描述的是已被取代的文檔體系。** 設計文檔自 2026-08-19 起改用 `.design/` 三層階梯（`system.md` → `subsystems/*/design.md` → `features|enhancements|bugfixes`），入口見 [`.design/system.md`](.design/system.md)，新舊對照見 [`.design/legacy-map.md`](.design/legacy-map.md)。
+>
+> 本檔保留的價值在於它記錄了 `docs/` 底下那 26 份交付文檔當初的寫作規範與工作循環——讀舊文檔時仍然用得上。**不要依本檔在 `docs/` 新建任何文檔。**
+
 本檔定義專案內各類文件的角色、寫作規範，與「文件 → 實作 → 測試」的工作循環。所有貢獻者（含 AI 協作者）依此運作。
 
 ## 文件體系

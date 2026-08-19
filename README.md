@@ -139,11 +139,14 @@ guarantee narrows to structure plus a couple of ulp in the positions
 
 ## Repository layout
 
-- `docs/arch/architecture.md` — the system design (Traditional Chinese)
-- `docs/arch/subarch-0001..0006-*.md` — the six subsystem architectures the
-  main design splits into: magic semantics, the Expr language, particle
-  simulation, the boundary/host surface, the render shell, and authoring
-  plus engineering
+- `.design/system.md` — the Level 1 system architecture, and the project's
+  lighthouse document (Traditional Chinese)
+- `.design/subsystems/<slug>/design.md` — the six Level 2 subsystem
+  architectures: magic semantics, the Expr language, particle simulation,
+  the boundary/host surface, the render shell, and authoring plus
+  engineering
+- `.design/legacy-map.md` — the bridge to `docs/`, which holds the frozen
+  design history of the previous doc system (26 task documents, 20 ADRs)
 - `docs/integration.md` — host integration guide: Haskell, C/C++, Unity (C#)
   and any other shared-library host — data contract, coordinate system,
   pitfalls, current limits

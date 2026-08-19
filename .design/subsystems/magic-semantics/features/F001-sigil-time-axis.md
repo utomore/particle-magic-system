@@ -1,15 +1,19 @@
 ---
-id: func-0026
-type: spec
+id: F001
+type: feature
 title: sigil-time-axis
 description: 陣的獨立時間軸：駐留位移與畫完即凍結
 status: open
 created: 2026-08-19
 updated: 2026-08-19
-depends-on: [func-0002, func-0006, func-0014, func-0015, func-0016, func-0017, func-0020, func-0024]
+depends-on: []
 related-adr: [adr-0014, adr-0015, adr-0020]
-related-spec: []
+related-feature: []
 ---
+
+> **遷移註記**：本檔原為 `docs/spec/func-0026-sigil-time-axis.md`，於 dev-flow 0.7.0 遷移時搬入 `.design/` 並重編為 `magic-semantics/F001`——它是唯一一份尚未實作的舊規格。
+>
+> 內文引用的 `func-00NN` 與 `ADR-00NN` 皆指**舊體系的已交付文檔**，位置與對照見 [legacy-map.md](../../../legacy-map.md)。`depends-on` 為空是因為它依賴的八份規格全部已交付，沒有任何進行中的任務擋著它。
 
 # 陣的獨立時間軸 功能規格
 
