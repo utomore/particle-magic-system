@@ -5,7 +5,7 @@ title: magic-semantics
 description: 魔法陣結構、符文詞彙、由內而外解釋器與符文陣幾何
 status: active
 created: 2026-08-18
-updated: 2026-08-18
+updated: 2026-08-19
 parent-arch: architecture
 related-adr: [adr-0002, adr-0003, adr-0014, adr-0015, adr-0020]
 ---
@@ -74,14 +74,14 @@ phaseAt            :: PhasePlan -> Time -> Phase
 spellNeedsVelocity :: CompiledSpell -> Bool      -- 拖尾 opt-in（subarch-0003 據此選建構子）
 
 -- 靜態查詢（消費者：subarch-0004 的空間摘要與宿主）
-emitterBounds :: CastContext -> EmitterSpec -> (V3, V3)   -- 保守 AABB，逐位元凍結
-shapeRadius   :: FaceShape -> Double
-evalInterval  :: IntervalEnv -> Expr -> Interval          -- 內部面：只開放給 Magic.Space
+emitterBounds :: CastContext -> Seconds -> EmitterSpec -> (V3, V3)  -- 保守 AABB，逐位元凍結
+shapeRadius   :: FaceShape -> Float
+evalInterval  :: Expr -> IntervalEnv -> Interval          -- 內部面：只開放給 Magic.Space
 
 -- 符文陣（消費者：subarch-0003 的陣形取樣）
 hashCircle :: Circle -> Word64        -- 凍結：改它＝靜默改變每一個法術的長相
 sigilPlan  :: Circle -> SigilPlan
-spinAngle  :: SigilSpin -> PhasePlan -> Time -> Double
+spinAngle  :: SigilSpin -> Double -> Float   -- 第二參數＝施法秒數，回傳弧度
 ```
 
 **對外承諾的三條律**：
@@ -187,8 +187,8 @@ spinAngle  :: SigilSpin -> PhasePlan -> Time -> Double
 
 | # | feature | 一句話說明 | 依賴 | spec |
 |---|---------|-----------|------|------|
-| 8 | sigil-linger-phase | 陣的獨立時間軸：新增 `phases.linger`，讓陣比法術晚收或早收（記帳 0017 §8-3） | #5 | - |
-| 9 | frozen-sigil | 畫完即凍結的靜止陣，取代現行以週期重畫造成的「呼吸」（0017 §8-1） | #5 | - |
+| 8 | sigil-linger-phase | 陣的獨立時間軸：陣層級 `sigil.linger` 讓陣比法術晚收或早收（記帳 0017 §8-3） | #5 | func-0026 |
+| 9 | frozen-sigil | 畫完即凍結的靜止陣（`sigil.hold`），取代現行以週期重畫造成的「呼吸」（0017 §8-1） | #5 | func-0026 |
 | 10 | node-orbit | 節點群公轉；roadmap 指名應與多發動點合流後做（0020 §8-9） | #6 | - |
 | 11 | time-varying-modulation | 第四種時間掛載點：`Expr` 驅動的時變場參數與非等速自轉（0007 §9、0020 §8-2） | #6 | - |
 | 12 | glyph-semantics | 符文文字表義——現行 `GlyphBand` 只產生線段，不表義（0016 §8-1） | #4 | - |
@@ -201,4 +201,4 @@ spinAngle  :: SigilSpin -> PhasePlan -> Time -> Double
 |---|---|---|
 | func-0012 | [subarch-0004](subarch-0004-boundary-host.md) | `compileMany` 的合成律：發射器與力場串接、預算相加、`PhasePlan` 逐界標取 max |
 
-小結：共 **14 個 features、4 個階段**，前 7 個（階段一～三）已交付，子系統的核心語意已可交付；階段四七項皆為已記帳的欠款或明列的延後項，不是願望清單。
+小結：共 **14 個 features、4 個階段**，前 7 個（階段一～三）已交付，子系統的核心語意已可交付；階段四七項皆為已記帳的欠款或明列的延後項，不是願望清單。其中 #8 `sigil-linger-phase` 與 #9 `frozen-sigil` 已由 [func-0026](../spec/func-0026-sigil-time-axis.md) 合併展開成一份規格（陣的獨立時間軸），尚未實作。
