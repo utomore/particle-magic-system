@@ -37,21 +37,21 @@ parent: host-runtime
 | D3 | oop 測試的 golden 比對 | 沿用既有平台規則：每幀粒子數全平台斷言、欄位摘要只在參考平台（windows/x86_64）斷言；ADR-024 落地後改全平台 | oop-load-smoke |
 | D4 | macOS 產物 | 本輪只寫規格與建置設定；Windows 本機、Linux 用 WSL 驗證；macOS 驗證待 platform-matrix-macos | packaging-content |
 | D5 | Windows DllMain 預先啟動 RTS 的處理 | 設計 subagent 先查證；關不掉就走 C2.4 降級條款（capability 數生效、其餘 `PM_ERR_STATE`、文件逐平台明列） | rts-config-init |
-| D6 | 模型分配 | 全部繼承；host-doc-corrections 設計與實作降 sonnet、step-planner-c-abi 實作降 opus（行為在卡上已寫死） | 見配號表 |
+| D6 | 模型分配 | **全部 Opus 5,不降級**(2026-08-20 開發者指示)。W1 原本以繼承模型(Fable 5)發出,發現後**立即中止並以 `model: opus` 重發五個**;被中止的三份草稿(F001／F002／F005)移入 scratchpad 的 `fable-drafts/` 保留但不沿用,新 agent 明令禁讀。W2 與所有實作委派同樣 Opus 5 | 全部 |
 | D7 | 本次範圍 | 只跑階段一；階段二以後等閘門裁決後再跑（接續模式） | 全部 |
 
 ## 配號表
 
 | feature | id | 檔名 | 設計模型 | 實作模型 | 狀態 |
 |---|---|---|---|---|---|
-| exception-firewall | F001 | F001-exception-firewall.md | 繼承 | 繼承 | assigned |
-| handle-generation | F002 | F002-handle-generation.md | 繼承 | 繼承 | assigned |
-| rts-config-init | F003 | F003-rts-config-init.md | 繼承 | 繼承 | assigned |
-| thread-model | F004 | F004-thread-model.md | 繼承 | 繼承 | assigned |
-| step-planner-c-abi | F005 | F005-step-planner-c-abi.md | 繼承 | opus | assigned |
-| oop-load-smoke | F006 | F006-oop-load-smoke.md | 繼承 | 繼承 | assigned |
-| packaging-content | F007 | F007-packaging-content.md | 繼承 | 繼承 | assigned |
-| host-doc-corrections | F008 | F008-host-doc-corrections.md | sonnet | sonnet | assigned |
+| exception-firewall | F001 | F001-exception-firewall.md | opus | opus | design-running(重發) |
+| handle-generation | F002 | F002-handle-generation.md | opus | opus | design-running(重發) |
+| rts-config-init | F003 | F003-rts-config-init.md | opus | opus | design-running(重發) |
+| thread-model | F004 | F004-thread-model.md | opus | opus | assigned |
+| step-planner-c-abi | F005 | F005-step-planner-c-abi.md | opus | opus | design-running(重發) |
+| oop-load-smoke | F006 | F006-oop-load-smoke.md | opus | opus | assigned |
+| packaging-content | F007 | F007-packaging-content.md | opus | opus | design-running(重發) |
+| host-doc-corrections | F008 | F008-host-doc-corrections.md | opus | opus | assigned |
 
 ## 待確認假設彙總
 
