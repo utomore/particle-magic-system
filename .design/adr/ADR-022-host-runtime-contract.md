@@ -34,7 +34,7 @@ accepted（2026-08-20）。修訂 [ADR-0011](../../docs/adr/adr-0011-ffi-c-abi-b
 
 新增 `pm_init_ex(const PmConfig*)`，`PmConfig` 以 `size` 欄開頭（add-only 結構，未來加欄不破壞舊宿主）。宿主可指定：capability 數（0 = 依硬體）、nursery 大小、是否啟用 nonmoving GC。**`pm_init()` 保留且行為不變**（單 capability、預設 GC）——既有宿主零改動；`docs/integration.md` 改為推薦 `pm_init_ex` 並給遊戲用的建議設定。
 
-`pm_init`／`pm_init_ex` 回傳錯誤碼。初始化**原子化**（C 側以原子旗標或一次性初始化原語實作）。**`pm_shutdown` 之後再 `pm_init` 一律回錯誤**，兩個平台語意統一為「本進程不得再使用本庫」；Windows 的 `DllMain` refcount 不對稱由實作吸收，不再外露。
+`pm_init_ex` 回傳錯誤碼（`pm_init` 的凍結簽名是 `void`，不動）。初始化**原子化**（C 側以原子旗標或一次性初始化原語實作）。**`pm_shutdown` 之後再初始化一律回 `PM_ERR_STATE`**（新錯誤碼 −7，涵蓋所有「宿主呼叫順序錯」：未初始化就呼叫、關閉後再初始化、重複帶設定初始化），兩個平台語意統一為「本進程不得再使用本庫」；Windows 的 `DllMain` refcount 不對稱由實作吸收，不再外露。若某平台的 RTS 在宿主呼叫前已由載入器啟動且無法關閉，capability 數仍以執行期 API 生效，其餘欄位回 `PM_ERR_STATE` 並逐平台文件化——不靜默忽略。
 
 ### D2（例外防火牆）
 
@@ -57,7 +57,7 @@ accepted（2026-08-20）。修訂 [ADR-0011](../../docs/adr/adr-0011-ffi-c-abi-b
 
 ### D5（固定時步上 C ABI，`dt` 檢查）
 
-新增 `pm_plan_steps(dt, max_steps, elapsed, acc_in, *steps, *acc_out)`，純函數，與邊界層既有的時步規劃器**同一份實作**（含單幀最大步數截斷與 epsilon）。宿主的主迴圈因此不必自己寫累加器。出貨的 C／C#／Unity 範例全部改用它。
+新增 `pm_plan_steps(dt, max_steps, elapsed, acc_in, *steps, *acc_out)`，純函數，參數與累加器為**雙精度**（邊界層的規劃器是雙精度，單精度累加器會漂移且無法逐位元等價；既有推進符號的單精度步長不動），與邊界層既有的時步規劃器**同一份實作**（含單幀最大步數截斷與 epsilon）。宿主的主迴圈因此不必自己寫累加器。出貨的 C／C#／Unity 範例全部改用它。
 
 `pm_advance`／`pm_scene_advance` 對**非有限或負的 `dt`** 回 `PM_ERR_ARGS` 且狀態不變。這只改變「原本就是未定義」的輸入的行為，合法輸入的輸出逐位元不變。
 
