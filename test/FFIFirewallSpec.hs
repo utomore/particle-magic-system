@@ -243,12 +243,24 @@ withErrBuf len k =
 
 -- Source audit ----------------------------------------------------------------
 
--- | Names in @foreign export ccall <name>@ declarations. Deliberately not
--- a written-down list: a symbol added by a later feature joins the audit
--- by existing, and fails it until it carries a firewall of its own.
+-- | Haskell names in @foreign export ccall [\"<symbol>\"] <name>@
+-- declarations. Deliberately not a written-down list: a symbol added by a
+-- later feature joins the audit by existing, and fails it until it carries
+-- a firewall of its own.
+--
+-- Since host-runtime F003 every export names its C symbol explicitly
+-- (@pm_hs_*@, the inside of the gate in @cbits\/pm_gate.c@), so the
+-- Haskell name — the one whose definition block this audit reads — is the
+-- word after the quoted string. The unquoted form is still accepted, so
+-- that an export written the old way is audited rather than skipped.
 foreignExports :: [String] -> [String]
-foreignExports ls =
-  [name | l <- ls, ("foreign" : "export" : "ccall" : name : _) <- [words (trim l)]]
+foreignExports ls = [name | l <- ls, Just name <- [exportName (words (trim l))]]
+  where
+    exportName ("foreign" : "export" : "ccall" : rest) = case rest of
+      (('"' : _) : name : _) -> Just name
+      (name : _) -> Just name
+      [] -> Nothing
+    exportName _ = Nothing
 
 -- | Does the named symbol's own definition block mention a firewall
 -- combinator? The block runs from the first line that starts with

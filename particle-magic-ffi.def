@@ -4,8 +4,12 @@
 ; links, loads, and resolves nothing, which is a linker error in someone
 ; else's engine rather than a failure here. Kept in step with the
 ; `foreign export` list by test/FFIContractSpec.hs.
+; The pm_hs_* symbols the Haskell exports now carry are deliberately
+; absent: they are the inside of the I3 gate (host-runtime F003), not part
+; of the ABI, and Windows keeps them invisible for free.
 EXPORTS
     pm_init
+    pm_init_ex
     pm_shutdown
     pm_abi_version
     pm_cast

@@ -208,10 +208,121 @@ extern "C" {
 /* An active spell. Opaque: created by pm_cast, released by pm_free. */
 typedef struct PmSpell PmSpell;
 
-/* Start the runtime. Idempotent; call once before anything else. */
+/* --- The runtime (host-runtime F003, ADR-022 D1) ------------------------
+ *
+ * The library is Haskell inside, so it carries the GHC runtime with it.
+ * That runtime is YOURS to configure: this library never starts OS threads
+ * behind your back and never picks a capability count for you.
+ *
+ * One state machine governs it, and both platforms answer identically
+ * because the answer comes from the machine rather than from the runtime:
+ *
+ *     UNINIT --(pm_init / pm_init_ex)--> RUNNING --(pm_shutdown)--> CLOSED
+ *        |                                                            |
+ *        +----- every other entry point answers PM_ERR_STATE ---------+
+ *
+ * Before pm_init and after pm_shutdown every entry point answers a
+ * sentinel instead of entering the runtime, because entering it is what
+ * would end your process: the counting ones return PM_ERR_STATE, pm_cast
+ * and pm_scene_new return NULL (with the reason in err_buf where there is
+ * one), pm_age returns -7.0, pm_occupancy_mask returns 0, and the five
+ * void ones do nothing. pm_abi_version is the one exception -- the C layer
+ * answers it directly, so a startup generation check is safe before
+ * pm_init.
+ *
+ * pm_shutdown is a ONE-WAY DOOR. Afterwards this process may not use the
+ * library again: pm_init_ex answers PM_ERR_STATE, pm_init does nothing,
+ * and every other symbol keeps answering its sentinel. A long-lived host
+ * (a game engine, the Unity editor) should simply never call it. Same rule
+ * on Windows and on Linux.
+ *
+ * Which settings take effect where
+ * --------------------------------
+ * Measured 2026-08-20 against the shipped artefacts; macOS is inferred
+ * from the Linux path and has not been run.
+ *
+ *     platform                        caps  nursery  gc_mode  stats
+ *     windows x86_64 (standalone DLL)  yes    yes      yes     yes
+ *     linux x86_64 (.so)               yes    yes      yes     yes
+ *     macos (.dylib, not yet run)      yes    yes      yes     yes
+ *
+ *     any platform, but the GHC runtime was ALREADY running in this
+ *     process before you asked (a Haskell host, or you called hs_init
+ *     yourself):
+ *                                      yes     no       no      no
+ *
+ * On that last row pm_init_ex answers PM_ERR_STATE, the capability count
+ * still takes effect through the runtime's own API, and the library is
+ * up and usable. Nothing is ever ignored in silence.
+ *
+ * PM_ERR_STATE therefore says one of two things, and they are easy to tell
+ * apart because the second can only ever happen on your FIRST call:
+ *
+ *   1. the call was out of order -- nothing happened at all; or
+ *   2. the library is up and usable, but part of your configuration could
+ *      not be applied in this process (the row above).
+ *
+ * Capabilities and the parallel sampler: sampling splits a window of 8192
+ * rows or more across capabilities. At capabilities = 1 that split costs
+ * something and buys nothing, so a host that samples large spells wants
+ * 2..4 -- and usually NOT 0 (every core on the machine), which competes
+ * with your own job system. The output is identical either way (ADR-0017).
+ */
+
+/* GC mode for PmConfig.gc_mode. */
+#define PM_GC_DEFAULT 0
+#define PM_GC_NONMOVING 1
+
+/* Runtime statistics for PmConfig.stats. The runtime can only be told to
+   collect them WHILE STARTING UP, so a host that wants the process-wide GC
+   numbers has to say so here. Without it getRTSStatsEnabled() is false and
+   those numbers are reported as UNAVAILABLE -- not as zero, which is what
+   the runtime itself hands back and is indistinguishable from "nothing
+   paused for GC". */
+#define PM_STATS_OFF 0
+#define PM_STATS_ON 1
+
+/* Bounds pm_init_ex validates PmConfig against. Outside them it answers
+   PM_ERR_ARGS and starts nothing -- the runtime would otherwise abort the
+   whole process on a bad value. */
+#define PM_MAX_CAPABILITIES 256
+#define PM_NURSERY_MIN_BYTES 8192
+#define PM_NURSERY_MAX_BYTES 1073741824
+
+/* Runtime settings. Zero the whole struct, set size to sizeof(PmConfig),
+   fill in what you care about. Add-only: a later generation may append
+   fields, and `size` is how this library knows which ones you compiled
+   against. A size it does not recognise is PM_ERR_ARGS rather than a
+   silent partial application. */
+typedef struct PmConfig {
+    uint32_t size;           /* sizeof(PmConfig) */
+    uint32_t capabilities;   /* 0 = follow the hardware; else 1..PM_MAX_CAPABILITIES */
+    uint64_t nursery_bytes;  /* 0 = the runtime's default (4 MiB) */
+    uint32_t gc_mode;        /* PM_GC_DEFAULT or PM_GC_NONMOVING */
+    uint32_t stats;          /* PM_STATS_OFF or PM_STATS_ON -- decided only here */
+} PmConfig;
+
+/* Start the runtime with the host's settings. Call it INSTEAD of pm_init,
+   once, before anything else.
+
+   Returns PM_OK; PM_ERR_ARGS, meaning the config is out of range and
+   nothing was started; or PM_ERR_STATE in either of the two senses above.
+
+       PmConfig cfg = {0};
+       cfg.size = sizeof cfg;
+       cfg.capabilities = 4;
+       cfg.stats = PM_STATS_ON;
+       int rc = pm_init_ex(&cfg);
+*/
+int pm_init_ex(const PmConfig* config);
+
+/* Start the runtime with the library's conservative defaults: one
+   capability, the default collector, no statistics. Idempotent; call once
+   before anything else. After pm_shutdown it does nothing at all. */
 void pm_init(void);
 
-/* Stop the runtime. Idempotent. Free every handle first. */
+/* Stop the runtime. Idempotent, and a one-way door: see above. Free every
+   handle first. */
 void pm_shutdown(void);
 
 /* PM_ABI_VERSION as compiled into the library. */

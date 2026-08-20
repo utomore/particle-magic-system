@@ -444,12 +444,78 @@ int main(void)
 
 ### 4.4 生命週期規則
 
-- `pm_init()` 冪等，可以被多個子系統各叫一次。
-- **一個 handle 屬於一個執行緒**（ADR-0011 D4）。庫內部**沒有鎖**。不同 handle 在不同執行緒是安全的；同一個 handle 跨執行緒不是。
+- `pm_init()` 冪等，可以被多個子系統各叫一次。想指定 RTS 設定就改用 `pm_init_ex()`（見 §4.4.1）；兩者擇一，只需要成功一次。
+- **初始化之前呼叫任何符號都不會殺掉你的 process**。未初始化（以及 `pm_shutdown()` 之後）每個符號都回哨兵值：回計數／錯誤碼的回 `PM_ERR_STATE`（−7），`pm_cast`／`pm_scene_new` 回 `NULL`（前者另把原因寫進 `err_buf`），`pm_age` 回 `-7.0`，`pm_occupancy_mask` 回 `0`，五個 `void` 的安靜返回。
+- 唯一的例外是 **`pm_abi_version()`**：它由 C 層直接回答，**任何狀態下都安全**，所以 startup 的世代比對可以擺在 `pm_init*()` 之前。
+- **一個 handle 屬於一個執行緒**（ADR-0011 D4）。庫內部**沒有鎖**。不同 handle 在不同執行緒是安全的；同一個 handle 跨執行緒不是。初始化與關閉本身是原子的：兩個執行緒同時 `pm_init_ex()` 只有一個生效，另一個回 `PM_ERR_STATE`，不會崩潰。
 - `pm_free(NULL)` 是 no-op。**重複 free、free 過再用、亂造一個 handle 都不再是 UB**：handle 帶世代標籤,庫認得出來並回 `PM_ERR_ARGS`,不會讀已釋放的記憶體、也不會終止你的 process(ADR-022 D3 修訂 ADR-0011 D4)。七個沒有錯誤碼通道的凍結符號改以中性值兌現同一條保證——`pm_advance`／`pm_free`／`pm_scene_free`／`pm_scene_dismiss`／`pm_scene_advance` 無操作,`pm_age` 回 `0.0`,`pm_occupancy_mask` 回 `0`。唯一抓不到的是「偽造的值恰好等於一個現存的合法 handle」,那是任何 handle 方案的共同上限。
 - handle **不是可以解參考的指標**,是一個不透明的識別字(值恆為奇數,永遠不會是對齊的堆積位址)。只把它原樣傳回庫裡。
-- **`pm_shutdown()` 之後不能再 `pm_init()`**：GHC 的 RTS 一旦真正 `hs_exit()`，同一個 process 內無法重啟。長駐型宿主（尤其 Unity Editor）**乾脆永遠不要呼叫它**。
+- **`pm_shutdown()` 是單向門**：之後這個 process 不能再使用本庫——`pm_init_ex()` 回 `PM_ERR_STATE`、`pm_init()` 是無操作、其餘符號一律回哨兵。它**不再殺掉你的 process**：以前 `pm_shutdown()` 之後再 `pm_init()`，GHC 的 RTS 會印一行 `reinitializing the RTS after shutdown is not currently supported` 然後直接讓宿主死掉。現在那個拒絕是一個錯誤碼。長駐型宿主（尤其 Unity Editor）**乾脆永遠不要呼叫它**。
+- `pm_shutdown()` 呼叫兩次是無操作，也不會出現 RTS 的 `too many hs_exit()s` 警告。Windows 與 Linux 的關閉語意**完全一致**，因為答案來自庫自己的狀態機而不是 RTS。
 - 一個 process 只能有一份 GHC RTS——不要把兩個 GHC 產生的共享庫連進同一個宿主。
+- **`GHCRTS` 環境變數對本庫無效**。庫以 `RtsOptsIgnoreAll` 啟動 RTS，所以環境變數既不能蓋掉宿主透過 `pm_init_ex()` 給的設定，也不能用一個非 safe 的選項把宿主 process 殺掉（實測 `GHCRTS=-A128m` 對舊版的 `pm_init()` 就是這個下場）。要調 RTS 只有 `pm_init_ex()` 一條路。
+
+### 4.4.1 執行期設定：`pm_init_ex()`（host-runtime F003 新增）
+
+**RTS 是宿主的**（ADR-022 D1）。庫不設定就保守——單 capability、預設 GC、不收統計——也不會自己開 OS 執行緒。要別的就自己說：
+
+```c
+PmConfig cfg = {0};
+cfg.size          = sizeof cfg;
+cfg.capabilities  = 4;                    /* 0 = 依硬體；通常你要的是 2..4 */
+cfg.nursery_bytes = 64u * 1024u * 1024u;  /* 0 = RTS 預設的 4 MiB */
+cfg.gc_mode       = PM_GC_NONMOVING;      /* 或 PM_GC_DEFAULT */
+cfg.stats         = PM_STATS_ON;          /* 想要 GC 數字就只能在這裡表態 */
+
+int rc = pm_init_ex(&cfg);
+if (rc == PM_ERR_ARGS) { /* 設定超出範圍，什麼都沒啟動 */ }
+```
+
+`PmConfig` 以 `size` 欄開頭：把整個結構清零、填 `sizeof(PmConfig)`，之後的世代加欄位也不會弄壞舊宿主。反過來，**本庫不認得的 `size` 一律拒收**（`PM_ERR_ARGS`）而不是忽略多出來的欄位——「不靜默忽略任何無法生效的設定」是這條契約的硬規則。
+
+| 欄位 | 合法值 | 超出範圍時 |
+|---|---|---|
+| `size` | `sizeof(PmConfig)`（本世代為 24） | `PM_ERR_ARGS` |
+| `capabilities` | `0`（依硬體）或 `1..PM_MAX_CAPABILITIES`（256） | `PM_ERR_ARGS` |
+| `nursery_bytes` | `0`（RTS 預設）或 `PM_NURSERY_MIN_BYTES`（8192）`..PM_NURSERY_MAX_BYTES`（1 GiB） | `PM_ERR_ARGS` |
+| `gc_mode` | `PM_GC_DEFAULT` / `PM_GC_NONMOVING` | `PM_ERR_ARGS` |
+| `stats` | `PM_STATS_OFF` / `PM_STATS_ON` | `PM_ERR_ARGS` |
+
+每一條都是 RTS 自己會用「終止整個 process」來執行的界線（`-N0`、`-A0`、壞掉的選項字串都是當場死），所以庫在碰 RTS 之前就先擋下來，而且**選項字串由庫自己生成**，不接受宿主的任何自由文字。
+
+回傳只有三種：
+
+| 回傳 | 意思 |
+|---|---|
+| `PM_OK` | 四項全部生效 |
+| `PM_ERR_ARGS` | 設定超出上表，**什麼都沒啟動**，可以改好再呼叫一次 |
+| `PM_ERR_STATE` | 兩種語氣，見下 |
+
+`PM_ERR_STATE` 的兩種語氣很好分——後者只可能發生在**你自己的第一次** `pm_init_ex()`：
+
+1. **呼叫順序錯**：已經初始化過了，或在 `pm_shutdown()` 之後。**什麼都沒發生**，這次的設定沒有生效。
+2. **庫已就緒，但部分設定在這個 process 無法生效**：RTS 在你呼叫之前就已經被**宿主自己**啟動了（Haskell 宿主，或你自己先呼叫過 `hs_init`）。capability 數仍然透過 RTS 的執行期 API 生效，nursery、GC 模式與統計旗標則無法套用。庫可以正常使用。
+
+逐平台生效表（2026-08-20 對出貨產物實測；macOS 尚未實測，依 Linux 路徑推斷）：
+
+| 平台 | `capabilities` | `nursery_bytes` | `gc_mode` | `stats` |
+|---|---|---|---|---|
+| Windows x86_64（standalone DLL） | 生效 | 生效 | 生效 | 生效 |
+| Linux x86_64（`.so`） | 生效 | 生效 | 生效 | 生效 |
+| macOS（`.dylib`，未實測） | 預期生效 | 預期生效 | 預期生效 | 預期生效 |
+| 任一平台，但 RTS 已由宿主啟動 | 生效 | **不生效** | **不生效** | **不生效** |
+
+最後一列就是上面第 2 種語氣。Windows 的 standalone DLL **並不會**在 `DllMain` 先幫你啟動 RTS（這一點以前的文件推測錯了，已實測更正），所以純 C／C++／Unity 宿主拿到的是前兩列。
+
+**capability 數怎麼選**。核心的取樣器在單一視窗達到 **8192** 列以上時會切到分片路徑；`capabilities = 1` 時那條路徑付了分片與串接的成本卻拿不到任何加速。所以：
+
+- 只跑小陣（< 8192 粒）：`capabilities = 1` 與多 capability 沒有差別。
+- 會跑大陣：`2..4`。
+- **通常不要填 `0`**（＝整台機器的核心數）：粒子取樣會跟引擎自己的 job system 搶時間片。
+
+輸出與 capability 數無關、逐位元相同（ADR-0017），所以這純粹是成本取捨，不是正確性問題。
+
+**RTS 統計**。統計旗標**無法在初始化之後打開**，所以想要進程層級的 GC 次數與暫停時間，就必須在 `pm_init_ex()` 的 `stats` 欄表態。沒表態時 `getRTSStatsEnabled()` 為假，那些數字會被回報為「**不可用**」而不是零——RTS 自己在統計關閉時回的暫停時間就是 `0`，跟「這一段真的沒有 GC 暫停」長得一模一樣，只有旗標本身是誠實的判準。
 
 ### 4.5 2D 宿主：投影與深度排序（0011 新增）
 
@@ -607,7 +673,9 @@ static void BootParticleMagic()
 
 **絕對不要在 `OnDestroy` / `OnApplicationQuit` 呼叫 `pm_shutdown()`。**
 
-原因見 §4.4：GHC 的 RTS 停掉之後就無法在同一個 process 重啟。而 Unity Editor 在停止播放時**不會卸載 native plugin**——下一次按 Play 還是同一個 process。你會得到「第一次跑正常、第二次直接掛掉」這種最難查的症狀。
+原因見 §4.4：GHC 的 RTS 停掉之後就無法在同一個 process 重啟，所以 `pm_shutdown()` 是**單向門**——之後這個 process 的每個符號都回 `PM_ERR_STATE`（或它自己的哨兵值）。而 Unity Editor 在停止播放時**不會卸載 native plugin**——下一次按 Play 還是同一個 process。舊版的症狀是「第一次跑正常、第二次直接讓 Editor 掛掉」；現在不會掛了，但庫也一樣不能再用，所以規則沒變：別呼叫它。
+
+想指定 capability 數或 GC 模式就把 `Pm.pm_init()` 換成 `Pm.pm_init_ex(ref cfg)`，見 §4.4.1。`Pm.pm_abi_version()` 在初始化之前也安全，所以世代比對擺在最前面也可以。
 
 正確做法：`pm_init()` 一次，之後就讓它活著。真正的清理只有 `pm_free()`（每個法術一次），這個一定要做。
 

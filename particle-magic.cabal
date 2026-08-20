@@ -237,7 +237,12 @@ foreign-library particle-magic-ffi
     hs-source-dirs:   src/ffi
     other-modules:    Magic.FFI
                     , Magic.FFI.Registry
+    -- pm_init.c is the runtime's lifecycle (state machine, configuration,
+    -- shutdown); pm_gate.c is the I3 gate every other exported symbol goes
+    -- through, so that calling one before pm_init or after pm_shutdown is
+    -- PM_ERR_STATE rather than a dead host process (host-runtime F003).
     c-sources:        cbits/pm_init.c
+                    , cbits/pm_gate.c
     include-dirs:     include
     install-includes: particle_magic.h
     build-depends:    base       ^>=4.22
@@ -430,6 +435,13 @@ test-suite spec
                     , Acceptance24Spec
                     , FFIHandleSpec
                     , FFIFirewallSpec
+                    , FFIRuntimeSpec
+    -- host-runtime F003: the same two C translation units the foreign
+    -- library is built from, so FFIRuntimeSpec drives the real state
+    -- machine and the real gate in process rather than a copy of them.
+    c-sources:        cbits/pm_init.c
+                    , cbits/pm_gate.c
+    include-dirs:     include
     build-depends:    base       ^>=4.22
                     , particle-magic:magic-core
                     , particle-magic:magic-boundary

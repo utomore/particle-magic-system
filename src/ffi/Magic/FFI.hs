@@ -515,12 +515,26 @@ forceString s = go s `seq` s
 
 -- Entry points ---------------------------------------------------------------
 
-foreign export ccall pm_abi_version :: IO CInt
+-- Every export below carries an explicit external name, @pm_hs_*@, because
+-- the C symbol a host links against is no longer this one: host-runtime
+-- F003 puts a gate in front of it (@cbits\/pm_gate.c@) that answers
+-- @PM_ERR_STATE@ when the runtime is not initialised or has been shut
+-- down. That check cannot live here — calling into a Haskell export
+-- before @hs_init@ or after @hs_exit@ terminates the process inside the
+-- RTS, before any Haskell in this module runs. So @pm_advance@ the C
+-- symbol is the gate; @pm_hs_advance@ is the function below.
+--
+-- @pm_hs_*@ names are INTERNAL: they are not in the header and not in
+-- @particle-magic-ffi.def@. Nothing else changed — the Haskell names,
+-- signatures and bodies are exactly what they were, so in-process callers
+-- (the whole test suite) see no difference at all.
+
+foreign export ccall "pm_hs_abi_version" pm_abi_version :: IO CInt
 
 pm_abi_version :: IO CInt
 pm_abi_version = firewall pmErrInternal (pure pmAbiVersion)
 
-foreign export ccall pm_max_particles :: IO CInt
+foreign export ccall "pm_hs_max_particles" pm_max_particles :: IO CInt
 
 -- | The particle cap this build of the core actually enforces — the
 -- capacity each of @pm_observe@'s six columns needs.
@@ -532,7 +546,7 @@ foreign export ccall pm_max_particles :: IO CInt
 pm_max_particles :: IO CInt
 pm_max_particles = firewall pmErrInternal (pure pmMaxParticles)
 
-foreign export ccall pm_cast
+foreign export ccall "pm_hs_cast" pm_cast
   :: CString
   -> Ptr CFloat
   -> Ptr CFloat
@@ -572,7 +586,7 @@ pm_cast json posPtr facingPtr sd errBuf errLen =
       _ <- pm_cast_ex json posPtr facingPtr sd errBuf errLen out
       peek out
 
-foreign export ccall pm_cast_ex
+foreign export ccall "pm_hs_cast_ex" pm_cast_ex
   :: CString
   -> Ptr CFloat
   -> Ptr CFloat
@@ -624,7 +638,7 @@ pm_cast_ex json posPtr facingPtr sd errBuf errLen out =
     writeOut h = if out == nullPtr then pure () else poke out h
     fail' code msg = writeErr errBuf errLen msg >> pure code
 
-foreign export ccall pm_advance :: StablePtr SpellCell -> CFloat -> IO ()
+foreign export ccall "pm_hs_advance" pm_advance :: StablePtr SpellCell -> CFloat -> IO ()
 
 -- | Advance the spell's clock by @dt@ seconds, in place.
 pm_advance :: StablePtr SpellCell -> CFloat -> IO ()
@@ -634,7 +648,7 @@ pm_advance h dt =
       spell <- readIORef ref
       writeIORef ref $! advanceSpell (FrameInput (DeltaTime (cfloatToDouble dt))) spell
 
-foreign export ccall pm_is_finished :: StablePtr SpellCell -> IO CInt
+foreign export ccall "pm_hs_is_finished" pm_is_finished :: StablePtr SpellCell -> IO CInt
 
 -- | 1 when the spell has outlived its lifetime, 0 while it is running.
 -- A @NULL@ handle reports 1 — nothing left to run. An /invalid/ handle
@@ -649,7 +663,7 @@ pm_is_finished h =
       spell <- readIORef ref
       pure (if isFinished spell then 1 else 0)
 
-foreign export ccall pm_age :: StablePtr SpellCell -> IO CDouble
+foreign export ccall "pm_hs_age" pm_age :: StablePtr SpellCell -> IO CDouble
 
 -- | Seconds since this spell was cast. There is no error channel in a
 -- @double@, so both a @NULL@ and an invalid handle answer 0 — safe, and
@@ -665,7 +679,7 @@ pm_age h =
       let Time t = spellAge spell
       pure (CDouble t)
 
-foreign export ccall pm_observe
+foreign export ccall "pm_hs_observe" pm_observe
   :: StablePtr SpellCell
   -> Ptr CFloat
   -> Ptr CFloat
@@ -725,7 +739,7 @@ pm_observe h px py pz psize plife pcolor capacity infoPtr maxBatches =
       infoPtr
       maxBatches
 
-foreign export ccall pm_observe_ex
+foreign export ccall "pm_hs_observe_ex" pm_observe_ex
   :: StablePtr SpellCell
   -> Ptr CFloat
   -> Ptr CFloat
@@ -868,7 +882,7 @@ copyOut bs px py pz psize plife pcolor pvx pvy pvz capacity infoPtr maxBatches =
       _ <- foldM writeBatch 0 (zip [0 :: Int ..] bs)
       pure (fromIntegral nBatches)
 
-foreign export ccall pm_free :: StablePtr SpellCell -> IO ()
+foreign export ccall "pm_hs_free" pm_free :: StablePtr SpellCell -> IO ()
 
 -- | Release a handle. Freeing @NULL@ is a no-op (C convention), and so is
 -- freeing anything else that does not resolve — a handle freed twice, or
@@ -887,7 +901,7 @@ pm_free h = firewall () (freeSpellHandle h)
 -- pure layer, which is what makes @test\/Acceptance18Spec.hs@'s
 -- equivalence law provable rather than aspirational.
 
-foreign export ccall pm_scene_new :: CInt -> IO (StablePtr SceneCell)
+foreign export ccall "pm_hs_scene_new" pm_scene_new :: CInt -> IO (StablePtr SceneCell)
 
 -- | Open a scene whose live spells may hold @global_cap@ particles in
 -- total.
@@ -900,7 +914,7 @@ pm_scene_new :: CInt -> IO (StablePtr SceneCell)
 pm_scene_new cap =
   firewall nullScene (newSceneHandle (newScene (SceneConfig (fromIntegral cap))))
 
-foreign export ccall pm_scene_free :: StablePtr SceneCell -> IO ()
+foreign export ccall "pm_hs_scene_free" pm_scene_free :: StablePtr SceneCell -> IO ()
 
 -- | Release a scene and, with it, every spell still live inside it.
 -- Freeing 'nullScene' is a no-op, and so is freeing a scene handle that
@@ -908,7 +922,7 @@ foreign export ccall pm_scene_free :: StablePtr SceneCell -> IO ()
 pm_scene_free :: StablePtr SceneCell -> IO ()
 pm_scene_free h = firewall () (freeSceneHandle h)
 
-foreign export ccall pm_scene_cast
+foreign export ccall "pm_hs_scene_cast" pm_scene_cast
   :: StablePtr SceneCell
   -> CString
   -> Ptr CFloat
@@ -953,7 +967,7 @@ pm_scene_cast h json posPtr facingPtr sd errBuf errLen outId =
             Right circle ->
               admitInto ref outId errBuf errLen (castInto CastRequest {circleOf = circle, ctxOf = ctx})
 
-foreign export ccall pm_scene_cast_many
+foreign export ccall "pm_hs_scene_cast_many" pm_scene_cast_many
   :: StablePtr SceneCell
   -> Ptr CString
   -> CInt
@@ -1064,7 +1078,7 @@ admitInto ref outId errBuf errLen admit = do
 castFail :: CString -> CInt -> CInt -> String -> IO CInt
 castFail errBuf errLen code msg = writeErr errBuf errLen msg >> pure code
 
-foreign export ccall pm_scene_dismiss :: StablePtr SceneCell -> CInt -> IO ()
+foreign export ccall "pm_hs_scene_dismiss" pm_scene_dismiss :: StablePtr SceneCell -> CInt -> IO ()
 
 -- | Remove a spell early. An unknown id — stale, already finished, never
 -- issued — is a no-op, because 'dismiss' says so and ids are never
@@ -1076,7 +1090,7 @@ pm_scene_dismiss h sid =
       scene <- readIORef ref
       writeIORef ref $! dismiss (SpellId (fromIntegral sid)) scene
 
-foreign export ccall pm_scene_advance :: StablePtr SceneCell -> CFloat -> IO ()
+foreign export ccall "pm_hs_scene_advance" pm_scene_advance :: StablePtr SceneCell -> CFloat -> IO ()
 
 -- | Advance every live spell by @dt@ seconds, in place, dropping the ones
 -- that finished — which is also how their share of the quota comes back.
@@ -1087,7 +1101,7 @@ pm_scene_advance h dt =
       scene <- readIORef ref
       writeIORef ref $! advanceScene (FrameInput (DeltaTime (cfloatToDouble dt))) scene
 
-foreign export ccall pm_scene_observe
+foreign export ccall "pm_hs_scene_observe" pm_scene_observe
   :: StablePtr SceneCell
   -> Ptr CFloat
   -> Ptr CFloat
@@ -1144,7 +1158,7 @@ pm_scene_observe h px py pz psize plife pcolor capacity infoPtr maxBatches =
         infoPtr
         maxBatches
 
-foreign export ccall pm_scene_budget
+foreign export ccall "pm_hs_scene_budget" pm_scene_budget
   :: StablePtr SceneCell -> Ptr CInt -> Ptr CInt -> IO CInt
 
 -- | @(particles committed by the live spells, the scene's cap)@ —
@@ -1159,7 +1173,7 @@ pm_scene_budget h outUsed outCap =
       when (outCap /= nullPtr) (poke outCap (fromIntegral cap))
       pure pmOk
 
-foreign export ccall pm_scene_count :: StablePtr SceneCell -> IO CInt
+foreign export ccall "pm_hs_scene_count" pm_scene_count :: StablePtr SceneCell -> IO CInt
 
 -- | How many spells are live — the capacity 'pm_scene_spells' wants.
 pm_scene_count :: StablePtr SceneCell -> IO CInt
@@ -1167,7 +1181,7 @@ pm_scene_count h =
   firewall pmErrInternal $
     withScene h 0 pmErrArgs $ \ref -> fromIntegral . length . sceneSpells <$> readIORef ref
 
-foreign export ccall pm_scene_spells :: StablePtr SceneCell -> Ptr CInt -> CInt -> IO CInt
+foreign export ccall "pm_hs_scene_spells" pm_scene_spells :: StablePtr SceneCell -> Ptr CInt -> CInt -> IO CInt
 
 -- | The live spells' ids in admission order. Returns how many were
 -- written, or 'pmErrCapacity' with __nothing written at all__ when they
@@ -1196,7 +1210,7 @@ pm_scene_spells h outIds maxIds =
 -- back, so a host may call them between @pm_advance@ and @pm_observe@
 -- without changing one particle.
 
-foreign export ccall pm_spell_bounds
+foreign export ccall "pm_hs_spell_bounds" pm_spell_bounds
   :: StablePtr SpellCell -> Ptr CFloat -> Ptr CFloat -> IO CInt
 
 -- | The whole spell's world axis-aligned box over its entire life, as two
@@ -1215,7 +1229,7 @@ pm_spell_bounds h outMin outMax = firewall pmErrInternal body
             pokeV3 outMax hi
             pure pmOk
 
-foreign export ccall pm_spell_box
+foreign export ccall "pm_hs_spell_box" pm_spell_box
   :: StablePtr SpellCell -> Ptr CFloat -> Ptr CFloat -> Ptr CFloat -> IO CInt
 
 -- | The whole spell as an oriented box over its entire life: center,
@@ -1237,7 +1251,7 @@ pm_spell_box h outCenter outAxes outHalf =
       spell <- readIORef ref
       writeBox (spellBoxOf spell) outCenter outAxes outHalf
 
-foreign export ccall pm_emitter_count :: StablePtr SpellCell -> IO CInt
+foreign export ccall "pm_hs_emitter_count" pm_emitter_count :: StablePtr SpellCell -> IO CInt
 
 -- | How many emitters this spell compiled to — the index range
 -- 'pm_emitter_box' accepts. 0 for a @NULL@ handle.
@@ -1246,7 +1260,7 @@ pm_emitter_count h =
   firewall pmErrInternal $
     withCell h 0 pmErrArgs $ \ref -> fromIntegral . length . emittersOf <$> readIORef ref
 
-foreign export ccall pm_emitter_box
+foreign export ccall "pm_hs_emitter_box" pm_emitter_box
   :: StablePtr SpellCell -> CInt -> Ptr CFloat -> Ptr CFloat -> Ptr CFloat -> IO CInt
 
 -- | One emitter's fitted oriented box at the cast's current age, in the
@@ -1284,7 +1298,7 @@ writeBox box outCenter outAxes outHalf
       pokeV3 outHalf (V3 (obHalfU box) (obHalfV box) (obHalfN box))
       pure pmOk
 
-foreign export ccall pm_occupancy
+foreign export ccall "pm_hs_occupancy" pm_occupancy
   :: StablePtr SpellCell -> CInt -> Ptr CInt -> CInt -> IO CInt
 
 -- | @dim³@ occupancy counts of the spell's currently live particles, in
@@ -1312,7 +1326,7 @@ pm_occupancy h dim outCounts capacity = firewall pmErrInternal body
                 U.imapM_ (\i c -> pokeElemOff outCounts i (fromIntegral c)) counts
                 pure (fromIntegral cells)
 
-foreign export ccall pm_occupancy_mask :: StablePtr SpellCell -> IO Word32
+foreign export ccall "pm_hs_occupancy_mask" pm_occupancy_mask :: StablePtr SpellCell -> IO Word32
 
 -- | The @PM_OCCUPANCY_DIM_DEFAULT@ fast path: bit @c@ is set when cell
 -- @c@ of a @3³@ 'pm_occupancy' would be non-zero. 0 for a @NULL@ handle,
@@ -1325,7 +1339,7 @@ pm_occupancy_mask :: StablePtr SpellCell -> IO Word32
 pm_occupancy_mask h =
   firewall 0 $ withCell h 0 0 $ \ref -> occupancyMask <$> readIORef ref
 
-foreign export ccall pm_scene_spell_bounds
+foreign export ccall "pm_hs_scene_spell_bounds" pm_scene_spell_bounds
   :: StablePtr SceneCell -> CInt -> Ptr CFloat -> Ptr CFloat -> IO CInt
 
 -- | 'pm_spell_bounds' for one spell inside a scene: 'pm_scene_spells'
@@ -1361,7 +1375,7 @@ pm_scene_spell_bounds h sid outMin outMax = firewall pmErrInternal body
 -- more (the zero-new-semantics rule; @test\/FFIProjectSpec.hs@ states it
 -- as an equivalence).
 
-foreign export ccall pm_project
+foreign export ccall "pm_hs_project" pm_project
   :: CInt
   -> Ptr CFloat
   -> Ptr CFloat
@@ -1417,7 +1431,7 @@ pm_project plane inX inY inZ count outU outV outDepth =
                 go (i + 1)
        in go 0
 
-foreign export ccall pm_depth_order
+foreign export ccall "pm_hs_depth_order" pm_depth_order
   :: CInt -> Ptr CFloat -> Ptr CFloat -> Ptr CFloat -> CInt -> Ptr CInt -> IO CInt
 
 -- | The painter's permutation for @count@ positions: the indices

@@ -3,9 +3,9 @@ id: F003
 type: feature
 title: rts-config-init
 description: 帶設定的 RTS 初始化、原子化與兩平台統一的關閉語意
-status: open
+status: done
 created: 2026-08-20
-updated: 2026-08-20
+updated: 2026-08-21
 depends-on: [F001]
 related-adr: [ADR-022, ADR-021]
 related-feature: []
@@ -121,7 +121,7 @@ E2-13／E2-14／E2-15 是本功能唯一一項超出契約卡字面的修正：`
 
 | # | 觀察 | 結果 |
 |---|---|---|
-| E3-1 | `.so` 匯出哪些符號 | `pm_*` 之外，**RTS 自己的符號也全部匯出**（`hs_init_ghc`、`setNumCapabilities`、`n_capabilities`、`RtsFlags`、`getRTSStats`…）——與 Windows 相反，這是 out-of-process 測試在 Linux 能直接斷言 RTS 狀態的原因 |
+| E3-1 | `.so` 上 `dlsym` 找得到哪些符號 | `pm_*` 是 `.so` 自身匯出的。`hs_init_ghc`、`setNumCapabilities`、`n_capabilities`、`RtsFlags`、`getRTSStats`… **不是 `.so` 自身匯出的**——它們由相依鏈上的 `libHSrts` 匯出，`dlsym(handle, …)` 沿著相依鏈找得到（實作期 2026-08-21 覆核：三個都拿得到非空指標）。實務結論不變：與 Windows 的 `.def` 相反，Linux 的 out-of-process 測試能直接斷言 RTS 狀態 |
 | E3-2 | `pm_init` 之前呼叫 `pm_abi_version` | 進程死亡（同 E1-2） |
 | E3-3 | `pm_init` 之前讀 `n_capabilities` | **0**；`pm_init` 之後 1；`pm_shutdown` 之後仍是 1（不會歸零） |
 | E3-4 | `pm_shutdown` → `pm_init` | 進程死亡（同 E1-4） |
@@ -457,18 +457,18 @@ int pm_init_ex(const PmConfig* config);
 
 ## TodoList
 
-- [ ] T1: `include/particle_magic.h` 加 `PmConfig`（含 `stats` 欄）、七個 `#define`、`pm_init_ex` 宣告，以及逐平台生效表（含 RTS 統計欄）／狀態機／`PM_ERR_STATE` 兩種語氣／閘門哨兵表的散文；`PM_ABI_VERSION` 與既有 31 條宣告不動 `dep: F001`
-- [ ] T2: `cbits/pm_init.c` 換掉裸 `static int`，實作四態原子狀態機（C11 atomics、CAS、acquire／release、`INITIALIZING` 的有界自旋讓出）與 `owner` 旗標 `dep: -`
-- [ ] T3: 實作 `PmConfig` 驗證（`NULL`／`size`／`capabilities`／`nursery_bytes`／`gc_mode`／`stats`）與 `rts_opts` 字串生成（`-N`／`-N<n>`／`-A<bytes>`／`--nonmoving-gc`／`-T`，堆疊緩衝、零堆積配置） `dep: T2`
-- [ ] T4: 實作 `pm_init_ex` 的三條路徑：3a（`hs_init_ghc` ＋ `RtsOptsIgnoreAll`）、3b（refcount 配對 ＋ `setNumCapabilities` ＋ 降級回 `PM_ERR_STATE`）、以及狀態不對時的 `PM_ERR_STATE` `dep: T3`
-- [ ] T5: 改寫 `pm_init`（`CLOSED` 不再殺進程、走同一具狀態機、成功路徑行為不變）與 `pm_shutdown`（先改狀態再 `hs_exit`，只配對我們自己的初始化，`UNINIT`／`CLOSED` 為無操作） `dep: T4`
-- [ ] T6: `src/ffi/Magic/FFI.hs` 的 29 個 `foreign export ccall` 改為具名外部符號 `"pm_hs_*"`；Haskell 函式名、簽名、本體不動 `dep: -`
-- [ ] T7: 新增 `cbits/pm_gate.c`：29 個閘門包裝依哨兵表回值；`pm_abi_version` 由 C 端直接回 `PM_ABI_VERSION`；`pm_cast` 的閘門另寫固定 ASCII 訊息進 `err_buf` `dep: T2, T6`
-- [ ] T8: `particle-magic.cabal`：foreign-library 加 `cbits/pm_gate.c`；`test-suite spec` 加 `c-sources: cbits/pm_init.c, cbits/pm_gate.c`；新測試模組登記進 `other-modules` `dep: T7`
-- [ ] T9: `particle-magic-ffi.def` 加 `pm_init_ex`；`test/FFIContractSpec.hs` 的三方對帳改版（`cbitsEntries`、新等式、`foreignExports` 剖析器支援具名形式） `dep: T7`
-- [ ] T10: `bindings/csharp/ParticleMagic.cs` 加 `PmConfig` 結構（含 `stats`）、`pm_init_ex` 的 `DllImport` 與七個常數（行尾註解帶巨集名） `dep: T1`
-- [ ] T11: `docs/integration.md` 新增「執行期」一節（狀態機、`pm_init_ex` 建議設定與 capability／`parallelThreshold` 的關係、逐平台生效表、RTS 統計只能在初始化時表態、關閉語意），並改寫 §4.4 的四條生命週期規則 `dep: T5`
-- [ ] T12: RTS 統計旗標端到端：`stats == PM_STATS_ON` → `rts_opts` 帶 `-T` → `getRTSStatsEnabled()` 為真；`PM_STATS_OFF`（與 `pm_init()`）維持統計關閉；降級支（RTS 已由宿主啟動且統計沒開）回 `PM_ERR_STATE` 而不是靜默忽略；並把「`getRTSStatsEnabled()` 為假時 GC 欄位一律不可用」這條判準寫進標頭，供 F011 消費 `dep: T4`
+- [x] T1: `include/particle_magic.h` 加 `PmConfig`（含 `stats` 欄）、七個 `#define`、`pm_init_ex` 宣告，以及逐平台生效表（含 RTS 統計欄）／狀態機／`PM_ERR_STATE` 兩種語氣／閘門哨兵表的散文；`PM_ABI_VERSION` 與既有 31 條宣告不動 `dep: F001`
+- [x] T2: `cbits/pm_init.c` 換掉裸 `static int`，實作四態原子狀態機（C11 atomics、CAS、acquire／release、`INITIALIZING` 的有界自旋讓出）與 `owner` 旗標 `dep: -`
+- [x] T3: 實作 `PmConfig` 驗證（`NULL`／`size`／`capabilities`／`nursery_bytes`／`gc_mode`／`stats`）與 `rts_opts` 字串生成（`-N`／`-N<n>`／`-A<bytes>`／`--nonmoving-gc`／`-T`，堆疊緩衝、零堆積配置） `dep: T2`
+- [x] T4: 實作 `pm_init_ex` 的三條路徑：3a（`hs_init_ghc` ＋ `RtsOptsIgnoreAll`）、3b（refcount 配對 ＋ `setNumCapabilities` ＋ 降級回 `PM_ERR_STATE`）、以及狀態不對時的 `PM_ERR_STATE` `dep: T3`
+- [x] T5: 改寫 `pm_init`（`CLOSED` 不再殺進程、走同一具狀態機、成功路徑行為不變）與 `pm_shutdown`（先改狀態再 `hs_exit`，只配對我們自己的初始化，`UNINIT`／`CLOSED` 為無操作） `dep: T4`
+- [x] T6: `src/ffi/Magic/FFI.hs` 的 29 個 `foreign export ccall` 改為具名外部符號 `"pm_hs_*"`；Haskell 函式名、簽名、本體不動 `dep: -`
+- [x] T7: 新增 `cbits/pm_gate.c`：29 個閘門包裝依哨兵表回值；`pm_abi_version` 由 C 端直接回 `PM_ABI_VERSION`；`pm_cast` 的閘門另寫固定 ASCII 訊息進 `err_buf` `dep: T2, T6`
+- [x] T8: `particle-magic.cabal`：foreign-library 加 `cbits/pm_gate.c`；`test-suite spec` 加 `c-sources: cbits/pm_init.c, cbits/pm_gate.c`；新測試模組登記進 `other-modules` `dep: T7`
+- [x] T9: `particle-magic-ffi.def` 加 `pm_init_ex`；`test/FFIContractSpec.hs` 的三方對帳改版（`cbitsEntries`、新等式、`foreignExports` 剖析器支援具名形式） `dep: T7`
+- [x] T10: `bindings/csharp/ParticleMagic.cs` 加 `PmConfig` 結構（含 `stats`）、`pm_init_ex` 的 `DllImport` 與七個常數（行尾註解帶巨集名） `dep: T1`
+- [x] T11: `docs/integration.md` 新增「執行期」一節（狀態機、`pm_init_ex` 建議設定與 capability／`parallelThreshold` 的關係、逐平台生效表、RTS 統計只能在初始化時表態、關閉語意），並改寫 §4.4 的四條生命週期規則 `dep: T5`
+- [x] T12: RTS 統計旗標端到端：`stats == PM_STATS_ON` → `rts_opts` 帶 `-T` → `getRTSStatsEnabled()` 為真；`PM_STATS_OFF`（與 `pm_init()`）維持統計關閉；降級支（RTS 已由宿主啟動且統計沒開）回 `PM_ERR_STATE` 而不是靜默忽略；並把「`getRTSStatsEnabled()` 為假時 GC 欄位一律不可用」這條判準寫進標頭，供 F011 消費 `dep: T4`
 
 ## 1-to-1 測試對照表
 
@@ -496,11 +496,54 @@ int pm_init_ex(const PmConfig* config);
 - **A3**: 「RTS 由我們啟動」那一支（3a）在 in-process 無法覆蓋 → 採取：本功能的綠燈不含它；實作期以純 C 探測在 Windows 與 WSL 各驗一次（產物不留 repo），機械化明文交給 F006 → 影響：若編排者要求本功能自帶 out-of-process 測試，等於把 F006 的 M8 工作提前，兩份文檔要重新分工。
 - **A4（已由階段閘門裁決：推翻，現在就加）**: RTS 統計（`-T`）在初始化後無法再開，而 F011 diagnostics-stats 的「GC 次數與暫停時間」需要它。初版的判斷是「本功能不開、留給 F011 加欄位」；**編排者在階段閘門推翻，並已更新 C1.5／C1.8／ADR-022 D6 與本功能的契約卡** → 現行作法：`PmConfig` 的第四個欄位 `stats`（`PM_STATS_OFF`／`PM_STATS_ON`）現在就進 v1，對映到 `rts_opts` 的 `-T`（E4-1 實測在 `RtsOptsIgnoreAll` 之下可行），要求了但開不起來一律回 `PM_ERR_STATE`；判準交給 F011 的是 `getRTSStatsEnabled()`，不是欄位值（E4-2）。這條不再是待確認假設，留在此處只為記錄裁決。
 - **A9**: 「要求統計時 `pm_stats` 拿得到 GC 數字」這句斷言跨了兩份文檔——`pm_stats` 是 F011 的符號，而正向路徑（RTS 由本庫啟動並帶 `-T`）in-process 測不到 → 採取：本功能的 1-to-1 測試以 `getRTSStatsEnabled()` 斷言「要求了但不可用時回 `PM_ERR_STATE`、未要求時維持關閉」，正向端到端以 E4-1 的純 C 探測為查證證據並在實作期於兩平台各跑一次；`pm_stats` 層級的「不可用而非零」由 F011 依標頭寫死的判準實作與斷言 → 影響：若編排者要求本功能自帶 `pm_stats` 層級的斷言，等於把 F011 的 `PmStats` 結構定義提前到這裡，兩份文檔要重新分工（建議維持現狀：本功能交開關，F011 交讀數）。
+- **A10**: T12 的「要求統計但這個 process 開不起來 → `PM_ERR_STATE`」那一支 **in-process 不可達**——hspec 套件自己是以 `-with-rtsopts=-N -T` 建的（`particle-magic.cabal`：ExprCodeSpec 需要 `-T` 讀配置計數器），所以測試進程的 `getRTSStatsEnabled()` 本來就是真 → 採取：T12 改斷言錯誤碼情境表的**另一列**——「要求統計而宿主的 RTS 本來就開著，不算降級」——再加上「旗標在初始化之後永不改變」這個不變量；降級條款本身由同一次呼叫的 nursery 與 GC 模式觸發（那兩者在任何 in-process 進程都不可套用），所以 `rc` 的計算式仍被覆蓋 → 影響：若要機械覆蓋那一支，需要一個「RTS 已啟動但沒有 `-T`」的宿主進程；F006 的 out-of-process harness 走的是 3a（全新進程、RTS 未起），覆蓋不到，建議由 F011 隨 `pm_stats` 一起補一個小型 Haskell 宿主。
+- **A11**: 併發驗收（標準第 4 條）在 in-process 只觀察得到「兩個都回 `PM_ERR_STATE`」——因為測試進程的每一次首次初始化都走降級支（3b），贏家也拿不到 `PM_OK` → 採取：兩條執行緒**要求不同的 capability 數**（N+1 與 N+2），事後斷言 `getNumCapabilities()` 恰為其中之一且不等於原值——這證明「只有一個真的碰到了 RTS」，比只看回傳碼更強；「贏家回 `PM_OK`」則由實作期兩平台的純 C 探測覆蓋（見實作備註 V1／V2） → 影響：若編排者要求 in-process 也看到 `PM_OK`，唯一的路是讓首次初始化不帶任何無法套用的欄位，代價是放棄 in-process 的降級覆蓋——而降級支只有 in-process 測得到（與 A10 同一條理由）。
 - **A5**: `rts_opts_enabled = RtsOptsIgnoreAll` 讓 `GHCRTS` 環境變數對本庫完全失效（E2-13／E2-14：今天它能蓋過宿主設定，甚至殺進程） → 採取：`pm_init` 與 `pm_init_ex` 都用 `RtsOptsIgnoreAll`，理由是 P-1（庫永不殺宿主）與「RTS 是宿主的」——環境變數不是宿主的 API 呼叫 → 影響：若有人靠 `GHCRTS` 對出貨的庫做現場調校，那條路會消失；要保留就得改用 `RtsOptsSafeOnly` 並接受 E2-14 的殺進程風險（不建議），或加一個 `PmConfig` 欄位開放它。
 - **A6**: `size` 大於本庫認得的版本時拒收（`PM_ERR_ARGS`）而非忽略多出來的欄位 → 採取：拒收，因為「不靜默忽略任何無法生效的設定」是契約卡明文 → 影響：未來新版標頭編出的宿主無法在舊版庫上跑，這是刻意的；若要改成「向前相容地忽略」，得同時定義一條「哪些欄位可以被安全忽略」的規則，那應該寫進 ADR 而不是這裡。
-- **A7**: 閘門層讓 `pm_hs_*` 這 29 個內部符號在 Linux 的 `.so` 上可見（Windows 因 `.def` 不可見） → 採取：接受並在標頭註明它們是內部符號、不屬於 ABI；不為此加 version script 或 `-fvisibility=hidden`（那會動到連結設定，屬 F007 packaging-content 的範圍） → 影響：若 F007 之後決定收斂 Linux 的匯出面，`pm_hs_*` 要一併隱藏，兩份文檔的守門測試要對齊。
+- **A7**: 閘門層讓 `pm_hs_*` 這 29 個內部符號、以及 `pm_runtime_ready`（兩個 C 翻譯單元共用狀態機的那一個問句）在 Linux 的 `.so` 上可見（Windows 因 `.def` 不可見；實測 Linux 匯出 32 個公開 `pm_*` ＋ `pm_runtime_ready` ＋ 29 個 `pm_hs_*`，Windows 匯出表正好 32 個） → 採取：接受並在標頭註明它們是內部符號、不屬於 ABI；不為此加 version script 或 `-fvisibility=hidden`（那會動到連結設定，屬 F007 packaging-content 的範圍） → 影響：若 F007 之後決定收斂 Linux 的匯出面，`pm_hs_*` 要一併隱藏，兩份文檔的守門測試要對齊。
 - **A8**: `cbits` 使用 C11 `<stdatomic.h>` → 採取：三平台的 GHC 工具鏈皆支援，且 `cbits` 從不由 MSVC 編譯（MSVC 宿主只連結匯入庫）→ 影響：若日後有平台的工具鏈缺 C11 atomics，退路是平台一次性初始化原語（`InitOnceExecuteOnce`／`pthread_once`）加上 volatile 旗標，狀態機的外顯行為不變。
 
 ## 實作備註
 
-（撰寫時留空）
+### 與文件的偏差（逐條）
+
+| # | 文件寫的 | 實作做的 | 為什麼 |
+|---|---|---|---|
+| D1 | 等式 `foreignExports ≡ { "pm_hs_" ++ name }` | `pm_hs_` ＋ **去掉 `pm_` 之後**的名字（`pm_advance` → `pm_hs_advance`） | 文件自己的範例就是後者，兩處互相矛盾；採可讀的那一個。守門測試以一個 `gatedName` 函數表達，清單仍不寫死 |
+| D2 | `rts_opts` 用「固定大小的堆疊緩衝」 | 固定大小的 **static** 緩衝 | `hs_init_ghc` 會在 RTS 的生命週期內保留這個指標，堆疊緩衝離開 `pm_init_ex` 就失效。仍是零堆積配置，而且只有贏得 CAS 的執行緒寫得到它 |
+| D3 | 只列了 `cbits/pm_init.c` 與 `cbits/pm_gate.c` | 另加內部標頭 `cbits/pm_runtime.h` | 兩個 C 翻譯單元要共用 `pm_runtime_ready()`。不安裝、不進標頭、不進 `.def`；Linux 的 `.so` 會多看到這一個符號（併入 A7） |
+| D4 | 以 `extern uint32_t n_capabilities;` 自行宣告 | `#include "Rts.h"` 之後用 `getNumCapabilities()`／`setNumCapabilities()` | `RtsAPI.h` **不是自足的**（它用到 `W_`、`STG_NORETURN`），單獨 include 編不過。既然一定要 `Rts.h`，那兩個符號就用它給的具名讀寫，不再手寫 extern |
+| D5 | T12 的 (a) 段 | 改成錯誤碼情境表的另一列 | 見 A10：測試進程本身帶 `-T` |
+| D6 | 併發例「恰好一個回 `PM_OK`」 | 「恰好一個真的碰到了 RTS」（以兩個不同的 capability 請求觀察） | 見 A11 |
+| D7 | T11 的守門掛在 `FFIRuntimeSpec` | `FFIRuntimeSpec` **與** `FFIContractSpec` 各一條 | 前者照 1-to-1 表，後者是這個專案放「剖析檔案的守門」的地方；兩條的哨兵字串不同，互為補強 |
+
+### 既有測試的改動（三處，都是「加法造成的」而不是放寬）
+
+1. `test/FFIContractSpec.hs` 的 ``length declared `shouldBe` 31`` → `32`（兩處）。標頭多了 `pm_init_ex` 一個宣告；凍結的意思是「名字不准離開、不准改形狀」，加入時這個數字本來就會動，和 func-spec 0018／0025 每一輪一樣。
+2. 同檔 `sort (map fst defined)` 的巨集清單加入七個新 `#define`（`PM_GC_*`、`PM_STATS_*`、`PM_MAX_CAPABILITIES`、`PM_NURSERY_*`）。那條是雙向集合相等，不加就紅。
+3. `test/FFIFirewallSpec.hs` 與 `test/FFIContractSpec.hs` 的 `foreign export` 剖析器改為接受具名形式（有引號時取第 5 個字當 Haskell 名）。這正是本文件「9. 合併順序」預告的那一項：F001 的 T5 守門（`length exports == 29` ＋ 每個匯出都在 `firewall` 裡）**照舊全綠**，它剖析的是同一批 29 個 Haskell 名字。`cbitsEntries` 由兩個變三個。
+
+另外 `FFIRuntimeSpec` 對 `pm_max_particles` 的斷言比對的是 `Magic.FFI.pmMaxParticles`（今天是 16384）而不是字面量 4096：閘門的職責是**轉發**，4096 是凍結的標頭巨集、不是查詢的答案（func-spec 0011 §2 拆開的正是這兩者）。
+
+### 實作期的機械查證（純 C 宿主，產物不留 repo）
+
+3a（「RTS 由本庫啟動」）與 `PM_OK` 這兩件 in-process 測不到的事，依 A1／A3 在兩個平台各跑一次真實產物：
+
+- **V1 — Windows，`LoadLibraryA` 驅動 `particle-magic-ffi.dll`**：全部檢查通過。初始化前 `pm_abi_version()` 回 1、`pm_max_particles()` 回 −7、`pm_cast` 回 `NULL` 並寫出可讀訊息、`void` 類安靜返回（**以前這些每一條都會殺掉進程**）；四項設定的 `pm_init_ex` 回 `PM_OK`；完整 cast→advance→observe→free；二次初始化回 −7；`pm_shutdown` 之後全部回哨兵、再 `pm_init_ex` 回 −7、再 `pm_shutdown` 無事，進程以 0 結束。DLL 匯出表**正好 32 個**（31 ＋ `pm_init_ex`），`GetProcAddress(h, "pm_hs_advance")` 為 `NULL`。
+- **V2 — Linux（`wsl -d Debian`），`dlopen` 驅動 `libparticle-magic-ffi.so`**：同一套檢查全過，並且**四項設定逐一驗到 RTS 裡**（經相依鏈 `dlsym`）：初始化前 `n_capabilities == 0`、之後 `n_capabilities == 4`、`RtsFlags.GcFlags.minAllocAreaSize == 16384` blocks（＝ 64 MiB）、`useNonmoving == 1`、`getRTSStatsEnabled() == 1`。二次初始化回 −7 **且 `n_capabilities` 仍是 4**（設定真的沒被套用）。
+
+驗收標準第 1 條（「四者在 RTS 中實際生效」）因此是機械驗過的，不再只是 E2／E3 的旁證。
+
+### 兩平台測試結果
+
+| 平台 | 結果 |
+|---|---|
+| Windows x86_64 | `cabal test` **1816 examples, 0 failures**（基線 1804 ＋ 12） |
+| Linux x86_64（WSL Debian，GHC 9.14.1） | `cabal test` **1816 examples, 0 failures, 9 pending**（pending 是既有的平台相關項） |
+
+新增的 12 條：`FFIRuntimeSpec` 8 條（T2／T3／T4／T5／T7／T11／T12 ＋ 併發）、`FFIContractSpec` 4 條（T1／T6／T8／T11）。
+
+### 沒做的事（確認）
+
+`PM_ABI_VERSION` 仍為 1；既有 31 條標頭宣告一個位元未動；`src/core/Magic/Particle/Analytic.hs` 的 `parallelThreshold` 未動；foreign-library 的 `build-depends` 仍只有 base／magic-boundary／bytestring／vector；沒有加 `-with-rtsopts`；`pm_stats`／`PmStats` 未觸碰（屬 F011）。
+

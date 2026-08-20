@@ -24,6 +24,20 @@ module FFIContractSpec
   , readUtf8
   ) where
 
+-- host-runtime F003 changed the three-way model. Every entry point except
+-- the three lifecycle ones is now a C function in @cbits\/pm_gate.c@ that
+-- checks the runtime state and then calls the Haskell export, which has
+-- been renamed @pm_hs_*@ and is no longer public. So the identity that
+-- used to be "header = Haskell exports + the RTS pair" is now two:
+--
+-- @
+-- header ≡ .def EXPORTS ≡ the PM_EXPORT'd symbols in cbits
+-- foreign export symbols ≡ pm_hs_ + (header \\ lifecycle)
+-- @
+--
+-- The second one is what makes a future entry point join the gate by
+-- existing: add a symbol and forget its wrapper, and this spec is red.
+
 import Control.Exception (evaluate)
 import Data.Char (isAlphaNum, isSpace)
 import Data.List (isPrefixOf, nub, sort)
@@ -50,18 +64,29 @@ import Magic.Interface (BillboardShape (..), BlendMode (..))
 import System.IO (IOMode (ReadMode), hClose, hGetContents, hSetEncoding, openFile, utf8)
 import Test.Hspec
 
-ffiSource, headerFile, cbitsFile, cabalFile, defFile :: FilePath
+ffiSource, headerFile, cbitsFile, gateFile, cabalFile, defFile, integrationDoc :: FilePath
 ffiSource = "src/ffi/Magic/FFI.hs"
 headerFile = "include/particle_magic.h"
 cbitsFile = "cbits/pm_init.c"
+gateFile = "cbits/pm_gate.c"
 cabalFile = "particle-magic.cabal"
 defFile = "particle-magic-ffi.def"
+integrationDoc = "docs/integration.md"
 
--- | The two entry points the header declares that are /not/ Haskell
--- exports: starting and stopping the runtime cannot itself be a Haskell
--- call, so they live in @cbits@ (ADR-0011 D5).
+-- | The three entry points the header declares that have no Haskell
+-- counterpart at all: starting and stopping the runtime cannot itself be a
+-- Haskell call, so they live in @cbits@ (ADR-0011 D5, host-runtime F003).
 cbitsEntries :: [String]
-cbitsEntries = ["pm_init", "pm_shutdown"]
+cbitsEntries = ["pm_init", "pm_init_ex", "pm_shutdown"]
+
+-- | The prefix the gate gives the Haskell side of each public symbol.
+hsPrefix :: String
+hsPrefix = "pm_hs_"
+
+-- | @pm_advance@ → @pm_hs_advance@: the public name with its @pm_@
+-- replaced, which is what @src\/ffi\/Magic\/FFI.hs@ declares.
+gatedName :: String -> String
+gatedName name = hsPrefix ++ drop (length ("pm_" :: String)) name
 
 spec :: Spec
 spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
@@ -122,6 +147,78 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
     source <- stripComments <$> readUtf8 cbitsFile
     mapM_ (\name -> source `shouldSatisfy` defines name) cbitsEntries
 
+  -- host-runtime F003 T6. The gate's own guard, and the reason the lists
+  -- below are computed rather than written down: a symbol added by a later
+  -- feature (F005's three, say) joins the C ABI by existing, and fails
+  -- here until it has a wrapper in cbits/pm_gate.c and a pm_hs_ name of
+  -- its own. "Every symbol is gated" is not a property a reviewer can
+  -- check by reading one file.
+  it "routes every C symbol through the gate and keeps the Haskell exports internal" $ do
+    declared <- headerFunctions
+    defined <- cbitsPublicSymbols
+    symbols <- foreignExportSymbols
+    sort defined `shouldBe` sort declared
+    sort symbols `shouldBe` sort (map gatedName (filter (`notElem` cbitsEntries) declared))
+    -- Nothing public is called pm_hs_*: the gate is the outside.
+    filter (hsPrefix `isPrefixOf`) declared `shouldBe` []
+
+  -- host-runtime F003 T1. The configuration struct, its bounds and the
+  -- per-platform table a host needs in order to know what its settings
+  -- actually did. Sentinel words again: the prose is the only part of the
+  -- promise a host can read.
+  it "declares PmConfig, its bounds and the per-platform runtime table" $ do
+    header <- readUtf8 headerFile
+    header `shouldSatisfy` isInfixOf' "typedef struct PmConfig {"
+    header `shouldSatisfy` isInfixOf' "Which settings take effect where"
+    header `shouldSatisfy` isInfixOf' "PM_GC_NONMOVING"
+    header `shouldSatisfy` isInfixOf' "one-way door"
+    -- The criterion host-runtime F011 has to implement pm_stats against:
+    -- unavailable, never zero.
+    header `shouldSatisfy` isInfixOf' "getRTSStatsEnabled"
+    header `shouldSatisfy` isInfixOf' "UNAVAILABLE"
+    declared <- headerFunctions
+    declared `shouldSatisfy` elem "pm_init_ex"
+    defined <- headerDefines
+    let bounds =
+          [ ("PM_GC_DEFAULT", 0)
+          , ("PM_GC_NONMOVING", 1)
+          , ("PM_STATS_OFF", 0)
+          , ("PM_STATS_ON", 1)
+          , ("PM_MAX_CAPABILITIES", 256)
+          , ("PM_NURSERY_MIN_BYTES", 8192)
+          , ("PM_NURSERY_MAX_BYTES", 1073741824)
+          ]
+    mapM_ (\(name, value) -> lookup name defined `shouldBe` Just value) bounds
+    -- Add-only: the generation does not move for any of this.
+    lookup "PM_ABI_VERSION" defined `shouldBe` Just 1
+
+  -- host-runtime F003 T8. Without this the two above are untestable: the
+  -- test suite has to be built from the same C sources the shipped library
+  -- is, or FFIRuntimeSpec would have nothing to call.
+  it "builds the foreign library and the test suite from the same C sources" $ do
+    let hasSource stanza source = do
+          body <- stanzaBody stanza
+          any (source `isInfixOf'`) body `shouldBe` True
+    mapM_
+      (\stanza -> mapM_ (hasSource stanza) ["cbits/pm_init.c", "cbits/pm_gate.c"])
+      ["foreign-library particle-magic-ffi", "test-suite spec"]
+
+  -- host-runtime F003 T11. The integration guide is where a host learns
+  -- what to pass; sentinel strings keep the section from being edited away
+  -- and keep §4.4's lifecycle rules from going back to describing a
+  -- process that dies.
+  it "documents the runtime contract per platform in the integration guide" $ do
+    doc <- readUtf8 integrationDoc
+    mapM_
+      (\needle -> doc `shouldSatisfy` isInfixOf' needle)
+      [ "pm_init_ex"
+      , "PmConfig"
+      , "PM_ERR_STATE"
+      , "PM_STATS_ON"
+      , "getRTSStatsEnabled"
+      , "8192"
+      ]
+
   -- The two halves of func-spec 0011 §2. Before it, one assertion tied
   -- PM_MAX_PARTICLES, pmMaxParticles and budgetCap together, which welded
   -- the core's cap onto a frozen header: raising the cap would have
@@ -181,7 +278,9 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
     header `shouldSatisfy` isInfixOf' "returns -6.0"
     header `shouldSatisfy` isInfixOf' "pm_occupancy_mask returns 0"
     declared <- headerFunctions
-    length declared `shouldBe` 31
+    -- The 31 frozen entry points plus pm_init_ex (host-runtime F003): the
+    -- count moves only when a name JOINS, which is what add-only means.
+    length declared `shouldBe` 32
     defined <- headerDefines
     lookup "PM_ABI_VERSION" defined `shouldBe` Just 1
 
@@ -283,11 +382,19 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
     -- part of the documented promise, not an implementation detail.
     header `shouldSatisfy` isInfixOf' "pm_occupancy_mask returns 0"
     declared <- headerFunctions
-    length declared `shouldBe` 31
+    length declared `shouldBe` 32
     defined <- headerDefines
     sort (map fst defined)
       `shouldBe` sort
         [ "PM_ABI_VERSION"
+        , -- host-runtime F003: the runtime configuration's vocabulary.
+          "PM_GC_DEFAULT"
+        , "PM_GC_NONMOVING"
+        , "PM_STATS_OFF"
+        , "PM_STATS_ON"
+        , "PM_MAX_CAPABILITIES"
+        , "PM_NURSERY_MIN_BYTES"
+        , "PM_NURSERY_MAX_BYTES"
         , "PM_MAX_PARTICLES"
         , "PM_OK"
         , "PM_ERR_JSON"
@@ -344,14 +451,48 @@ shapeMacro shape = case shape of
 
 -- Parsers --------------------------------------------------------------------
 
--- | Names in @foreign export ccall <name>@ declarations.
+-- | Haskell names in @foreign export ccall [\"<symbol>\"] <name>@
+-- declarations. Since host-runtime F003 every export carries an explicit
+-- external name, and the Haskell name is then the word after it; the
+-- unquoted form is still accepted so that adding one back does not
+-- silently drop it from the audit.
 foreignExports :: IO [String]
 foreignExports = do
   contents <- readUtf8 ffiSource
-  pure [name | l <- lines contents, Just name <- [exportName (words (trim l))]]
+  pure [name | l <- lines contents, Just (_, name) <- [exportNames (words (trim l))]]
+
+-- | The C symbols those declarations actually produce — @pm_hs_*@ now,
+-- which is what the gate in @cbits\/pm_gate.c@ calls.
+foreignExportSymbols :: IO [String]
+foreignExportSymbols = do
+  contents <- readUtf8 ffiSource
+  pure [sym | l <- lines contents, Just (sym, _) <- [exportNames (words (trim l))]]
+
+-- | @(C symbol, Haskell name)@ for one @foreign export ccall@ line.
+exportNames :: [String] -> Maybe (String, String)
+exportNames ("foreign" : "export" : "ccall" : rest) = case rest of
+  (quoted : name : _) | ('"' : sym) <- quoted -> Just (takeWhile (/= '"') sym, name)
+  (name : _) -> Just (name, name)
+  [] -> Nothing
+exportNames _ = Nothing
+
+-- | Public symbols the C sources define, i.e. the ones carrying the
+-- library's export attribute. Preprocessor lines are skipped: the
+-- @#define PM_EXPORT __declspec(dllexport)@ that introduces the macro
+-- mentions it too.
+cbitsPublicSymbols :: IO [String]
+cbitsPublicSymbols = do
+  sources <- mapM readUtf8 [cbitsFile, gateFile]
+  pure (nub [name | l <- concatMap lines sources, Just name <- [exported l]])
   where
-    exportName ("foreign" : "export" : "ccall" : name : _) = Just name
-    exportName _ = Nothing
+    exported l
+      | "#" `isPrefixOf` trim l = Nothing
+      | not ("PM_EXPORT" `isInfixOf'` trim l) = Nothing
+      | otherwise = case break (== '(') l of
+          (_, "") -> Nothing
+          (lhs, _) -> case reverse (takeWhile isIdentChar (reverse (trim lhs))) of
+            "" -> Nothing
+            name -> Just name
 
 -- | Function names declared in the header: the identifier immediately
 -- before the parameter list of each declaration. Comments and
