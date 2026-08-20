@@ -18,7 +18,7 @@ parent: host-runtime
 | 階段 | 波次 | features | 狀態 |
 |---|---|---|---|
 | 階段一 | W1 | exception-firewall, handle-generation, rts-config-init, step-planner-c-abi, packaging-content | design-done |
-| 階段一 | W2 | thread-model（←#2）, oop-load-smoke（←#1, #3）, host-doc-corrections（←#5） | pending |
+| 階段一 | W2 | thread-model（←#2）, oop-load-smoke（←#1, #3）, host-doc-corrections（←#5） | design-done |
 | 階段二 | W3 | block-copy-out, diagnostics-stats | 未排 |
 | 階段二 | — | host-buffer-observe-c（等 boundary-host）, csharp-native-path（←#9） | 未排 |
 | 階段三 | — | cast-many-c-abi, cpp-raii-wrapper 可做；scene-attribution-c 等 boundary-host；csharp-safehandle-il2cpp ←#12 | 未排 |
@@ -47,11 +47,11 @@ parent: host-runtime
 | exception-firewall | F001 | F001-exception-firewall.md | opus | opus | design-done |
 | handle-generation | F002 | F002-handle-generation.md | opus | opus | design-done |
 | rts-config-init | F003 | F003-rts-config-init.md | opus | opus | design-done |
-| thread-model | F004 | F004-thread-model.md | opus | opus | assigned |
+| thread-model | F004 | F004-thread-model.md | opus | opus | design-done |
 | step-planner-c-abi | F005 | F005-step-planner-c-abi.md | opus | opus | design-done |
-| oop-load-smoke | F006 | F006-oop-load-smoke.md | opus | opus | assigned |
+| oop-load-smoke | F006 | F006-oop-load-smoke.md | opus | opus | design-done |
 | packaging-content | F007 | F007-packaging-content.md | opus | opus | design-done |
-| host-doc-corrections | F008 | F008-host-doc-corrections.md | opus | opus | assigned |
+| host-doc-corrections | F008 | F008-host-doc-corrections.md | opus | opus | design-done |
 
 ## 待確認假設彙總
 
@@ -81,6 +81,23 @@ parent: host-runtime
 | F003 A7 | `pm_hs_*` 具名符號在 Linux .so 的可見性 | 假設可見,待實作驗證 | — |
 | F003 A8 | cbits 的原子實作 | C11 atomics | — |
 | F003 A9 | 「要求統計時 `pm_stats` 拿得到 GC 數字」跨兩份文檔,正向路徑 in-process 測不到 | F003 只斷言開關與判準,正向以純 C 探測為證據並於實作期兩平台各跑一次;`pm_stats` 層級的表達由 F011 負責 | 接受;F011 契約卡已補「不可用的表達方式」為其驗收項 |
+| F004 A1 | 「單執行緒每次呼叫成本不上升」奈秒級無法字面成立(+6.5 ns) | 改讀作「宿主每幀成本不上升」並提兩條可機械檢查門檻 | 接受;C2.2 與 ADR-022 D4 措辭已同步更正 |
+| F004 A2 | 原子讀改寫失敗會**毒化該控制代碼**(現行寫入不會) | 接受並文件化＋測試;後果收斂在單一 handle,與 F001 合併後表現為持續 `PM_ERR_INTERNAL` | 接受 |
+| F004 A3 | 註冊表同步原語偏離 F002 接縫的字面建議 | 四個生命週期函數包表級 `MVar` 寫入鎖,**解析路徑維持無鎖**(否則每次推進/觀測都付 take/put) | 接受:F002 的接縫是建議不是契約 |
+| F004 A4 | 單核機器無法重現競爭 | 牙齒檢查轉 `pendingWith`,不轉紅 | 接受 |
+| F004 A5 | `pm_free` 與同 handle 其他呼叫併發 | 列為「宿主須自行序列化」 | 接受 |
+| F004 A6 | 不做 out-of-process 執行緒模型驗證 | 屬 F006／I6 | 接受 |
+| F006 1 | 防火牆觸發機制(F001 A3 交辦) | cabal flag ＋ **獨立** foreign-library(預設不建置、檔名不同)＋ 只毒化控制代碼內容物的符號;三方對帳與 C# 對帳零改動,唯一新維護面是鏡像 `.def` | 接受;M8 措辭已補「測試專用建置目標」 |
+| F006 2 | golden 是否新錄 | 沿用既有的 Haskell 宿主期望輸出與其容差版平台規則;FNV 摘要先只印為診斷 | 接受 |
+| F006 3 | 「還沒修 vs 修好了」如何區分 | 父進程 orchestrator ＋ 子進程 probe;期望值由帶設定的初始化符號是否解析得到決定(不存在⇒PENDING 不計失敗) | 接受 |
+| F006 4 | F003 的統計欄位名 | build 腳本 grep 標頭決定;**編排者補充:F003 已定案為 `PmConfig.stats`,常數 `PM_STATS_OFF`／`PM_STATS_ON`** | 接受 |
+| F008 A1 | 兩支 C 範例無真實時鐘 | 餵合成經過時間(恰一個固定步長),既有 120 幀 golden 逐位元不變;代價是範例不實際觸發截斷 | 接受 |
+| F008 A2 | 單幀最大步數取值 | 取 `8`,依據 demo 外殼既有的同名常數 | 接受 |
+| F008 A3 | 無 >4096 粒的出貨陣可當可執行反例(最大 1742 粒) | 改以文字守門(C 最小宿主不得再出現凍結常數)兌現 | 接受:契約卡的「能跑完所有範例陣」今天就已滿足,文字守門更誠實 |
+| F008 A4 | 「DLL 約 46 MB」是否過期 | 實測 45.7 MiB,**敘述正確**,只補量測基準不改數字 | 接受(編排者原本誤判它是過期敘述) |
+| F008 A5 | Unity 範例不在出貨清單,今天無守門 | 以新 spec 的文字守門涵蓋,不動出貨清單 | 接受 |
+| F008 A6 | `depends-on` 與委派指定值不同 | 改為 `[F001, F005, F007]`(錯誤碼表要消費 F001 的兩個新常數) | 接受;功能規劃 #8 的依賴欄已改為 `#1, #5, #7` |
+| F008 A7 | 宿主整合指南的檔頭版本沿革 | 由後落地者加一行 | 接受 |
 | F005 A1 | **C2.6 與凍結標頭衝突**:推進符號是 `void` | 新增 `pm_advance_ex`/`pm_scene_advance_ex`;符號 31→34 | 接受:新增 C1.12,只加推進的兩個 `_ex`,符號 31→34 |
 | F005 A2 | 規劃器對非有限/負輸入 | NULL 出參、非有限、`max_steps<0`、`acc_in<0` → `PM_ERR_ARGS`;其餘逐位元鏡射 | — |
 | F005 A3 | `_ex` 對 NULL 控制代碼 | 回 `PM_ERR_ARGS` | — |
@@ -106,4 +123,10 @@ parent: host-runtime
 **設計是否需重跑**:不需要。F005 與 F007 的文檔本來就是照它們自己查證出的新事實寫的——是設計驅動了契約修訂,不是設計落後於契約。唯一例外是 F003 的 A4 被推翻,該文檔續跑補一項 Todo。
 
 **F003 增量(續跑,非重寫)**:`PmConfig` 第四欄 `stats` 佔用初版預留槽(v1 未出貨,故是改欄位不是加欄位,`sizeof` 不變);新增 T12 與三條 1-to-1 測試。實測發現的陷阱值得記:**不帶 `-T` 時 `getRTSStats()` 不崩,但回半真半假的結構**——`gcs` 與 `allocated_bytes` 是真的,`gc_elapsed_ns` 卻是 `0`,於是「統計關掉」與「真的沒有 GC 暫停」長得一模一樣。唯一誠實的判準是 `getRTSStatsEnabled()`,已釘進標頭供 F011 消費。
+
+**W2 設計(2026-08-20)**:F004、F006、F008 三份產出,階段一八份設計全數完成,零阻塞。
+
+**兩處契約措辭再更正**(皆為編排者先前寫得比實測樂觀):C2.2 的「單執行緒宿主零額外成本」與實測不符(原子讀改寫 +6.5 ns/次推進,對照非原子寫入 2.84 ns),改為「不付鎖的成本、每幀路徑無鎖」;M8 的「只依賴產出的共享函式庫本身」沒涵蓋 F006 的測試專用建置目標,已補。ADR-022 D4 同步。
+
+**實作順序(定案)**:F002 → F001 → F003 → F005 → F007 → F004 → F006 → F008。理由:F002 的註冊表是 F001 毒化測試與 F004 同步原語的地基;F007 必須在 F008 之前,否則宿主整合指南的錨點會位移。
 
