@@ -132,6 +132,12 @@ namespace ParticleMagic
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
         public static extern void pm_advance(IntPtr spell, float dt);
 
+        /// <summary>pm_advance that reports: PM_ERR_ARGS for an invalid handle
+        /// or a dt that is NaN, infinite or negative (the clock is left alone
+        /// either way). Zero is a legal no-op.</summary>
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int pm_advance_ex(IntPtr spell, float dt);
+
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
         public static extern int pm_is_finished(IntPtr spell);
 
@@ -216,6 +222,11 @@ namespace ParticleMagic
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
         public static extern void pm_scene_advance(IntPtr scene, float dt);
 
+        /// <summary>pm_scene_advance that reports, exactly as pm_advance_ex
+        /// reports pm_advance.</summary>
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int pm_scene_advance_ex(IntPtr scene, float dt);
+
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
         public static extern int pm_scene_observe(IntPtr scene,
                                                   float[] posX, float[] posY, float[] posZ,
@@ -271,6 +282,25 @@ namespace ParticleMagic
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
         public static extern int pm_scene_spell_bounds(IntPtr scene, int spellId,
                                                        float[] outMin, float[] outMax);
+
+        // --- Fixed timesteps ---
+
+        // The library's own planner, so a host does not hand-roll
+        // `while (acc >= FixedDt)` -- which has no clamp (one hitch and the
+        // step count explodes) and drifts if acc is a float. Keep acc as a
+        // double field and pass it in and out:
+        //
+        //     int steps;
+        //     Pm.pm_plan_steps(1.0 / 120.0, 8, frameSeconds, _acc,
+        //                      out steps, out _acc);
+        //     for (int i = 0; i < steps; i++) Pm.pm_advance(spell, 1f / 120f);
+        //
+        // PM_ERR_ARGS (writing nothing) for a non-finite dt/elapsed/accIn,
+        // a negative maxSteps or a negative accIn.
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int pm_plan_steps(double dt, int maxSteps,
+                                               double elapsed, double accIn,
+                                               out int outSteps, out double outAcc);
 
         // --- 2D projection (optional; a 3D host ignores these) ---
 

@@ -62,6 +62,7 @@ PM_EXPORT struct PmSpell* pm_cast(const char*, const float[3], const float[3],
 PM_EXPORT int pm_cast_ex(const char*, const float[3], const float[3],
                          uint64_t, char*, int, struct PmSpell**);
 PM_EXPORT void pm_advance(struct PmSpell*, float);
+PM_EXPORT int pm_advance_ex(struct PmSpell*, float);
 PM_EXPORT int pm_is_finished(const struct PmSpell*);
 PM_EXPORT double pm_age(const struct PmSpell*);
 PM_EXPORT int pm_observe(struct PmSpell*, float*, float*, float*,
@@ -83,6 +84,8 @@ PM_EXPORT int pm_scene_cast_many(struct PmScene*, const char* const*, int,
                                  char*, int, int*);
 PM_EXPORT void pm_scene_dismiss(struct PmScene*, int);
 PM_EXPORT void pm_scene_advance(struct PmScene*, float);
+PM_EXPORT int pm_scene_advance_ex(struct PmScene*, float);
+PM_EXPORT int pm_plan_steps(double, int, double, double, int*, double*);
 PM_EXPORT int pm_scene_observe(struct PmScene*, float*, float*, float*,
                                float*, float*, uint32_t*, int, int*, int);
 PM_EXPORT int pm_scene_budget(const struct PmScene*, int*, int*);
@@ -110,6 +113,7 @@ extern PmSpell* pm_hs_cast(const char*, const float*, const float*,
 extern int pm_hs_cast_ex(const char*, const float*, const float*,
                          uint64_t, char*, int, PmSpell**);
 extern void pm_hs_advance(PmSpell*, float);
+extern int pm_hs_advance_ex(PmSpell*, float);
 extern int pm_hs_is_finished(const PmSpell*);
 extern double pm_hs_age(const PmSpell*);
 extern int pm_hs_observe(PmSpell*, float*, float*, float*,
@@ -131,6 +135,8 @@ extern int pm_hs_scene_cast_many(PmScene*, const char* const*, int,
                                  char*, int, int*);
 extern void pm_hs_scene_dismiss(PmScene*, int);
 extern void pm_hs_scene_advance(PmScene*, float);
+extern int pm_hs_scene_advance_ex(PmScene*, float);
+extern int pm_hs_plan_steps(double, int, double, double, int*, double*);
 extern int pm_hs_scene_observe(PmScene*, float*, float*, float*,
                                float*, float*, uint32_t*, int, int*, int);
 extern int pm_hs_scene_budget(const PmScene*, int*, int*);
@@ -332,6 +338,30 @@ PM_EXPORT int pm_scene_spell_bounds(const PmScene* scene, int spell_id,
 {
     if (!pm_runtime_ready()) return PM_ERR_STATE;
     return pm_hs_scene_spell_bounds(scene, spell_id, out_min, out_max);
+}
+
+/* host-runtime F005. The advances' error-code variants (C1.12) and the
+   planner (C1.7) are gated like everything else -- the planner too, even
+   though it is a pure function, because it IS the boundary layer's planner
+   rather than a second copy of it, and reaching that one costs a runtime.
+   The header says so where a host will read it. */
+PM_EXPORT int pm_advance_ex(PmSpell* spell, float dt)
+{
+    if (!pm_runtime_ready()) return PM_ERR_STATE;
+    return pm_hs_advance_ex(spell, dt);
+}
+
+PM_EXPORT int pm_scene_advance_ex(PmScene* scene, float dt)
+{
+    if (!pm_runtime_ready()) return PM_ERR_STATE;
+    return pm_hs_scene_advance_ex(scene, dt);
+}
+
+PM_EXPORT int pm_plan_steps(double dt, int max_steps, double elapsed, double acc_in,
+                            int* out_steps, double* out_acc)
+{
+    if (!pm_runtime_ready()) return PM_ERR_STATE;
+    return pm_hs_plan_steps(dt, max_steps, elapsed, acc_in, out_steps, out_acc);
 }
 
 /* The handle-returning symbols ------------------------------------------ */

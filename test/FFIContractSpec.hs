@@ -136,6 +136,14 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
         , "pm_occupancy"
         , "pm_occupancy_mask"
         , "pm_scene_spell_bounds"
+        , -- host-runtime F005: the planner the boundary layer already had,
+          -- plus the two advances' error-code variants. Add-only for the
+          -- fourth time — the void pm_advance and pm_scene_advance keep
+          -- their frozen signatures and gain only the promise that an
+          -- illegal dt does nothing.
+          "pm_plan_steps"
+        , "pm_advance_ex"
+        , "pm_scene_advance_ex"
         ]
 
   it "exports through the Windows .def file exactly what the header declares" $ do
@@ -278,9 +286,10 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
     header `shouldSatisfy` isInfixOf' "returns -6.0"
     header `shouldSatisfy` isInfixOf' "pm_occupancy_mask returns 0"
     declared <- headerFunctions
-    -- The 31 frozen entry points plus pm_init_ex (host-runtime F003): the
-    -- count moves only when a name JOINS, which is what add-only means.
-    length declared `shouldBe` 32
+    -- The 31 frozen entry points plus pm_init_ex (host-runtime F003) and
+    -- F005's three: the count moves only when a name JOINS, which is what
+    -- add-only means.
+    length declared `shouldBe` 35
     defined <- headerDefines
     lookup "PM_ABI_VERSION" defined `shouldBe` Just 1
 
@@ -382,7 +391,7 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
     -- part of the documented promise, not an implementation detail.
     header `shouldSatisfy` isInfixOf' "pm_occupancy_mask returns 0"
     declared <- headerFunctions
-    length declared `shouldBe` 32
+    length declared `shouldBe` 35
     defined <- headerDefines
     sort (map fst defined)
       `shouldBe` sort

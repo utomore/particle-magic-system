@@ -3,9 +3,9 @@ id: F005
 type: feature
 title: step-planner-c-abi
 description: 時步規劃器上 C 面,推進拒收非有限或負的步長
-status: open
+status: done
 created: 2026-08-20
-updated: 2026-08-20
+updated: 2026-08-21
 depends-on: []
 related-adr: [ADR-022]
 related-feature: []
@@ -53,7 +53,8 @@ C1.7 要求「與 boundary-host 的時步規劃器**同一份實作**、逐位�
 | 契約 | 本功能怎麼實作 | 是否在範圍內 |
 |---|---|---|
 | **C1.7 時步規劃** | 「純函數:(步長、單幀最大步數、經過時間、累加器)→(本幀步數、新累加器)。參數與累加器為雙精度,與 boundary-host 的時步規劃器同一份實作、逐位元相同;既有推進符號的單精度步長簽名不動」→ `pm_plan_steps` 直接轉呼 `Magic.Step.plan`,`double` 對 `Double`,既有 `pm_advance` 的 `float` 不動 | ✅ 完全落在條目內 |
-| **C2.6 `dt` 檢查** | 「推進對非有限或負的步長回 `PM_ERR_ARGS` 且狀態不變;合法輸入的輸出逐位元不變」 | ⚠️ **條目本身無法直接表達**——既有兩個推進符號的凍結回傳型別是 `void`(見下) |
+| **C2.6 `dt` 檢查** | 「非有限或負的步長一律不改變狀態;錯誤碼由 C1.12 的變體回報,既有的 `void` 推進符號靜默無操作」 | ✅ 閘門後 C2.6 已改寫,直接對應下方的兩半拆解 |
+| **C1.12 推進的錯誤碼變體** | 「鏡射既有推進的加法符號,只多一個錯誤碼通道:非有限或負的步長回 `PM_ERR_ARGS`、無效控制代碼回 `PM_ERR_ARGS`,合法輸入與既有符號逐位元相同」→ `pm_advance_ex` / `pm_scene_advance_ex` | ✅ |
 | **C1 只加不改** | 新增三個符號,`PM_ABI_VERSION` 不動,既有 31 個符號的簽名與行為(合法輸入)不變 | ✅ |
 | **C1.9 錯誤碼** | 只使用既有的 `PM_OK` 與 `PM_ERR_ARGS`,不新增錯誤碼 | ✅ |
 | **I1 M2 → boundary-host** | 「只呼叫邊界層既有條目,不得新增語意」→ `plan` 與 `advanceSpell` / `advanceScene` 都是既有條目;C 面的參數驗證是**參數檢查**(資料流管線的驗證段),不是新語意 | ✅ |
@@ -75,7 +76,7 @@ void pm_scene_advance(PmScene* scene, float dt);
 - **「狀態不變」那一半**由既有的兩個 `void` 符號承擔:非有限或負的 `dt` 一律**空操作**,法術年齡一個位元都不變。這只改變「原本就是未定義」的輸入的行為(ADR-022 D5 原文),合法輸入完全不變。
 - **「回 `PM_ERR_ARGS`」那一半**由新增的 `pm_advance_ex` / `pm_scene_advance_ex` 承擔,沿用專案既有的 `_ex` 加法慣例(`pm_cast_ex`、`pm_observe_ex`)。
 
-這是唯一能同時滿足 C2.6 與「只加不改」的作法。**需要編排者裁決**:`design.md` 的 C1 表格今天沒有一列描述「推進的錯誤碼變體」,建議補一列(或在 C2.6 加註),見文末回報項。
+這是唯一能同時滿足 C2.6 與「只加不改」的作法。**裁決已落地**:`design.md` 已補上 **C1.12 推進的錯誤碼變體**,C2.6 也改寫為「錯誤碼由 C1.12 的變體回報,既有的 `void` 推進符號靜默無操作」,兩個新符號因此有明文歸屬。
 
 ## 實作方式
 
@@ -227,14 +228,14 @@ pm_scene_advance_ex :: StablePtr SceneCell -> CFloat -> IO CInt
 
 ## TodoList
 
-- [ ] T1: `Magic.FFI` 新增 `pm_plan_steps`(`import Magic.Step (StepPlan (..), plan)`,直接轉呼,零演算法複製) `dep: -`
-- [ ] T2: `pm_plan_steps` 的四條參數驗證,失敗回 `PM_ERR_ARGS` 且兩個出參一個位元組都不寫 `dep: T1`
-- [ ] T3: 逐位元等價律:同一輸入序列下 C 面與 `Magic.Step.plan` 的步數與累加器完全相同(含截斷與 epsilon) `dep: T1, T2`
-- [ ] T4: 新增 `pm_advance_ex` / `pm_scene_advance_ex`:非法 `dt` 與無效控制代碼回 `PM_ERR_ARGS` 且狀態不變,`dt == 0` 為合法空操作 `dep: -`
-- [ ] T5: 既有 `pm_advance` / `pm_scene_advance` 對非法 `dt` 改為空操作(狀態不變),簽名與合法路徑不動 `dep: T4`
-- [ ] T6: 三個新符號同步進 `include/particle_magic.h`、`particle-magic-ffi.def` 與 `FFIContractSpec` 的凍結清單,`PM_ABI_VERSION` 不動 `dep: T1, T4`
-- [ ] T7: `bindings/csharp/ParticleMagic.cs` 新增三個 `DllImport` `dep: T6`
-- [ ] T8: 兩個新測試模組登記進 `particle-magic.cabal` 的 `test-suite spec` 的 `other-modules`,`cabal test` 全綠(含既有 `Acceptance9Spec` 與 `StepSpec` 無回歸) `dep: T3, T5, T6, T7`
+- [x] T1: `Magic.FFI` 新增 `pm_plan_steps`(`import Magic.Step (StepPlan (..), plan)`,直接轉呼,零演算法複製) `dep: -`
+- [x] T2: `pm_plan_steps` 的四條參數驗證,失敗回 `PM_ERR_ARGS` 且兩個出參一個位元組都不寫 `dep: T1`
+- [x] T3: 逐位元等價律:同一輸入序列下 C 面與 `Magic.Step.plan` 的步數與累加器完全相同(含截斷與 epsilon) `dep: T1, T2`
+- [x] T4: 新增 `pm_advance_ex` / `pm_scene_advance_ex`:非法 `dt` 與無效控制代碼回 `PM_ERR_ARGS` 且狀態不變,`dt == 0` 為合法空操作 `dep: -`
+- [x] T5: 既有 `pm_advance` / `pm_scene_advance` 對非法 `dt` 改為空操作(狀態不變),簽名與合法路徑不動 `dep: T4`
+- [x] T6: 三個新符號同步進 `include/particle_magic.h`、`particle-magic-ffi.def` 與 `FFIContractSpec` 的凍結清單,`PM_ABI_VERSION` 不動 `dep: T1, T4`
+- [x] T7: `bindings/csharp/ParticleMagic.cs` 新增三個 `DllImport` `dep: T6`
+- [x] T8: 兩個新測試模組登記進 `particle-magic.cabal` 的 `test-suite spec` 的 `other-modules`,`cabal test` 全綠(含既有 `Acceptance9Spec` 與 `StepSpec` 無回歸) `dep: T3, T5, T6, T7`
 
 ## 1-to-1 測試對照表
 
@@ -259,4 +260,35 @@ pm_scene_advance_ex :: StablePtr SceneCell -> CFloat -> IO CInt
 
 ## 實作備註
 
-(待實作階段填寫)
+實作於 2026-08-21,`cabal test` **1831 examples, 0 failures**(基線 1816,新增 15:`FFIStepPlanSpec` 9 條、`FFIAdvanceGuardSpec` 6 條)。既有測試沒有一條變紅;下列四處是為了讓既有守門測試對上新符號而**必須**改的計數與清單,不是行為變更。
+
+### 一、基底比本文檔撰寫時更晚(F001/F002/F003 已合併),對帳從三處變成五處
+
+本文檔「三處對帳同步」那一節寫於 F003 落地之前。實際落地時新符號有五重義務,缺一測試即紅:
+
+| # | 位置 | 為什麼 |
+|---|---|---|
+| 1 | `src/ffi/Magic/FFI.hs` 的 `foreign export ccall "pm_hs_*"` | F003 把 29 個匯出全部改成具名 `pm_hs_*`;守門等式是 `foreignExportSymbols ≡ pm_hs_ ＋ (headerFunctions \ 三個 lifecycle)`,清單用算的不是寫死的,所以新符號「因為存在而入列」 |
+| 2 | `cbits/pm_gate.c` 的閘門包裝(前向宣告＋`extern` 宣告＋函式本體) | I3:未初始化時回 `PM_ERR_STATE`。三個新符號都是回 `int` 的計數符號,哨兵一律 `PM_ERR_STATE` |
+| 3 | `firewall` / `firewallErr` 組合子 | F001 的原始碼守門逐一讀每個匯出的定義區塊 |
+| 4 | `include/particle_magic.h`、`particle-magic-ffi.def` | 既有三方對帳 |
+| 5 | `bindings/csharp/ParticleMagic.cs` | `BindingContractSpec` 雙向對帳 |
+
+`build-depends` 白名單未動(`Magic.Step` 本來就在 `magic-boundary` 的 `exposed-modules`,只加了一行 import),`PM_ABI_VERSION` 維持 1。
+
+### 二、既有測試裡被改動的四個數字(全部是「加法造成計數上升」)
+
+- `test/FFIContractSpec.hs`:凍結符號清單 +3;兩處 `length declared` 由 **32 → 35**。注意本文檔 T6 寫的是「31 → 34」,那是漏算了 F003 已加入的 `pm_init_ex`;實際基線是 32。
+- `test/FFIFirewallSpec.hs`:`length exports` 由 **29 → 32**。
+- `test/FFIFirewallSpec.hs`:毒化控制代碼案例由 **22 → 24**——`pm_advance_ex` 與 `pm_scene_advance_ex` 是吃控制代碼的符號,而該條測試的標題就是「每一個吃控制代碼的符號都要對毒化控制代碼回自己的哨兵」,不加就名不副實。兩者的哨兵是 `PM_ERR_INTERNAL`(有錯誤碼通道),與 `void` 版的「回得來就算過」不同。
+
+### 三、內部實作選擇(屬實作自主權,列出僅供閱讀)
+
+- `legalDt :: CFloat -> Bool` 一個私有判定,四個呼叫點(兩個 `void` 推進＋兩個 `_ex`)共用,規則不可能漂移。判定在 `CFloat` 上做,`-0.0` 視為合法(是空操作)。
+- `pm_plan_steps` 的驗證與 `plan` 呼叫全部寫在 `firewall pmErrInternal $` 之內,拆 `CDouble` newtype 而非 `realToFrac`。
+- 場景版的「狀態不變」沒有 `pm_scene_age` 可讀,改以 `pm_scene_observe` 的六欄＋批次描述子**逐位元**比對(`castFloatToWord32`)。比對前先推進 40 幀並斷言存活粒子數 > 0——最初只推進 3 幀,ring-fire 當時一顆粒子都還沒生出來,「前後相同」變成恆真,合法步長那條反向斷言因此紅過一次(已修正並保留該防呆斷言)。
+- T5 另外補了一條具體回歸測試:餵一幀 NaN 之後,照標頭寫法跑 `while (!pm_is_finished)`(帶 5000 幀上限),必須正常結束——這正是缺陷本身。
+
+### 四、A5 的病態案例維持不修
+
+`plan 1e-300 8 1e300 0 == StepPlan 0 1e300` 逐位元鏡射,不在 C 面補救(見待確認假設 A5)。若判定為缺陷,應在 boundary-host 開 bugfix 修 `Magic.Step.plan`,C 面自動跟著修正。

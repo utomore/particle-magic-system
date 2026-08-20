@@ -76,7 +76,7 @@ accepted（2026-08-20）。修訂 [ADR-0011](../../docs/adr/adr-0011-ffi-c-abi-b
 
 ## 影響（Consequences）
 
-- header 新增:`PM_ERR_INTERNAL`(−6)、`PM_ERR_STATE`(−7)、`PmConfig`、`pm_init_ex`、`pm_plan_steps`、`PmStats`、`pm_stats`,以及推進的兩個錯誤碼變體 `pm_advance_ex`／`pm_scene_advance_ex`(凍結標頭裡有七個符號沒有錯誤碼通道,每幀呼叫的推進是其中最需要回報的兩個;其餘五個以安全無操作兌現保證)。符號自 31 增至 34,全部是加法,`PM_ABI_VERSION` 不動。`test/FFIContractSpec.hs` 與 C# 綁定的雙向對帳測試自動涵蓋新符號。
+- header 新增:`PM_ERR_INTERNAL`(−6)、`PM_ERR_STATE`(−7)、`PmConfig`、`pm_init_ex`、`pm_plan_steps`、`PmStats`、`pm_stats`,以及推進的兩個錯誤碼變體 `pm_advance_ex`／`pm_scene_advance_ex`(凍結標頭裡有七個符號沒有錯誤碼通道,每幀呼叫的推進是其中最需要回報的兩個;其餘五個以安全無操作兌現保證)。符號自 31 增至 **35**(`pm_init_ex` 一個、`pm_plan_steps` 與推進的兩個變體共三個;階段二的 `pm_stats` 會再加一個),全部是加法,`PM_ABI_VERSION` 不動。`test/FFIContractSpec.hs` 與 C# 綁定的雙向對帳測試自動涵蓋新符號。
 - `cbits/pm_init.c` 重寫為原子初始化；匯出清單 `.def` 同步。
 - 新增 out-of-process 測試：真的載入 `.dll`／`.so`，跑一遍 cast → advance → observe → free，並以一條刻意觸發內部失敗的路徑驗證 D2 的防火牆會回 `PM_ERR_INTERNAL` 而不是殺進程。這是 CI 第一次載入它自己產出的函式庫。
 - 新增併發測試（D4 的每一條各一）。

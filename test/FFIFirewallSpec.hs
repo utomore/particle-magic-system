@@ -6,7 +6,7 @@
 -- a host can handle — the RTS terminates the process and prints to a
 -- stderr nobody is reading. The subsystem's first acceptance criterion
 -- (P-1) says the library never does that to its host, so every one of the
--- 29 exported symbols now runs inside 'firewall' or 'firewallErr', which
+-- exported symbols now runs inside 'firewall' or 'firewallErr', which
 -- answer @PM_ERR_INTERNAL@ (or the sentinel that stands for it in the
 -- return type) instead of letting anything through.
 --
@@ -58,6 +58,7 @@ import Magic.FFI
   , pmErrInternal
   , pmMaxParticles
   , pm_advance
+  , pm_advance_ex
   , pm_age
   , pm_emitter_box
   , pm_emitter_count
@@ -68,6 +69,7 @@ import Magic.FFI
   , pm_occupancy
   , pm_occupancy_mask
   , pm_scene_advance
+  , pm_scene_advance_ex
   , pm_scene_budget
   , pm_scene_cast
   , pm_scene_cast_many
@@ -163,7 +165,9 @@ spec = describe "exception firewall (host-runtime F001)" $ do
   it "every foreign export goes through the firewall (source audit)" $ do
     ls <- lines <$> readUtf8 ffiSource
     let exports = foreignExports ls
-    length exports `shouldBe` 29
+    -- 29 + host-runtime F005's three (pm_plan_steps and the two _ex
+    -- advances).
+    length exports `shouldBe` 32
     mapM_
       (\name -> (name, definitionHasFirewall ls name) `shouldBe` (name, Just True))
       exports
@@ -177,9 +181,10 @@ spec = describe "exception firewall (host-runtime F001)" $ do
     json <- spellBytes "ring-fire"
     mapM_ (\(name, act) -> withPoisonedSpell (labelled name . act)) poisonedSpellCases
     mapM_ (\(name, act) -> withPoisonedScene (labelled name . act json)) poisonedSceneCases
-    -- Reaching this line at all is the acceptance criterion: 22 symbols
-    -- were driven over a bottom and the process is still here.
-    length poisonedSpellCases + length poisonedSceneCases `shouldBe` 22
+    -- Reaching this line at all is the acceptance criterion: 24 symbols
+    -- (22 plus host-runtime F005's two _ex advances) were driven over a
+    -- bottom and the process is still here.
+    length poisonedSpellCases + length poisonedSceneCases `shouldBe` 24
 
   -- T7 -------------------------------------------------------------------
   it "legal input is bit-identical with the firewall in place" $
@@ -314,13 +319,17 @@ labelled name act =
     Right () -> pure ()
     Left e -> expectationFailure (name ++ ": " ++ show (e :: SomeException))
 
--- | The twelve entry points that take a @PmSpell*@, each with the answer
+-- | The thirteen entry points that take a @PmSpell*@, each with the answer
 -- the sentinel table assigns it. The five that return @void@ can only be
 -- asked to return at all — which is the promise, for a symbol C gave no
 -- room to report in.
 poisonedSpellCases :: [(String, StablePtr SpellCell -> IO ())]
 poisonedSpellCases =
   [ ("pm_advance", \h -> pm_advance h 0.016 `shouldReturn` ())
+  , -- host-runtime F005. The _ex variant DOES have somewhere to put the
+    -- answer, so unlike the void one it is asked for -6 rather than
+    -- merely for returning.
+    ("pm_advance_ex", \h -> pm_advance_ex h 0.016 `shouldReturn` pmErrInternal)
   , ("pm_is_finished", \h -> pm_is_finished h `shouldReturn` pmErrInternal)
   , ("pm_age", \h -> pm_age h `shouldReturn` (-6.0))
   , ("pm_observe", \h -> observeAll h `shouldReturn` pmErrInternal)
@@ -343,7 +352,7 @@ poisonedSpellCases =
   , ("pm_occupancy_mask", \h -> pm_occupancy_mask h `shouldReturn` 0)
   ]
 
--- | The ten entry points that take a @PmScene*@. The two cast entry points
+-- | The eleven entry points that take a @PmScene*@. The two cast entry points
 -- need real JSON to get as far as the scene, which is why the bytes are
 -- threaded through.
 poisonedSceneCases :: [(String, BS.ByteString -> StablePtr SceneCell -> IO ())]
@@ -362,6 +371,10 @@ poisonedSceneCases =
     )
   , ("pm_scene_dismiss", \_ h -> pm_scene_dismiss h 0 `shouldReturn` ())
   , ("pm_scene_advance", \_ h -> pm_scene_advance h 0.016 `shouldReturn` ())
+  ,
+    ( "pm_scene_advance_ex"
+    , \_ h -> pm_scene_advance_ex h 0.016 `shouldReturn` pmErrInternal
+    )
   ,
     ( "pm_scene_observe"
     , \_ h ->

@@ -83,6 +83,9 @@
  * with, and keep the same promise by doing nothing at all: pm_advance,
  * pm_free, pm_scene_free, pm_scene_dismiss and pm_scene_advance return
  * void and are no-ops; pm_age returns 0.0; pm_occupancy_mask returns 0.
+ * Two of those seven have a variant that can say it -- pm_advance_ex and
+ * pm_scene_advance_ex return PM_ERR_ARGS where the void pair silently
+ * does nothing -- so a host that wants the diagnosis calls those instead.
  * The one case that cannot be caught is a forged value that happens to
  * equal a currently live handle -- that is the shared ceiling of any
  * handle scheme, not a gap in this one.
@@ -354,8 +357,22 @@ int pm_cast_ex(const char* circle_json,
 
 /* Advance the spell's clock by dt seconds. Sampling happens in
    pm_observe, so several fixed steps per rendered frame cost nothing
-   extra. */
+   extra.
+
+   A dt that is NaN, infinite or negative does nothing at all -- the
+   clock is not moved by one bit. It used to poison the age, after which
+   pm_is_finished answered 0 forever and a `while (!pm_is_finished(s))`
+   loop never ended. A dt of 0 is legal and is likewise a no-op. This
+   returns void and so cannot say which of the two happened; pm_advance_ex
+   below is the same call with that one answer added. */
 void pm_advance(PmSpell* spell, float dt);
+
+/* pm_advance with the argument check reported: PM_OK, or PM_ERR_ARGS --
+   leaving the spell's clock untouched -- for a NULL or otherwise invalid
+   handle and for a dt that is NaN, infinite or negative. A dt of 0 is
+   legal and is a no-op. For every legal dt this and pm_advance run the
+   identical code and produce identical state. */
+int pm_advance_ex(PmSpell* spell, float dt);
 
 /* 1 once the spell has outlived its lifetime, 0 while it is running. */
 int pm_is_finished(const PmSpell* spell);
@@ -494,8 +511,15 @@ int pm_scene_cast_many(PmScene* scene, const char* const* circle_jsons, int coun
 void pm_scene_dismiss(PmScene* scene, int spell_id);
 
 /* Advance every live spell by dt seconds and drop the ones that finished
-   -- which is also how their share of the quota is released. */
+   -- which is also how their share of the quota is released.
+
+   Same dt rule as pm_advance: NaN, infinite or negative does nothing at
+   all, zero is a legal no-op. */
 void pm_scene_advance(PmScene* scene, float dt);
+
+/* pm_scene_advance with the same check reported, exactly as
+   pm_advance_ex reports pm_advance's. */
+int pm_scene_advance_ex(PmScene* scene, float dt);
 
 /* Sample every live spell into the caller's six columns, exactly as
    pm_observe does for one spell; batches are concatenated in spell-id
@@ -590,6 +614,53 @@ uint32_t pm_occupancy_mask(PmSpell* spell);
    and a box around everything is a number almost nothing can use. */
 int pm_scene_spell_bounds(const PmScene* scene, int spell_id,
                           float out_min[3], float out_max[3]);
+
+/* --- Fixed timesteps (host-runtime F005) --------------------------------
+ *
+ * Your render frame rate and this library's simulation step are separate
+ * things, and the accumulator that keeps them separate is YOURS -- this
+ * library holds no per-spell clock of its own for it. What it does hold
+ * is the arithmetic, and there is exactly one copy of it:
+ *
+ *     static double acc = 0.0;
+ *     int steps;
+ *     pm_plan_steps(1.0 / 120.0, 8, frame_seconds, acc, &steps, &acc);
+ *     for (int i = 0; i < steps; i++) pm_advance(spell, 1.0f / 120.0f);
+ *
+ * The hand-rolled `while (acc >= FIXED_DT)` this replaces has two faults
+ * that only show up in the field. It has no clamp, so one loading hitch
+ * or one breakpoint asks for hundreds of steps in a single frame and the
+ * next frame is later still -- the spiral of death. And its accumulator
+ * is usually a float, which drifts against a double simulation. Both are
+ * fixed by looping *out_steps times instead.
+ */
+
+/* Plan one frame's fixed steps. Pure: it reads and writes nothing but its
+   own arguments, and is the same implementation the library uses
+   internally, so a host driving its loop with this steps bit-identically
+   with one written in Haskell.
+
+   Double precision on purpose -- a float accumulator drifts. pm_advance's
+   float dt is unaffected.
+
+   dt <= 0 plans zero steps and hands the accumulator back untouched (it
+   is a setting, not a per-frame input, so unlike pm_advance's dt it is
+   not rejected). A negative elapsed reads as zero. When the backlog
+   exceeds max_steps the plan clamps to max_steps and DROPS the rest, so
+   the simulation slows down instead of freezing.
+
+   Returns PM_OK, or PM_ERR_ARGS -- writing nothing at all -- when either
+   out pointer is NULL, when dt, elapsed or acc_in is not finite, when
+   max_steps is negative, or when acc_in is negative. On PM_OK,
+   *out_steps is in [0, max_steps] and *out_acc is >= 0.
+
+   Needs the runtime: call pm_init() or pm_init_ex() first, as for every
+   other entry point here. Being a pure function does not exempt it --
+   the point of this call is that it is not a second copy of the
+   planner, and reaching the only copy means crossing into the runtime.
+   Before it is up, this returns PM_ERR_STATE and writes nothing. */
+int pm_plan_steps(double dt, int max_steps, double elapsed, double acc_in,
+                  int* out_steps, double* out_acc);
 
 #ifdef __cplusplus
 }

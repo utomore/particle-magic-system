@@ -436,6 +436,8 @@ test-suite spec
                     , FFIHandleSpec
                     , FFIFirewallSpec
                     , FFIRuntimeSpec
+                    , FFIStepPlanSpec
+                    , FFIAdvanceGuardSpec
     -- host-runtime F003: the same two C translation units the foreign
     -- library is built from, so FFIRuntimeSpec drives the real state
     -- machine and the real gate in process rather than a copy of them.

@@ -42,6 +42,7 @@ module Magic.FFI
   , pm_cast
   , pm_cast_ex
   , pm_advance
+  , pm_advance_ex
   , pm_is_finished
   , pm_age
   , pm_observe
@@ -58,6 +59,7 @@ module Magic.FFI
   , pm_scene_cast_many
   , pm_scene_dismiss
   , pm_scene_advance
+  , pm_scene_advance_ex
   , pm_scene_observe
   , pm_scene_budget
   , pm_scene_count
@@ -71,6 +73,9 @@ module Magic.FFI
   , pm_occupancy
   , pm_occupancy_mask
   , pm_scene_spell_bounds
+
+    -- * Fixed-timestep planning (host-runtime F005; C1.7)
+  , pm_plan_steps
 
     -- * Contract constants (mirrored in @include\/particle_magic.h@,
     -- guarded by @test\/FFIContractSpec.hs@)
@@ -201,6 +206,7 @@ import Magic.Scene
   , sceneBudget
   , sceneSpells
   )
+import Magic.Step (StepPlan (..), plan)
 import System.IO.Unsafe (unsafePerformIO)
 
 -- Contract constants ---------------------------------------------------------
@@ -638,15 +644,63 @@ pm_cast_ex json posPtr facingPtr sd errBuf errLen out =
     writeOut h = if out == nullPtr then pure () else poke out h
     fail' code msg = writeErr errBuf errLen msg >> pure code
 
+-- | Is this a step a spell's clock may be moved by (host-runtime C2.6)?
+--
+-- @NaN@, @±Infinity@ and a negative @dt@ are not. The first is the one
+-- that matters most: a single @NaN@ frame poisons the age for good, after
+-- which 'pm_is_finished' answers 0 forever and a host's
+-- @while (!pm_is_finished(s))@ never leaves. Zero /is/ legal — a paused
+-- host stepping 0 is asking for a no-op, and gets one.
+--
+-- Judged on the @CFloat@ the host handed over rather than on the widened
+-- 'Double': 'cfloatToDouble' is exact, so the two are equivalent, and
+-- this way the rule reads as being about the argument in the prototype.
+-- @-0.0@ passes and is a no-op, as it should be.
+--
+-- One function, four call sites (the two advances and their @_ex@
+-- variants), so the rule cannot drift between them.
+legalDt :: CFloat -> Bool
+legalDt (CFloat dt) = not (isNaN dt) && not (isInfinite dt) && dt >= 0
+
 foreign export ccall "pm_hs_advance" pm_advance :: StablePtr SpellCell -> CFloat -> IO ()
 
 -- | Advance the spell's clock by @dt@ seconds, in place.
+--
+-- An illegal @dt@ ('legalDt') is a no-op: the spell's clock is not moved
+-- by one bit. There is no error channel in a @void@ — the frozen
+-- signature has no room for one — so 'pm_advance_ex' is where a host that
+-- wants to be told about it looks. Silently doing nothing is still
+-- strictly better than the alternative, which was poisoning the age.
 pm_advance :: StablePtr SpellCell -> CFloat -> IO ()
 pm_advance h dt =
   firewall () $
-    withCell h () () $ \ref -> do
-      spell <- readIORef ref
-      writeIORef ref $! advanceSpell (FrameInput (DeltaTime (cfloatToDouble dt))) spell
+    if not (legalDt dt)
+      then pure ()
+      else withCell h () () $ \ref -> do
+        spell <- readIORef ref
+        writeIORef ref $! advanceSpell (FrameInput (DeltaTime (cfloatToDouble dt))) spell
+
+foreign export ccall "pm_hs_advance_ex" pm_advance_ex
+  :: StablePtr SpellCell -> CFloat -> IO CInt
+
+-- | 'pm_advance' with the argument check reported (host-runtime C1.12).
+--
+-- 'pmErrArgs' for an illegal @dt@ and for a handle that does not resolve
+-- — including @NULL@, which the @void@ 'pm_advance' tolerates and this
+-- one does not: an @_ex@ variant exists to classify, and every other
+-- entry point with an error channel calls a @NULL@ handle an argument
+-- error. Otherwise the very same 'advanceSpell' call as 'pm_advance',
+-- which is what makes "the outputs are bit-identical for a legal @dt@" a
+-- statement about one code path rather than two.
+pm_advance_ex :: StablePtr SpellCell -> CFloat -> IO CInt
+pm_advance_ex h dt =
+  firewall pmErrInternal $
+    if not (legalDt dt)
+      then pure pmErrArgs
+      else withCell h pmErrArgs pmErrArgs $ \ref -> do
+        spell <- readIORef ref
+        writeIORef ref $! advanceSpell (FrameInput (DeltaTime (cfloatToDouble dt))) spell
+        pure pmOk
 
 foreign export ccall "pm_hs_is_finished" pm_is_finished :: StablePtr SpellCell -> IO CInt
 
@@ -1094,12 +1148,34 @@ foreign export ccall "pm_hs_scene_advance" pm_scene_advance :: StablePtr SceneCe
 
 -- | Advance every live spell by @dt@ seconds, in place, dropping the ones
 -- that finished — which is also how their share of the quota comes back.
+--
+-- An illegal @dt@ ('legalDt') is a no-op, exactly as in 'pm_advance', and
+-- for the same reason: one poisoned frame would otherwise freeze every
+-- spell in the scene at once.
 pm_scene_advance :: StablePtr SceneCell -> CFloat -> IO ()
 pm_scene_advance h dt =
   firewall () $
-    withScene h () () $ \ref -> do
-      scene <- readIORef ref
-      writeIORef ref $! advanceScene (FrameInput (DeltaTime (cfloatToDouble dt))) scene
+    if not (legalDt dt)
+      then pure ()
+      else withScene h () () $ \ref -> do
+        scene <- readIORef ref
+        writeIORef ref $! advanceScene (FrameInput (DeltaTime (cfloatToDouble dt))) scene
+
+foreign export ccall "pm_hs_scene_advance_ex" pm_scene_advance_ex
+  :: StablePtr SceneCell -> CFloat -> IO CInt
+
+-- | 'pm_scene_advance' with the argument check reported (host-runtime
+-- C1.12) — 'pm_advance_ex' for scenes, same rules, same one call to the
+-- boundary layer.
+pm_scene_advance_ex :: StablePtr SceneCell -> CFloat -> IO CInt
+pm_scene_advance_ex h dt =
+  firewall pmErrInternal $
+    if not (legalDt dt)
+      then pure pmErrArgs
+      else withScene h pmErrArgs pmErrArgs $ \ref -> do
+        scene <- readIORef ref
+        writeIORef ref $! advanceScene (FrameInput (DeltaTime (cfloatToDouble dt))) scene
+        pure pmOk
 
 foreign export ccall "pm_hs_scene_observe" pm_scene_observe
   :: StablePtr SceneCell
@@ -1494,6 +1570,82 @@ withColumns plane count ptrs k =
       | otherwise -> k viewPlane n
       where
         n = fromIntegral count
+
+-- Fixed-timestep planning (host-runtime F005, C1.7) ---------------------------
+
+foreign export ccall "pm_hs_plan_steps" pm_plan_steps
+  :: CDouble -> CInt -> CDouble -> CDouble -> Ptr CInt -> Ptr CDouble -> IO CInt
+
+-- | How many fixed steps this frame owes, and the accumulator to carry
+-- into the next one — the same 'Magic.Step.plan' the demo shell and the
+-- test suite drive, handed to C hosts verbatim.
+--
+-- The whole point is that there is exactly one planner. A host that
+-- hand-rolls @while (acc >= FIXED_DT)@ has no clamp, so one loading hitch
+-- makes it call 'pm_advance' hundreds of times for one frame and the
+-- spiral of death is on; and its accumulator drifts, because the host's
+-- is a @float@ and this library's is a @double@. Both are cured by
+-- calling this and looping @*out_steps@ times. Nothing here recomputes
+-- anything: the clamp, the epsilon and the backlog-dropping rule are
+-- 'Magic.Step.plan' and cannot be copied wrong, because they are not
+-- copied.
+--
+-- Everything 'Magic.Step.plan' says stays said, deliberately. @dt <= 0@
+-- plans no steps and returns the accumulator untouched; a negative
+-- @elapsed@ reads as zero; a backlog past @max_steps@ clamps and drops
+-- the rest. Note that a negative @dt@ here is /not/ the C2.6 rule the
+-- advances follow — a planner's @dt@ is the host's fixed setting, an
+-- advance's is its per-frame input, and they are different functions.
+--
+-- What the C side does add is an argument check, because 'plan' is a
+-- pure function with no error channel and its answers on nonsense input
+-- are worse than useless: a non-finite @dt@ or @acc_in@ silently zeroes
+-- the accumulator (the host's backlog vanishes), a non-finite @elapsed@
+-- poisons it forever (every later frame plans 0 steps), and a negative
+-- @max_steps@ or @acc_in@ hands back a /negative step count/ that a host
+-- is about to use as a loop bound. So those are 'pmErrArgs', and — as
+-- everywhere else on this boundary — the error path writes no byte at
+-- all.
+--
+-- Post-condition on 'pmOk', asserted in @test\/FFIStepPlanSpec.hs@:
+-- @*out_steps@ is in @[0, max_steps]@ and @*out_acc@ is not negative.
+pm_plan_steps
+  :: CDouble
+  -- ^ the fixed step, seconds
+  -> CInt
+  -- ^ most steps to run in one frame (the spiral-of-death clamp)
+  -> CDouble
+  -- ^ seconds since the previous frame
+  -> CDouble
+  -- ^ the accumulator this frame starts with
+  -> Ptr CInt
+  -- ^ out: steps to run now
+  -> Ptr CDouble
+  -- ^ out: the accumulator to carry over
+  -> IO CInt
+pm_plan_steps dt maxSteps elapsed accIn outSteps outAcc =
+  firewall pmErrInternal $
+    if outSteps == nullPtr
+      || outAcc == nullPtr
+      || not (finite dt')
+      || not (finite elapsed')
+      || not (finite accIn')
+      || maxSteps < 0
+      || accIn' < 0
+      then pure pmErrArgs
+      else do
+        let StepPlan n acc = plan dt' (fromIntegral maxSteps) elapsed' accIn'
+        poke outSteps (fromIntegral n)
+        poke outAcc (CDouble acc)
+        pure pmOk
+  where
+    -- Unwrapping the newtype rather than 'realToFrac', for the reason
+    -- 'cfloatToDouble' gives: 'realToFrac' goes through 'Rational' and
+    -- mangles exactly the values this check is here to reject.
+    CDouble dt' = dt
+    CDouble elapsed' = elapsed
+    CDouble accIn' = accIn
+    finite x = not (isNaN x) && not (isInfinite x)
 
 -- Marshalling helpers --------------------------------------------------------
 

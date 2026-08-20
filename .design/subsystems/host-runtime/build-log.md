@@ -105,7 +105,10 @@ parent: host-runtime
 | F001 →F005 | 新增符號時的連帶義務 | 新符號必須自行包防火牆，且 `FFIFirewallSpec` 的 `length exports == 29` 守門要同步改成新數字 | 已寫進 F005 的實作 prompt |
 | F003 A10（實作期新增） | T12 的「要求統計但開不起來 → `PM_ERR_STATE`」**in-process 不可達**（hspec 套件自己以 `-T` 建置，統計本來就是開的） | 改斷言錯誤碼表的另一列＋「旗標初始化後永不改變」；降級條款本身仍由同呼叫的 nursery／GC 觸發 | 接受；**缺口指派給階段二的 F011**（它擁有 `pm_stats`，隨它補一個小型 Haskell 宿主覆蓋「RTS 已起但沒 `-T`」那一支） |
 | F003 A11（實作期新增） | 併發初始化的斷言方式 | 改為兩執行緒**要求不同 capability 數**、斷言事後值恰為其一（證明只有一個真的碰到 RTS）；`PM_OK` 路徑由兩平台的純 C 探測覆蓋 | 接受：in-process 首次初始化必走降級支，原斷言不可能成立 |
-| F003 →F005 | 新符號的雙重義務 | 新等式 `foreignExportSymbols ≡ pm_hs_ ＋ (headerFunctions \ 三個 lifecycle)` 不寫死清單：F005 的三個新符號要同時加 `pm_hs_*` 匯出名**與** `cbits/pm_gate.c` 的閘門包裝，漏一個就紅 | 已寫進 F005 的實作 prompt |
+| F003 →F005 | 新符號的雙重義務 | 新等式 `foreignExportSymbols ≡ pm_hs_ ＋ (headerFunctions \ 三個 lifecycle)` 不寫死清單：F005 的三個新符號要同時加 `pm_hs_*` 匯出名**與** `cbits/pm_gate.c` 的閘門包裝，漏一個就紅 | 已寫進 F005 的實作 prompt；F005 三重義務全數履行 |
+| F005（實作期發現） | **自己的測試出現假綠** | 場景版「狀態不變」原本只推進 3 幀取基準，ring-fire 當時一顆粒子都沒有，「前後相同」變成恆真；改為推進 40 幀並加 `liveParticles > 0` 防呆後才有效 | 接受：這是委派模式下最該被抓到的一類問題，執行者自己抓到並修掉 |
+| F005（實作期發現） | 文檔 T6 寫「符號 31 → 34」算漏了 F003 的 `pm_init_ex` | 實際基線是 32，改動後 35 | 接受；**ADR-022 的同一處數字（編排者寫的）已一併更正為 31 → 35** |
+| F005 A5 | `Magic.Step.plan` 的病態案例：有限輸入下比值溢位 → 積壓爆表反而回 0 步 | C 面逐位元鏡射不修 | 接受；**建議在 boundary-host 開一份 bugfix 修 Haskell 面**，C 面會自動跟著修正——留到階段閘門向開發者提出 |
 | F005 A1 | **C2.6 與凍結標頭衝突**:推進符號是 `void` | 新增 `pm_advance_ex`/`pm_scene_advance_ex`;符號 31→34 | 接受:新增 C1.12,只加推進的兩個 `_ex`,符號 31→34 |
 | F005 A2 | 規劃器對非有限/負輸入 | NULL 出參、非有限、`max_steps<0`、`acc_in<0` → `PM_ERR_ARGS`;其餘逐位元鏡射 | — |
 | F005 A3 | `_ex` 對 NULL 控制代碼 | 回 `PM_ERR_ARGS` | — |
@@ -144,7 +147,8 @@ parent: host-runtime
 |---|---|---|---|---|---|
 | 1 | F002 handle-generation | 8/8 | 1797 examples, 0 failures(基線 1788 ＋ 9) | 已重跑,33.2 秒,相同結果 | `70f27b4` |
 | 2 | F001 exception-firewall | 8/8 | 1804 examples, 0 failures(＋7) | 已重跑,相同結果 | `04ec6ad` |
-| 3 | F003 rts-config-init | 12/12 | Windows 1816 examples 0 failures(＋12);Linux(WSL)1816 examples 0 failures 9 pending | 已直接執行 spec 二進位重跑,38.9 秒,相同結果 | 見下方 commit |
+| 3 | F003 rts-config-init | 12/12 | Windows 1816 examples 0 failures(＋12);Linux(WSL)1816 examples 0 failures 9 pending | 已直接執行 spec 二進位重跑,38.9 秒,相同結果 | `3dba002` |
+| 4 | F005 step-planner-c-abi | 8/8 | 1831 examples, 0 failures(＋15) | 已重跑,39.9 秒,相同結果 | 見下方 commit |
 
 **F002 的接縫實況**(供後續實作者):註冊表是兩張頂層 `IORef (Table a)`(**非 `MVar`**),解析路徑無鎖;所有變動集中在 `Magic.FFI.Registry` 的 `registryInsert`／`registryRelease`,F004 的表級寫入鎖加在那裡即可,22 個呼叫端不動。`withCell`／`withScene` 現在是四參數(`onNull`／`onInvalid`／續體)。F001 的毒化控制代碼改用 `Magic.FFI` 匯出的 `newSpellHandle`／`newSceneHandle`——`newStablePtr . SpellCell` 已不存在,且那個值現在會被判偽造。
 
