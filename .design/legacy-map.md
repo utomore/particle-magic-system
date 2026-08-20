@@ -5,7 +5,7 @@ title: legacy-map
 description: 新舊設計文檔體系的對照表與界線
 status: active
 created: 2026-08-19
-updated: 2026-08-19
+updated: 2026-08-20
 parent: system
 ---
 
@@ -55,18 +55,25 @@ parent: system
 | func-0007 | force-field-layer | `docs/spec/func-0007-force-field-layer.md` |
 | func-0010 | performance-budget | `docs/spec/func-0010-performance-budget.md` |
 
-### boundary-host（8）
+### boundary-host（5）
 
 | 舊 id | feature | 舊文檔 |
 |---|---|---|
 | func-0001 | framework-skeleton | `docs/spec/func-0001-framework-skeleton.md` |
 | func-0008 | ortho2d-projection | `docs/spec/func-0008-ortho2d-backend.md` |
-| func-0009 | ffi-foreign-library | `docs/spec/func-0009-ffi-foreign-library.md` |
-| func-0011 | host-integration-surface | `docs/spec/func-0011-host-integration-surface.md` |
 | func-0012 | scene-layer | `docs/spec/func-0012-multi-circle-composition.md` |
-| func-0018 | scene-c-abi | `docs/spec/func-0018-scene-c-abi.md` |
 | func-0025 | spatial-output-anchors | `docs/spec/func-0025-spatial-output-anchors.md` |
 | enhance-0001 | haskell-host-onboarding | `docs/enhance/enhance-0001-haskell-2d-host-onboarding.md` |
+
+### host-runtime（3）
+
+2026-08-20 依 [ADR-025](adr/ADR-025-host-runtime-subsystem-split.md) D4 自 boundary-host 換主場——「一份規格恰屬一個子系統」的規則不變，只是三份換了歸屬。
+
+| 舊 id | feature | 舊文檔 |
+|---|---|---|
+| func-0009 | ffi-foreign-library | `docs/spec/func-0009-ffi-foreign-library.md` |
+| func-0011 | host-integration-surface | `docs/spec/func-0011-host-integration-surface.md` |
+| func-0018 | scene-c-abi | `docs/spec/func-0018-scene-c-abi.md` |
 
 ### render-shell（4）
 
@@ -119,6 +126,16 @@ parent: system
 | adr-0018 | 自訂 shader 進殼層、SoA 六欄鬆綁為九欄 |
 | adr-0019 | 空間摘要是輸出不是模擬結構 |
 | adr-0020 | 陣會自轉：逐位元邊界收窄至 t = 0 |
+
+新體系的 ADR（`.design/adr/`），以及它們修訂了哪些舊條款：
+
+| ADR | 決策 | 修訂 |
+|---|---|---|
+| ADR-021 | 平台策略：PC 三平台為出貨目標，Haskell 庫即出貨執行期 | adr-0016 D1 |
+| ADR-022 | 執行期契約：RTS 由宿主設定、例外防火牆、執行緒模型、控制代碼世代 | adr-0011 D4、D5 |
+| ADR-023 | 宿主緩衝契約與純值契約並存，取樣器直寫宿主記憶體 | adr-0011 D3；補充 adr-0006、adr-0007 |
+| ADR-024 | 自製確定性三角函數，決定論升級為跨平台逐位元 | **取代** adr-0016 D4 |
+| ADR-025 | 從 boundary-host 切出 host-runtime 子系統 | 本檔的主場歸屬 |
 
 ## 其他舊文檔的去向
 
