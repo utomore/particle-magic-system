@@ -63,29 +63,29 @@ parent: host-runtime
 | F001 A4 | `SomeException` 是否含非同步例外 | 全攔、不重拋 | — |
 | F001 A5 | 防火牆路徑是否維持 all-or-nothing | 不承諾(宿主緩衝可能半更新);議題屬 F010 | — |
 | F001 A6 | 防火牆組合子命名 | `firewall`/`firewallErr`,守門測試靠名字比對 | — |
-| F001 A7 | ADR-022 背景寫「30 個 foreign export」 | 實測 29 個;建議修訂敘述 | **待裁決** |
+| F001 A7 | ADR-022 背景寫「30 個 foreign export」 | 實測 29 個;建議修訂敘述 | 接受:改為 29(純敘述修正,已套用) |
 | F002 A1 | 控制代碼的 Haskell 面型別 | 維持 `StablePtr`,不改 `Ptr` 新型別 | — |
 | F002 A2 | 「不回收識別碼」的解讀 | slot 可回收、控制代碼的值永不重複 | — |
-| F002 A3 | **C2.3 與凍結標頭衝突**:7 個符號無錯誤碼通道 | 無法字面成立;建議 C2.3 補「回安全無操作或中性值」 | **待裁決** |
+| F002 A3 | **C2.3 與凍結標頭衝突**:7 個符號無錯誤碼通道 | 無法字面成立;建議 C2.3 補「回安全無操作或中性值」 | 接受:C2.3 補「安全無操作或中性值」(已套用) |
 | F002 A4 | NULL 與「無效」是否區分 | 區分:NULL 沿用凍結承諾,非 NULL 無效者從 UB 改回 `PM_ERR_ARGS` | — |
 | F002 A5 | 世代溢位 | 該 slot 永久退休 | — |
 | F002 A6 | 偽造偵測上限 | 恰好等於現存合法控制代碼的字無法辨識,文件明說 | — |
-| F002 A7 | 與 F001 的互動 | F001 的 T6 毒化寫法在 F002 後會回 `PM_ERR_ARGS`;建議 F002 先合併 | **待裁決(排序)** |
-| F003 — | **C2.4 的 DllMain 假設被推翻** | 實測 Windows standalone DLL 未在 DllMain 啟動 RTS;三項設定兩平台皆可全生效 | **待裁決(修訂敘述)** |
+| F002 A7 | 與 F001 的互動 | F001 的 T6 毒化寫法在 F002 後會回 `PM_ERR_ARGS`;建議 F002 先合併 | 接受:實作序改為 F002 → F001 → F003 → F005 → F007 |
+| F003 — | **C2.4 的 DllMain 假設被推翻** | 實測 Windows standalone DLL 未在 DllMain 啟動 RTS;三項設定兩平台皆可全生效 | 接受:C2.4／C2.5 與 ADR-022 背景第 7 條已更正 |
 | F003 A1 | 三者全生效只能靠 out-of-process 驗證 | in-process 永遠走降級支 | — |
 | F003 A2 | `pm_abi_version` 的歸屬 | 改由 C 端回答,使其在初始化前可安全呼叫 | — |
 | F003 A3 | 「RTS 由我們啟動」那一支的自動化 | 交 F006 機械化 | — |
-| F003 A4 | RTS 統計旗標 `-T` | 本功能不開;F011 需要就得加 `PmConfig` 欄位 | **待裁決** |
+| F003 A4 | RTS 統計旗標 `-T` | 本功能不開;F011 需要就得加 `PmConfig` 欄位 | **推翻**:現在就在 `PmConfig` 加 RTS 統計欄位(C1.5 已補);F003 文檔需補一項 Todo |
 | F003 A5 | `GHCRTS` 環境變數 | 用 `RtsOptsIgnoreAll` 讓它失效(實測 `-A128m` 會殺進程) | — |
 | F003 A6 | `PmConfig.size` 大於已知版本 | 一律拒收 | — |
 | F003 A7 | `pm_hs_*` 具名符號在 Linux .so 的可見性 | 假設可見,待實作驗證 | — |
 | F003 A8 | cbits 的原子實作 | C11 atomics | — |
-| F005 A1 | **C2.6 與凍結標頭衝突**:推進符號是 `void` | 新增 `pm_advance_ex`/`pm_scene_advance_ex`;符號 31→34 | **待裁決** |
+| F005 A1 | **C2.6 與凍結標頭衝突**:推進符號是 `void` | 新增 `pm_advance_ex`/`pm_scene_advance_ex`;符號 31→34 | 接受:新增 C1.12,只加推進的兩個 `_ex`,符號 31→34 |
 | F005 A2 | 規劃器對非有限/負輸入 | NULL 出參、非有限、`max_steps<0`、`acc_in<0` → `PM_ERR_ARGS`;其餘逐位元鏡射 | — |
 | F005 A3 | `_ex` 對 NULL 控制代碼 | 回 `PM_ERR_ARGS` | — |
 | F005 A4 | `pm_plan_steps` 是純函數卻需先 `pm_init` | 維持 Haskell 匯出,標頭明文要求;錯誤碼交 F003 的 I3 | — |
-| F005 A5 | `plan 1e-300 8 1e300 0` 病態結果 | 逐位元鏡射不修;若判為缺陷應在 boundary-host 開 bugfix | **待裁決** |
-| F007 A1 | **C4 的 Linux standalone 不可行** | 改「`.so` ＋ 閉包 ＋ `$ORIGIN`」,已在乾淨環境實測通過 | **待裁決** |
+| F005 A5 | `plan 1e-300 8 1e300 0` 病態結果 | 逐位元鏡射不修;若判為缺陷應在 boundary-host 開 bugfix | 接受:逐位元鏡射不修;病態案例留待 boundary-host 有需求再開 bugfix |
+| F007 A1 | **C4 的 Linux standalone 不可行** | 改「`.so` ＋ 閉包 ＋ `$ORIGIN`」,已在乾淨環境實測通過 | 接受:C4 Linux 列改「`.so` ＋ 閉包 ＋ `$ORIGIN`」(已套用) |
 | F007 A2 | `$ORIGIN` 能否穿過 cabal→ld | 未測;允許退回 `patchelf`(WSL 目前沒有) | — |
 | F007 A3 | macOS 全未驗證 | `install_name`/雙架構/PIC 皆為紙上設定 | — |
 | F007 A4 | 非 git 環境的版本檔 `commit` 欄 | 寫 `unknown` | — |
@@ -96,4 +96,11 @@ parent: host-runtime
 
 ### 階段一
 
-（進行中）
+**W1 設計(2026-08-20)**:F001、F002、F003、F005、F007 五份全數產出,共 43 個 Todo,零阻塞,`/arch-audit status` 零不一致。
+
+**提前開閘門的理由**:三條假設牴觸編排者先前寫下的 Level 2 契約(七個符號無錯誤碼通道、Linux standalone 不可行、DllMain 假設被推翻)。依「契約改了受影響的 feature 要重跑」的規則,先實作再改契約等於白做,故在實作前先裁決。
+
+**四項裁決**(見上表):C2.3／C2.6 補措辭並新增 C1.12 推進錯誤碼變體;C4 Linux 改閉包 ＋ `$ORIGIN`;實作序 F002 → F001 → F003 → F005 → F007;`PmConfig` 現在就加 RTS 統計欄位。
+
+**設計是否需重跑**:不需要。F005 與 F007 的文檔本來就是照它們自己查證出的新事實寫的——是設計驅動了契約修訂,不是設計落後於契約。唯一例外是 F003 的 A4 被推翻,該文檔續跑補一項 Todo。
+
