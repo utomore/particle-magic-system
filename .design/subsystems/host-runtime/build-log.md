@@ -75,11 +75,12 @@ parent: host-runtime
 | F003 A1 | 三者全生效只能靠 out-of-process 驗證 | in-process 永遠走降級支 | — |
 | F003 A2 | `pm_abi_version` 的歸屬 | 改由 C 端回答,使其在初始化前可安全呼叫 | — |
 | F003 A3 | 「RTS 由我們啟動」那一支的自動化 | 交 F006 機械化 | — |
-| F003 A4 | RTS 統計旗標 `-T` | 本功能不開;F011 需要就得加 `PmConfig` 欄位 | **推翻**:現在就在 `PmConfig` 加 RTS 統計欄位(C1.5 已補);F003 文檔需補一項 Todo |
+| F003 A4 | RTS 統計旗標 `-T` | 本功能不開;F011 需要就得加 `PmConfig` 欄位 | **推翻**:現在就加(已落地為 `PmConfig` 第四欄,佔用初版預留槽,`sizeof` 不變) |
 | F003 A5 | `GHCRTS` 環境變數 | 用 `RtsOptsIgnoreAll` 讓它失效(實測 `-A128m` 會殺進程) | — |
 | F003 A6 | `PmConfig.size` 大於已知版本 | 一律拒收 | — |
 | F003 A7 | `pm_hs_*` 具名符號在 Linux .so 的可見性 | 假設可見,待實作驗證 | — |
 | F003 A8 | cbits 的原子實作 | C11 atomics | — |
+| F003 A9 | 「要求統計時 `pm_stats` 拿得到 GC 數字」跨兩份文檔,正向路徑 in-process 測不到 | F003 只斷言開關與判準,正向以純 C 探測為證據並於實作期兩平台各跑一次;`pm_stats` 層級的表達由 F011 負責 | 接受;F011 契約卡已補「不可用的表達方式」為其驗收項 |
 | F005 A1 | **C2.6 與凍結標頭衝突**:推進符號是 `void` | 新增 `pm_advance_ex`/`pm_scene_advance_ex`;符號 31→34 | 接受:新增 C1.12,只加推進的兩個 `_ex`,符號 31→34 |
 | F005 A2 | 規劃器對非有限/負輸入 | NULL 出參、非有限、`max_steps<0`、`acc_in<0` → `PM_ERR_ARGS`;其餘逐位元鏡射 | — |
 | F005 A3 | `_ex` 對 NULL 控制代碼 | 回 `PM_ERR_ARGS` | — |
@@ -103,4 +104,6 @@ parent: host-runtime
 **四項裁決**(見上表):C2.3／C2.6 補措辭並新增 C1.12 推進錯誤碼變體;C4 Linux 改閉包 ＋ `$ORIGIN`;實作序 F002 → F001 → F003 → F005 → F007;`PmConfig` 現在就加 RTS 統計欄位。
 
 **設計是否需重跑**:不需要。F005 與 F007 的文檔本來就是照它們自己查證出的新事實寫的——是設計驅動了契約修訂,不是設計落後於契約。唯一例外是 F003 的 A4 被推翻,該文檔續跑補一項 Todo。
+
+**F003 增量(續跑,非重寫)**:`PmConfig` 第四欄 `stats` 佔用初版預留槽(v1 未出貨,故是改欄位不是加欄位,`sizeof` 不變);新增 T12 與三條 1-to-1 測試。實測發現的陷阱值得記:**不帶 `-T` 時 `getRTSStats()` 不崩,但回半真半假的結構**——`gcs` 與 `allocated_bytes` 是真的,`gc_elapsed_ns` 卻是 `0`,於是「統計關掉」與「真的沒有 GC 暫停」長得一模一樣。唯一誠實的判準是 `getRTSStatsEnabled()`,已釘進標頭供 F011 消費。
 

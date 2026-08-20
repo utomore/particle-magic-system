@@ -34,7 +34,9 @@ related-feature: []
 7. Windows 與 Linux 的關閉語意一致並有測試；
 8. 設定結構以 `size` 欄開頭。
 
-第 2 條的查證**已完成**（下方「平台查證結果」）：**`DllMain` 並沒有啟動 RTS**——`cbits/pm_init.c:9-13` 的註解與事實不符。因此三個欄位在 Windows 與 Linux 上**都全數生效**，C2.4 的降級條款改為適用於另一個真實情境：**RTS 已被宿主自己啟動**（Haskell 宿主、或宿主先呼叫過 `hs_init`）。
+第 2 條的查證**已完成**（下方「平台查證結果」）：**`DllMain` 並沒有啟動 RTS**——`cbits/pm_init.c:9-13` 的註解與事實不符。因此設定欄位在 Windows 與 Linux 上**都全數生效**，C2.4 的降級條款改為適用於另一個真實情境：**RTS 已被宿主自己啟動**（Haskell 宿主、或宿主先呼叫過 `hs_init`）。
+
+**階段閘門增補（2026-08-20，推翻本文件初版的 A4）**：C1.5 現在讀作「capability 數、nursery 大小、GC 模式、**是否啟用 RTS 統計**」——統計旗標**無法在初始化後開啟**（E4-2），宿主不在此表態，C1.8 的 GC 數字就永遠查不到。因此 `PmConfig` 是**四個**設定欄位，驗收標準第 1 條與第 2 條的「三者」一律讀作「四者」，逐平台表也多一欄。
 
 **明確不做**（契約卡）：不讓庫替宿主選預設以外的 capability 數；不做執行期動態調整（初始化後不改）；不處理「宿主自己已啟動 RTS」以外的 RTS 共享；不靜默忽略任何無法生效的設定。
 
@@ -42,7 +44,7 @@ related-feature: []
 
 - **不提供任何「重啟 RTS」的路徑**。GHC 9.14.1 明文拒絕（E1-4／E3-4），本功能只保證那個拒絕變成錯誤碼而不是屍體。
 - **不改動核心的 `parallelThreshold`**。門檻與 capability 數的關係寫進文件與整合指南，程式碼一個位元都不動（見「7. 與平行取樣門檻的關係」）。
-- **不新增診斷面**。`-T`（RTS 統計）是否要開屬 F011 diagnostics-stats，見「待確認假設 A4」。
+- **不新增診斷面**。本功能只負責「宿主有沒有要求 RTS 統計」這個**開關**與它在 RTS 中生效；`pm_stats` 這個符號、`PmStats` 結構、以及各欄位的語意屬 F011 diagnostics-stats。兩者的交界寫成一條可被 F011 直接消費的判準（見「2. `pm_init_ex` 的三條路徑」末段）。
 
 ## 相依性
 
@@ -65,7 +67,8 @@ related-feature: []
 
 | Level 2 條目 | 本功能做的事 | 是否超出 |
 |---|---|---|
-| **C1.5 執行期設定** | 全部實作：`pm_init_ex(const PmConfig*)`，`PmConfig` 以 `size` 欄開頭，帶 capability 數（0 ＝ 依硬體）、nursery 大小、GC 模式，回錯誤碼；無參數初始化保留且行為不變；RTS 已初始化時再呼叫、或關閉後再初始化，回 `PM_ERR_STATE` | 否 |
+| **C1.5 執行期設定（含 RTS 統計欄位）** | 全部實作：`pm_init_ex(const PmConfig*)`，`PmConfig` 以 `size` 欄開頭，帶 capability 數（0 ＝ 依硬體）、nursery 大小、GC 模式、**是否啟用 RTS 統計**（旗標無法在初始化後開啟，故必須在此表態），回錯誤碼；無參數初始化保留且行為不變（統計維持關閉，E4-4）；RTS 已初始化時再呼叫、或關閉後再初始化，回 `PM_ERR_STATE` | 否 |
+| **C1.8 診斷的前提** | 只做「宿主有沒有要求統計」這個開關，並把 F011 該用的判準（`getRTSStatsEnabled()` 為假 → GC 欄位回報為不可用而非零）寫進標頭 | 否。`pm_stats`／`PmStats` 屬 F011 |
 | **C2.4 RTS 歸宿主** | 庫預設保守（單 capability、預設 GC）、不自行開 OS 執行緒；**降級條款**依查證結果落在「RTS 已由宿主啟動」而非「Windows 載入器」，capability 數仍以執行期 API 生效，其餘回 `PM_ERR_STATE`，並逐平台文件化 | 否。條款文字不動，適用情境由查證決定 |
 | **C2.5 關閉語意** | 關閉後本進程不得再使用本庫，兩平台語意一致；由**狀態機**而非 RTS 的行為保證，所以 `DllMain` refcount 的不對稱天然被吸收 | 否 |
 | **I3（M2 → M1）** | 建立：任何匯出符號在 RTS 未初始化或已關閉時回錯誤，**不進入 Haskell**（這一條是字面意義的——進入 Haskell 就已經死了） | 否 |
@@ -125,14 +128,25 @@ E2-13／E2-14／E2-15 是本功能唯一一項超出契約卡字面的修正：`
 | E3-5 | `hs_init_ghc` 帶 `-N4 -A64m --nonmoving-gc` | 三項全生效（同 E2-2） |
 | E3-6 | 初始化後 `setNumCapabilities` | 生效（同 E2-9） |
 
+**E4 — RTS 統計旗標（階段閘門推翻 A4 之後補做）：同一個 C main，`rts_opts_enabled = RtsOptsIgnoreAll`，初始化後 `performGC()` 再讀統計**
+
+| # | 設定 | 結果 |
+|---|---|---|
+| E4-1 | `rts_opts = "-N2 -A32m -T"` | `RtsFlags.GcFlags.giveStats=1`、**`getRTSStatsEnabled()=1`**；`performGC` 後 `gcs=1`、`gc_elapsed_ns=122800`——**統計旗標在 `RtsOptsIgnoreAll` 之下照樣由 `RtsConfig` 開得起來**，不需要 `GHCRTS`、不需要 `-rtsopts` |
+| E4-2 | 同上但不帶 `-T` | `getRTSStatsEnabled()=0`；`getRTSStats()` **不崩**，但回來的是**半真半假**的結構：`gcs=1`、`allocated_bytes=243576` 是真的（那些計數器本來就在跑），**`gc_elapsed_ns=0`**——暫停時間欄位靜默為零 |
+| E4-3 | `rts_opts = "-T"` ＋ `GHCRTS=-A128m` | 統計開起來（`getRTSStatsEnabled()=1`），環境變數照樣被忽略、不殺進程（與 E2-15 一致） |
+| E4-4 | `rts_opts` 為空（＝今天的 `pm_init`） | `getRTSStatsEnabled()=0`——**無參數初始化的行為不變** |
+
+E4-2 就是契約要求「**回報為不可用而非零**」的理由：`gc_elapsed_ns == 0` 在關掉統計時與「這一段真的沒有 GC 暫停」長得一模一樣。唯一誠實的判準是 `getRTSStatsEnabled()`，而不是欄位值本身。
+
 **結論（寫進標頭與整合指南的逐平台表）**：
 
-| 平台 | RTS 由載入器先啟動？ | `pm_shutdown` 真的關掉 RTS？ | capabilities | nursery | GC 模式 |
-|---|---|---|---|---|---|
-| Windows x86_64（standalone DLL） | **否**（E1-2） | 是（E1-5） | 生效 | 生效 | 生效 |
-| Linux x86_64（`.so`） | 否（E3-3） | 是（E3-2、E3-4） | 生效 | 生效 | 生效 |
-| macOS（`.dylib`） | 未實測（無機器），預期同 Linux | 預期同 Linux | 預期生效 | 預期生效 | 預期生效 |
-| **任一平台，但 RTS 已由宿主啟動** | — | 否（只減 refcount） | 生效（執行期 API） | **`PM_ERR_STATE`** | **`PM_ERR_STATE`** |
+| 平台 | RTS 由載入器先啟動？ | `pm_shutdown` 真的關掉 RTS？ | capabilities | nursery | GC 模式 | RTS 統計 |
+|---|---|---|---|---|---|---|
+| Windows x86_64（standalone DLL） | **否**（E1-2） | 是（E1-5） | 生效 | 生效 | 生效 | 生效（E4-1） |
+| Linux x86_64（`.so`） | 否（E3-3） | 是（E3-2、E3-4） | 生效 | 生效 | 生效 | 生效（E4-1，同一條 RTS 路徑） |
+| macOS（`.dylib`） | 未實測（無機器），預期同 Linux | 預期同 Linux | 預期生效 | 預期生效 | 預期生效 | 預期生效 |
+| **任一平台，但 RTS 已由宿主啟動** | — | 否（只減 refcount） | 生效（執行期 API） | **`PM_ERR_STATE`** | **`PM_ERR_STATE`** | **`PM_ERR_STATE`**（旗標只在初始化時可設） |
 
 `n_capabilities != 0` 是「RTS 已經起來了」的可靠偵測（E3-3 兩平台一致），而且它是一個普通的全域變數讀取，在 RTS 未啟動時讀它是安全的。
 
@@ -168,7 +182,8 @@ pm_init_ex(cfg):
         hs_init(&argc, &argv);                            // 只為配對 refcount
         若 cfg->capabilities != 0 → setNumCapabilities(解析後的值)   // 生效
         owner = FOREIGN
-        rc = (nursery_bytes != 0 || gc_mode != PM_GC_DEFAULT) ? PM_ERR_STATE : PM_OK
+        rc = (nursery_bytes != 0 || gc_mode != PM_GC_DEFAULT
+              || (stats == PM_STATS_ON && !getRTSStatsEnabled())) ? PM_ERR_STATE : PM_OK
   4  狀態 = RUNNING（release），回 rc
 ```
 
@@ -182,8 +197,17 @@ pm_init_ex(cfg):
 | `nursery_bytes == 0` | （不加）| RTS 預設 4 MiB |
 | `nursery_bytes > 0` | `-A<bytes>` | E2-7：純數字＝位元組 |
 | `gc_mode == PM_GC_NONMOVING` | `--nonmoving-gc` | E2-2 |
+| `stats == PM_STATS_ON` | `-T` | E4-1：`RtsConfig.rts_opts` 是這條路唯一可行的通道——`GHCRTS` 已被 `RtsOptsIgnoreAll` 關掉（E2-15／E4-3），`-with-rtsopts` 是 ADR-022 否決的替代方案，`defaultsHook` 直寫 `RtsFlags` 是私有 ABI（E2-4） |
+| `stats == PM_STATS_OFF` | （不加）| E4-4：與今天的 `pm_init` 逐位元相同 |
 
 字串以固定大小的堆疊緩衝組成（上限可靜態算出，欄位都是有界整數），不配置堆積。
+
+**統計旗標與 F011 的交界**（本功能只做左半邊）：
+
+| 誰 | 負責什麼 |
+|---|---|
+| F003（本功能） | `PmConfig.stats` 這個開關、它變成 `-T`、以及「要求了但開不起來就回 `PM_ERR_STATE`」 |
+| F011 diagnostics-stats | `pm_stats`／`PmStats` 本身。判準寫死一句：**`getRTSStatsEnabled()` 為假時，進程層級的 GC 欄位一律回報為「不可用」**（`PmStats` 自己的旗標欄或哨兵值由 F011 定），**不得**把 `getRTSStats()` 回來的 `gc_elapsed_ns == 0` 當成真實數字——E4-2 證明那兩件事在關掉統計時長得一樣 |
 
 **驗證規則與錯誤碼情境表**（`PM_ERR_ARGS` 的每一條都在 RTS 之前擋下，狀態與 RTS 皆不變）：
 
@@ -194,10 +218,10 @@ pm_init_ex(cfg):
 | `capabilities > PM_MAX_CAPABILITIES` | `PM_ERR_ARGS` | 無（E2-8：RTS 會照收並放大 capability 陣列，那不是宿主要的） |
 | `nursery_bytes != 0` 且 `< PM_NURSERY_MIN_BYTES` 或 `> PM_NURSERY_MAX_BYTES` | `PM_ERR_ARGS` | 無（E2-7） |
 | `gc_mode` 不是 `PM_GC_DEFAULT`／`PM_GC_NONMOVING` | `PM_ERR_ARGS` | 無 |
-| `reserved != 0` | `PM_ERR_ARGS` | 無 |
-| 狀態 `UNINIT`、RTS 未起（正常路徑 3a） | `PM_OK` | RTS 以三項設定啟動；狀態 `RUNNING`（`OURS`） |
+| `stats` 不是 `PM_STATS_OFF`／`PM_STATS_ON` | `PM_ERR_ARGS` | 無 |
+| 狀態 `UNINIT`、RTS 未起（正常路徑 3a） | `PM_OK` | RTS 以四項設定啟動；狀態 `RUNNING`（`OURS`） |
 | 狀態 `UNINIT`、RTS 已由宿主啟動、只要求 capabilities 或全預設（3b） | `PM_OK` | `setNumCapabilities` 生效；狀態 `RUNNING`（`FOREIGN`） |
-| 同上，但要求 nursery 或 nonmoving GC（3b 降級） | `PM_ERR_STATE` | capabilities **仍生效**；nursery／GC **未套用**；狀態 `RUNNING`（`FOREIGN`），**庫可用** |
+| 同上，但要求 nursery、nonmoving GC，或要求統計而該進程的 RTS 沒開（3b 降級） | `PM_ERR_STATE` | capabilities **仍生效**；nursery／GC／統計**未套用**；狀態 `RUNNING`（`FOREIGN`），**庫可用**。要求統計而宿主的 RTS **本來就開著**（`getRTSStatsEnabled()` 為真）不算降級，回 `PM_OK` |
 | 狀態 `INITIALIZING`（另一執行緒正在初始化） | `PM_ERR_STATE`（等對方離開該狀態後才回） | 無；本次設定未生效 |
 | 狀態 `RUNNING`（重複初始化） | `PM_ERR_STATE` | 無；本次設定未生效（E2-10 的靜默忽略被擋在這裡） |
 | 狀態 `CLOSED`（`pm_shutdown` 之後） | `PM_ERR_STATE` | 無。**永遠不會走到 `hs_init_ghc`**，所以 E1-4／E3-4 的死法不再可能 |
@@ -262,8 +286,8 @@ void pm_advance(PmSpell* s, float dt) {
 
 C2.4 要求「文件逐平台明列哪些欄位生效——不靜默忽略」。落點兩處：
 
-1. `include/particle_magic.h`：`PmConfig` 上方的散文附「查證結果」那張表（哪個平台、哪個欄位、生效與否），並明說降級只在「RTS 已由宿主啟動」時發生、macOS 尚未實測。
-2. `docs/integration.md` 新增「執行期」一節：狀態機圖、`pm_init_ex` 的遊戲建議設定、逐平台生效表、關閉語意（含「長駐宿主乾脆別呼叫 `pm_shutdown`」的既有建議，理由從「RTS 不能重啟」升級為「狀態機會永久拒絕」）、`PM_ERR_STATE` 的兩種語氣。`docs/integration.md:447-451` 的既有四條要同步改寫。
+1. `include/particle_magic.h`：`PmConfig` 上方的散文附「查證結果」那張表（哪個平台、哪個欄位、生效與否，四個欄位各一欄），並明說降級只在「RTS 已由宿主啟動」時發生、macOS 尚未實測。
+2. `docs/integration.md` 新增「執行期」一節：狀態機圖、`pm_init_ex` 的遊戲建議設定、逐平台生效表、**「想要 GC 統計就必須在初始化時要求，事後補不了」**這句、關閉語意（含「長駐宿主乾脆別呼叫 `pm_shutdown`」的既有建議，理由從「RTS 不能重啟」升級為「狀態機會永久拒絕」）、`PM_ERR_STATE` 的兩種語氣。`docs/integration.md:447-451` 的既有四條要同步改寫。
 
 ### 6. 標頭、`.def`、C# 綁定
 
@@ -332,6 +356,8 @@ hspec 套件是一個 Haskell 執行檔，**它的 RTS 一開始就是起來的*
 | `typedef struct { RtsOptsEnabledEnum rts_opts_enabled; HsBool rts_opts_suggestions; const char *rts_opts; HsBool rts_hs_main; … void (*defaultsHook)(void); … } RtsConfig;` | `RtsAPI.h:83-125` | - | 同上；`defaultsHook` 經評估後**不採用**（E2-4：`RtsFlags` 是私有 ABI，且 0 值會 segfault） |
 | `typedef enum { RtsOptsNone, RtsOptsIgnore, RtsOptsIgnoreAll, RtsOptsSafeOnly, RtsOptsAll } RtsOptsEnabledEnum;` | `RtsAPI.h:71-76` | - | 採用 `RtsOptsIgnoreAll`（E2-15） |
 | `extern void hs_exit (void);` | `$(ghc --print-libdir)/…/rts-1.0.3/include/HsFFI.h:102` | - | `pm_shutdown` 的配對呼叫，最多一次 |
+| `int getRTSStatsEnabled (void);` | `$(ghc --print-libdir)/…/rts-1.0.3/include/RtsAPI.h:284` | - | 3b 降級支判斷統計是否真的開著；測試的唯一判準；F011 的「不可用而非零」也用它 |
+| `void getRTSStats (RTSStats *s);`（`typedef struct _RTSStats {…} RTSStats;` 含 `gcs`、`major_gcs`、`allocated_bytes`、`gc_elapsed_ns`、`nonmoving_gc_*` 等欄） | `$(ghc --print-libdir)/…/rts-1.0.3/include/RtsAPI.h:192-281, 283` | - | **本功能不呼叫**；列在此處是因為 E4-2 的行為（統計關閉時不崩、但時間欄位為零）是「回報不可用而非零」這條規則的依據，F011 會消費它 |
 | `extern uint32_t n_capabilities;` | `$(ghc --print-libdir)/…/rts-1.0.3/include/rts/Threads.h:72` | - | 偵測「RTS 是否已被別人啟動」（E3-3：未啟動時為 0） |
 | `INLINE_HEADER unsigned int getNumCapabilities(void) { return RELAXED_LOAD(&n_capabilities); }` | `rts/Threads.h:74-75` | - | 同上的具名讀取；亦供測試斷言 capability 數 |
 | `extern void setNumCapabilities (uint32_t new_);` | `rts/Threads.h:92` | - | 3b 降級路徑讓 capability 數仍然生效（E2-9） |
@@ -363,6 +389,15 @@ hspec 套件是一個 Haskell 執行檔，**它的 RTS 一開始就是起來的*
 #define PM_GC_DEFAULT 0      /* the runtime's copying collector */
 #define PM_GC_NONMOVING 1    /* mark-and-sweep oldest generation: shorter pauses */
 
+/* Runtime statistics for PmConfig.stats. The runtime can only be told to
+   collect them WHILE STARTING UP, so a host that wants pm_stats to answer
+   the process-wide GC numbers has to say so here. Without it those
+   numbers are reported as unavailable -- not as zero, which is what the
+   runtime itself would hand back and is indistinguishable from "no GC
+   pauses happened". */
+#define PM_STATS_OFF 0
+#define PM_STATS_ON 1
+
 /* Bounds pm_init_ex validates PmConfig against. Outside them it answers
    PM_ERR_ARGS and starts nothing -- the runtime would otherwise abort the
    whole process on a bad value. */
@@ -379,7 +414,7 @@ typedef struct PmConfig {
     uint32_t capabilities;   /* 0 = follow the hardware; else 1..PM_MAX_CAPABILITIES */
     uint64_t nursery_bytes;  /* 0 = the runtime's default (4 MiB) */
     uint32_t gc_mode;        /* PM_GC_* */
-    uint32_t reserved;       /* must be 0 */
+    uint32_t stats;          /* PM_STATS_* -- can only be decided here */
 } PmConfig;
 
 /* Start the runtime with the host's settings. Call it INSTEAD of pm_init,
@@ -390,13 +425,13 @@ typedef struct PmConfig {
    out of order (already initialised, or after pm_shutdown -- nothing
    happened), or the runtime was already running in this process before
    the library was asked, so the capability count took effect but the
-   nursery and GC mode could not. Which fields take effect on which
-   platform is the table above. */
+   nursery, the GC mode and the statistics flag could not. Which fields
+   take effect on which platform is the table above. */
 int pm_init_ex(const PmConfig* config);
 ```
 
-- 版面：`4 + 4 + 8 + 4 + 4 = 24` 位元組，三個 Tier 1 ABI 上皆無填充、`sizeof(PmConfig) == 24`。
-- 散文另附：查證出來的**逐平台生效表**、狀態機四態、`PM_ERR_STATE` 的兩種語氣、閘門哨兵表（未初始化／已關閉時各類回傳值）、以及「`pm_shutdown` 之後本進程不得再使用本庫」這句承諾。
+- 版面：`4 + 4 + 8 + 4 + 4 = 24` 位元組，三個 Tier 1 ABI 上皆無填充、`sizeof(PmConfig) == 24`。`stats` 佔的正是初版預留給 `reserved` 的那個槽——**v1 尚未出貨**，所以這是改欄位而不是加欄位，`size` 仍是 24，日後要再加欄位一樣往尾端長。
+- 散文另附：查證出來的**逐平台生效表**（含 RTS 統計那一欄）、狀態機四態、`PM_ERR_STATE` 的兩種語氣、閘門哨兵表（未初始化／已關閉時各類回傳值）、「`pm_shutdown` 之後本進程不得再使用本庫」這句承諾，以及供 F011 消費的那條判準：**統計未啟用時，進程層級的 GC 數字回報為不可用，不是零**。
 - `PM_ABI_VERSION` 不動；既有 31 條宣告不動。
 
 ### C 側內部（`cbits/`，不進標頭）
@@ -416,23 +451,24 @@ int pm_init_ex(const PmConfig* config);
 
 | 名稱 | 說明 |
 |---|---|
-| `[StructLayout(LayoutKind.Sequential)] public struct PmConfig` | 五個欄位，型別對應 `uint/uint/ulong/uint/uint` |
+| `[StructLayout(LayoutKind.Sequential)] public struct PmConfig` | 五個欄位（`size`、`capabilities`、`nursery_bytes`、`gc_mode`、`stats`），型別對應 `uint/uint/ulong/uint/uint` |
 | `public static extern int pm_init_ex(ref PmConfig config);` | 帶 `[DllImport("particle-magic-ffi")]` |
-| `Pm.GcDefault`、`Pm.GcNonmoving`、`Pm.MaxCapabilities`、`Pm.NurseryMinBytes`、`Pm.NurseryMaxBytes` | 五個 `public const int`，行尾註解必須帶巨集名 |
+| `Pm.GcDefault`、`Pm.GcNonmoving`、`Pm.StatsOff`、`Pm.StatsOn`、`Pm.MaxCapabilities`、`Pm.NurseryMinBytes`、`Pm.NurseryMaxBytes` | 七個 `public const int`，行尾註解必須帶巨集名 |
 
 ## TodoList
 
-- [ ] T1: `include/particle_magic.h` 加 `PmConfig`、五個 `#define`、`pm_init_ex` 宣告，以及逐平台生效表／狀態機／`PM_ERR_STATE` 兩種語氣／閘門哨兵表的散文；`PM_ABI_VERSION` 與既有 31 條宣告不動 `dep: F001`
+- [ ] T1: `include/particle_magic.h` 加 `PmConfig`（含 `stats` 欄）、七個 `#define`、`pm_init_ex` 宣告，以及逐平台生效表（含 RTS 統計欄）／狀態機／`PM_ERR_STATE` 兩種語氣／閘門哨兵表的散文；`PM_ABI_VERSION` 與既有 31 條宣告不動 `dep: F001`
 - [ ] T2: `cbits/pm_init.c` 換掉裸 `static int`，實作四態原子狀態機（C11 atomics、CAS、acquire／release、`INITIALIZING` 的有界自旋讓出）與 `owner` 旗標 `dep: -`
-- [ ] T3: 實作 `PmConfig` 驗證（`NULL`／`size`／`capabilities`／`nursery_bytes`／`gc_mode`／`reserved`）與 `rts_opts` 字串生成（`-N`／`-N<n>`／`-A<bytes>`／`--nonmoving-gc`，堆疊緩衝、零堆積配置） `dep: T2`
+- [ ] T3: 實作 `PmConfig` 驗證（`NULL`／`size`／`capabilities`／`nursery_bytes`／`gc_mode`／`stats`）與 `rts_opts` 字串生成（`-N`／`-N<n>`／`-A<bytes>`／`--nonmoving-gc`／`-T`，堆疊緩衝、零堆積配置） `dep: T2`
 - [ ] T4: 實作 `pm_init_ex` 的三條路徑：3a（`hs_init_ghc` ＋ `RtsOptsIgnoreAll`）、3b（refcount 配對 ＋ `setNumCapabilities` ＋ 降級回 `PM_ERR_STATE`）、以及狀態不對時的 `PM_ERR_STATE` `dep: T3`
 - [ ] T5: 改寫 `pm_init`（`CLOSED` 不再殺進程、走同一具狀態機、成功路徑行為不變）與 `pm_shutdown`（先改狀態再 `hs_exit`，只配對我們自己的初始化，`UNINIT`／`CLOSED` 為無操作） `dep: T4`
 - [ ] T6: `src/ffi/Magic/FFI.hs` 的 29 個 `foreign export ccall` 改為具名外部符號 `"pm_hs_*"`；Haskell 函式名、簽名、本體不動 `dep: -`
 - [ ] T7: 新增 `cbits/pm_gate.c`：29 個閘門包裝依哨兵表回值；`pm_abi_version` 由 C 端直接回 `PM_ABI_VERSION`；`pm_cast` 的閘門另寫固定 ASCII 訊息進 `err_buf` `dep: T2, T6`
 - [ ] T8: `particle-magic.cabal`：foreign-library 加 `cbits/pm_gate.c`；`test-suite spec` 加 `c-sources: cbits/pm_init.c, cbits/pm_gate.c`；新測試模組登記進 `other-modules` `dep: T7`
 - [ ] T9: `particle-magic-ffi.def` 加 `pm_init_ex`；`test/FFIContractSpec.hs` 的三方對帳改版（`cbitsEntries`、新等式、`foreignExports` 剖析器支援具名形式） `dep: T7`
-- [ ] T10: `bindings/csharp/ParticleMagic.cs` 加 `PmConfig` 結構、`pm_init_ex` 的 `DllImport` 與五個常數（行尾註解帶巨集名） `dep: T1`
-- [ ] T11: `docs/integration.md` 新增「執行期」一節（狀態機、`pm_init_ex` 建議設定與 capability／`parallelThreshold` 的關係、逐平台生效表、關閉語意），並改寫 §4.4 的四條生命週期規則 `dep: T5`
+- [ ] T10: `bindings/csharp/ParticleMagic.cs` 加 `PmConfig` 結構（含 `stats`）、`pm_init_ex` 的 `DllImport` 與七個常數（行尾註解帶巨集名） `dep: T1`
+- [ ] T11: `docs/integration.md` 新增「執行期」一節（狀態機、`pm_init_ex` 建議設定與 capability／`parallelThreshold` 的關係、逐平台生效表、RTS 統計只能在初始化時表態、關閉語意），並改寫 §4.4 的四條生命週期規則 `dep: T5`
+- [ ] T12: RTS 統計旗標端到端：`stats == PM_STATS_ON` → `rts_opts` 帶 `-T` → `getRTSStatsEnabled()` 為真；`PM_STATS_OFF`（與 `pm_init()`）維持統計關閉；降級支（RTS 已由宿主啟動且統計沒開）回 `PM_ERR_STATE` 而不是靜默忽略；並把「`getRTSStatsEnabled()` 為假時 GC 欄位一律不可用」這條判準寫進標頭，供 F011 消費 `dep: T4`
 
 ## 1-to-1 測試對照表
 
@@ -440,7 +476,7 @@ int pm_init_ex(const PmConfig* config);
 |------|------|------|
 | T1 | `FFIContractSpec` — `it "declares PmConfig, its bounds and the per-platform runtime table"` | 標頭含 `typedef struct PmConfig`、五個 `#define` 的值（`headerDefines`）、`pm_init_ex` 出現在 `headerFunctions`；散文含哨兵詞（如 `PM_GC_NONMOVING` 與平台表的標記字串）；`PM_ABI_VERSION` 仍為 1 |
 | T2 | `FFIRuntimeSpec` — `it "refuses a second initialisation instead of silently ignoring it"` | 在測試進程（RTS 已起）呼叫一次 `pm_init_ex` 得 `PM_OK`／`PM_ERR_STATE`（依設定），再呼叫一次必得 `PM_ERR_STATE`；`pm_init()` 重複呼叫為無操作且不改變狀態 |
-| T3 | `FFIRuntimeSpec` — `it "answers PM_ERR_ARGS for every out-of-range config and starts nothing"` | 表驅動走完錯誤碼情境表的六個 `PM_ERR_ARGS` 列（`NULL`、`size` 錯、`capabilities` 超界、`nursery_bytes` 過小／過大、`gc_mode` 未知、`reserved != 0`），每一條之後狀態仍可被正常初始化 |
+| T3 | `FFIRuntimeSpec` — `it "answers PM_ERR_ARGS for every out-of-range config and starts nothing"` | 表驅動走完錯誤碼情境表的六個 `PM_ERR_ARGS` 列（`NULL`、`size` 錯、`capabilities` 超界、`nursery_bytes` 過小／過大、`gc_mode` 未知、`stats` 未知），每一條之後狀態仍可被正常初始化 |
 | T4 | `FFIRuntimeSpec` — `it "applies the capability count and reports the fields it could not honour"` | 以 `capabilities = getNumCapabilities() + 1`、`nursery_bytes = 0`、`gc_mode = PM_GC_DEFAULT` 呼叫 → `PM_OK` 且 `getNumCapabilities()` 變成要求值；另一組帶 `nursery_bytes`／`PM_GC_NONMOVING` → `PM_ERR_STATE`，但 capability 數仍生效、庫仍可用（隨後 `pm_cast` 成功） |
 | T5 | `FFIRuntimeSpec` — `it "makes shutdown one-way, identically on Windows and Linux"`（本模組**最後**一條） | `pm_shutdown()` 後：`pm_init_ex` 回 `PM_ERR_STATE`、`pm_init()` 為無操作且不重啟、再次 `pm_shutdown()` 為無操作（不出現 `too many hs_exit()s`）、閘門符號全部回哨兵、**測試進程存活**到套件結束 |
 | T6 | `FFIContractSpec` — `it "routes every C symbol through the gate and keeps the Haskell exports internal"` | 新等式：`headerFunctions` ≡ `.def` 的 `EXPORTS` ≡ `cbits` 定義的公開符號；且 `foreignExports` ≡ `pm_hs_` ＋（標頭符號扣掉 `pm_init`／`pm_init_ex`／`pm_shutdown` 三個 C 原生生命週期符號）；另斷言閘門的 `pm_abi_version` 與 `pm_hs_abi_version` 回同一個值。清單不寫死，F005 的新符號漏包閘門即紅 |
@@ -448,16 +484,18 @@ int pm_init_ex(const PmConfig* config);
 | T8 | `FFIContractSpec` — `it "builds the foreign library and the test suite from the same C sources"` | foreign-library 的 `c-sources` 同時含 `cbits/pm_init.c` 與 `cbits/pm_gate.c`；`test-suite spec` 的 `c-sources` 亦然（沒有這一條，T7／T2 根本連結不起來） |
 | T9 | `FFIContractSpec` — `it "exports through the Windows .def file exactly what the header declares"`（既有測試，須綠）＋ `cbitsEntries` 更新 | `.def` 少了 `pm_init_ex`、或多了 `pm_hs_*` 即紅 |
 | T10 | `BindingContractSpec` — `it "mirrors every header constant, by name and by value"` 與 `it "declares exactly the header's entry points, no more and no fewer"`（既有測試，須綠） | 五個新 `#define` 與 `pm_init_ex` 在 C# 綁定缺席即紅 |
-| T11 | `FFIRuntimeSpec` — `it "documents the runtime contract per platform in the integration guide"` | `docs/integration.md` 含「執行期」章節的哨兵字串：`pm_init_ex`、`PM_ERR_STATE`、逐平台表的標記、以及 capability 數與 8192 門檻關係的那一句；§4.4 不再宣稱重新初始化會怎樣而不說結果 |
+| T11 | `FFIRuntimeSpec` — `it "documents the runtime contract per platform in the integration guide"` | `docs/integration.md` 含「執行期」章節的哨兵字串：`pm_init_ex`、`PM_ERR_STATE`、`PM_STATS_ON`、逐平台表的標記、以及 capability 數與 8192 門檻關係的那一句；§4.4 不再宣稱重新初始化會怎樣而不說結果 |
+| T12 | `FFIRuntimeSpec` — `it "only reports GC numbers when the host asked for statistics at init"` | 三段，全部以 `foreign import ccall "getRTSStatsEnabled"` 為判準（那正是 F011 會用的那一個）：**(a)** 在 RTS 已起、統計未開的測試進程裡以 `stats = PM_STATS_ON` 呼叫 `pm_init_ex` → 回 `PM_ERR_STATE`，且 `getRTSStatsEnabled()` 仍為 0——**要求了但不可用，而且沒有被靜默忽略**；**(b)** 以 `PM_STATS_OFF` 呼叫 → 回 `PM_OK`，統計維持關閉，`pm_init()` 亦然（E4-4 的回歸）；**(c)** 判準本身的守門：斷言標頭寫著「`getRTSStatsEnabled()` 為假時 GC 欄位不可用」那一句（哨兵詞 `PM_STATS_ON`），因為 `getRTSStats()` 在關閉時回的 `gc_elapsed_ns` 是 0 而不是錯誤（E4-2）。**「要求統計 → 真的拿得到 GC 數字」的正向端到端**只在 `OURS` 支成立，in-process 不可能（見 A1／A3）：實作期以 scratchpad 的純 C 探測在 Windows 與 WSL 各驗一次（E4-1 即該探測的輸出），機械化與 `pm_stats` 層級的斷言隨 F011／F006 落地 |
 
 **併發（驗收標準第 4 條）**在 T2 的模組裡另有一條：`it "lets only one of two racing initialisations win"`——兩個 `forkIO` 同時呼叫 `pm_init_ex`，斷言恰好一個回 `PM_OK`（或在 `FOREIGN` 降級下的既定碼）、另一個回 `PM_ERR_STATE`，兩者都不崩，事後狀態為 `RUNNING`。它掛在 T2（狀態機）名下，因為原子性是 T2 的產物。
 
 ## 待確認假設
 
-- **A1**: 契約卡要求「在 Linux 三者於 RTS 中實際生效（以 RTS 統計驗證）」，但查證顯示 in-process 的 hspec 永遠走降級支（測試進程的 RTS 已起），而 Windows 的 `.def` 又不匯出 `RtsFlags`／`n_capabilities`，純 C 宿主在 Windows 上讀不到 nursery 與 GC 模式 → 採取：hspec 驗證「capability 數生效」與「降級回 `PM_ERR_STATE`」兩件事（兩平台皆可）；「三者全生效」以本文件的 E2-2／E3-5 為查證證據，並在實作期於 Windows 與 WSL 各跑一次同一組探測，機械化留給 F006（Linux 以 `dlsym("RtsFlags")` 斷言 nursery 與 GC 模式，Windows 只斷言 capability 數與生命週期）→ 影響：若編排者要求 Windows 也能機械驗證 nursery，唯一的路是讓 `pm_stats`（F011）回報 RTS 旗標，那會改動 F011 的結構定義。
+- **A1**: 契約卡要求「在 Linux 三者於 RTS 中實際生效（以 RTS 統計驗證）」，但查證顯示 in-process 的 hspec 永遠走降級支（測試進程的 RTS 已起），而 Windows 的 `.def` 又不匯出 `RtsFlags`／`n_capabilities`，純 C 宿主在 Windows 上讀不到 nursery、GC 模式與統計旗標 → 採取：hspec 驗證「capability 數生效」與「降級回 `PM_ERR_STATE`」兩件事（兩平台皆可）；「四者全生效」以本文件的 E2-2／E3-5／E4-1 為查證證據，並在實作期於 Windows 與 WSL 各跑一次同一組探測，機械化留給 F006（Linux 以 `dlsym("RtsFlags")`／`dlsym("getRTSStatsEnabled")` 斷言 nursery、GC 模式與統計，Windows 只斷言 capability 數與生命週期）→ 影響：若編排者要求 Windows 也能機械驗證 nursery，唯一的路是讓 `pm_stats`（F011）回報 RTS 旗標，那會改動 F011 的結構定義。
 - **A2**: `pm_abi_version` 今天在 `pm_init` 之前呼叫會殺進程（E1-2），但標頭寫的是「startup 時比對」 → 採取：閘門層讓 `pm_abi_version` 由 C 端直接回 `PM_ABI_VERSION`（同一個標頭巨集，不是第二份真相），使它在任何狀態下都可安全呼叫；Haskell 的 `pm_abi_version` 保留給 in-process 測試 → 影響：若編排者認為「C 面不得比 Haskell 面多知道一件事」也涵蓋常數，就把它降級為一般閘門符號（未初始化回 −7），要改標頭那句與 T7 的期望值。
 - **A3**: 「RTS 由我們啟動」那一支（3a）在 in-process 無法覆蓋 → 採取：本功能的綠燈不含它；實作期以純 C 探測在 Windows 與 WSL 各驗一次（產物不留 repo），機械化明文交給 F006 → 影響：若編排者要求本功能自帶 out-of-process 測試，等於把 F006 的 M8 工作提前，兩份文檔要重新分工。
-- **A4**: RTS 統計（`-T`）在初始化後無法再開，而 F011 diagnostics-stats 的「GC 次數與暫停時間」需要它 → 採取：本功能**不**替宿主開 `-T`（「不讓庫替宿主選預設以外的設定」），也不預留欄位 → 影響：F011 落地時必須在 `PmConfig` 尾端加一個欄位（add-only、`size` 變大），或接受「宿主沒要求統計就查不到 GC 數字」。建議編排者把這件事寫進 F011 的契約卡。
+- **A4（已由階段閘門裁決：推翻，現在就加）**: RTS 統計（`-T`）在初始化後無法再開，而 F011 diagnostics-stats 的「GC 次數與暫停時間」需要它。初版的判斷是「本功能不開、留給 F011 加欄位」；**編排者在階段閘門推翻，並已更新 C1.5／C1.8／ADR-022 D6 與本功能的契約卡** → 現行作法：`PmConfig` 的第四個欄位 `stats`（`PM_STATS_OFF`／`PM_STATS_ON`）現在就進 v1，對映到 `rts_opts` 的 `-T`（E4-1 實測在 `RtsOptsIgnoreAll` 之下可行），要求了但開不起來一律回 `PM_ERR_STATE`；判準交給 F011 的是 `getRTSStatsEnabled()`，不是欄位值（E4-2）。這條不再是待確認假設，留在此處只為記錄裁決。
+- **A9**: 「要求統計時 `pm_stats` 拿得到 GC 數字」這句斷言跨了兩份文檔——`pm_stats` 是 F011 的符號，而正向路徑（RTS 由本庫啟動並帶 `-T`）in-process 測不到 → 採取：本功能的 1-to-1 測試以 `getRTSStatsEnabled()` 斷言「要求了但不可用時回 `PM_ERR_STATE`、未要求時維持關閉」，正向端到端以 E4-1 的純 C 探測為查證證據並在實作期於兩平台各跑一次；`pm_stats` 層級的「不可用而非零」由 F011 依標頭寫死的判準實作與斷言 → 影響：若編排者要求本功能自帶 `pm_stats` 層級的斷言，等於把 F011 的 `PmStats` 結構定義提前到這裡，兩份文檔要重新分工（建議維持現狀：本功能交開關，F011 交讀數）。
 - **A5**: `rts_opts_enabled = RtsOptsIgnoreAll` 讓 `GHCRTS` 環境變數對本庫完全失效（E2-13／E2-14：今天它能蓋過宿主設定，甚至殺進程） → 採取：`pm_init` 與 `pm_init_ex` 都用 `RtsOptsIgnoreAll`，理由是 P-1（庫永不殺宿主）與「RTS 是宿主的」——環境變數不是宿主的 API 呼叫 → 影響：若有人靠 `GHCRTS` 對出貨的庫做現場調校，那條路會消失；要保留就得改用 `RtsOptsSafeOnly` 並接受 E2-14 的殺進程風險（不建議），或加一個 `PmConfig` 欄位開放它。
 - **A6**: `size` 大於本庫認得的版本時拒收（`PM_ERR_ARGS`）而非忽略多出來的欄位 → 採取：拒收，因為「不靜默忽略任何無法生效的設定」是契約卡明文 → 影響：未來新版標頭編出的宿主無法在舊版庫上跑，這是刻意的；若要改成「向前相容地忽略」，得同時定義一條「哪些欄位可以被安全忽略」的規則，那應該寫進 ADR 而不是這裡。
 - **A7**: 閘門層讓 `pm_hs_*` 這 29 個內部符號在 Linux 的 `.so` 上可見（Windows 因 `.def` 不可見） → 採取：接受並在標頭註明它們是內部符號、不屬於 ABI；不為此加 version script 或 `-fvisibility=hidden`（那會動到連結設定，屬 F007 packaging-content 的範圍） → 影響：若 F007 之後決定收斂 Linux 的匯出面，`pm_hs_*` 要一併隱藏，兩份文檔的守門測試要對齊。
