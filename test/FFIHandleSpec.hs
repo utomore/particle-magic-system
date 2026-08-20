@@ -15,7 +15,6 @@
 module FFIHandleSpec (spec) where
 
 import Control.Exception (ErrorCall, SomeException, catch, evaluate, try)
-import Data.Either (isLeft)
 import Data.List (isInfixOf, nub)
 import qualified Data.Vector.Unboxed as U
 import Data.Word (Word32)
@@ -49,6 +48,7 @@ import Magic.FFI
   , newSceneHandle
   , newSpellHandle
   , pmErrArgs
+  , pmErrInternal
   , pmMaxParticles
   , pm_advance
   , pm_age
@@ -206,10 +206,16 @@ spec = describe "generation-tagged handles (host-runtime F002)" $ do
     -- The registry is lazy in the cell's contents, which is what lets a
     -- spec put a bottom behind a perfectly legal handle. Forcing the age
     -- therefore reaches the bottom — proof that the handle resolved.
+    --
+    -- Since host-runtime F001 that bottom does not escape: the firewall
+    -- catches it and answers PM_ERR_INTERNAL's float mirror, -6.0. That is
+    -- still the proof this case wants, and a sharper one — the three
+    -- outcomes (resolved and exploded, never resolved, released) are now
+    -- three distinct values rather than an exception and a zero.
     poisoned <- newSpellHandle (error "poisoned spell")
     isNullSpell poisoned `shouldBe` False
     reached <- try (pm_age poisoned >>= evaluate) :: IO (Either ErrorCall CDouble)
-    reached `shouldSatisfy` isLeft
+    reached `shouldBe` Right (-6.0)
 
     -- A forged handle never gets that far: it is rejected before anything
     -- behind it is touched.
@@ -223,7 +229,7 @@ spec = describe "generation-tagged handles (host-runtime F002)" $ do
     isNullScene poisonedScene `shouldBe` False
     reachedScene <-
       try (pm_scene_count poisonedScene >>= evaluate) :: IO (Either ErrorCall CInt)
-    reachedScene `shouldSatisfy` isLeft
+    reachedScene `shouldBe` Right pmErrInternal
     freeSceneHandle poisonedScene
     pm_scene_count poisonedScene `shouldReturn` pmErrArgs
 

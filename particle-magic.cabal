@@ -429,6 +429,7 @@ test-suite spec
                     , PanelWriteBackSpec
                     , Acceptance24Spec
                     , FFIHandleSpec
+                    , FFIFirewallSpec
     build-depends:    base       ^>=4.22
                     , particle-magic:magic-core
                     , particle-magic:magic-boundary

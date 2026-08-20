@@ -82,6 +82,8 @@ module Magic.FFI
   , pmErrCapacity
   , pmErrArgs
   , pmErrQuota
+  , pmErrInternal
+  , pmErrState
   , pmOccupancyDimDefault
   , pmPlaneSideXY
   , pmPlaneTopXZ
@@ -99,6 +101,11 @@ module Magic.FFI
   , isNullScene
   , writeErr
 
+    -- * The exception firewall (host-runtime F001; not part of the C
+    -- contract, exposed so the specs can hand it an action that throws)
+  , firewall
+  , firewallErr
+
     -- * Handle registry internals (host-runtime F002; not part of the C
     -- contract, exposed so the specs can drive the lifecycle directly)
   , newSpellHandle
@@ -109,6 +116,7 @@ module Magic.FFI
   , sceneRegistryStats
   ) where
 
+import Control.Exception (SomeException, displayException, evaluate, try)
 import Control.Monad (foldM, when)
 import qualified Data.ByteString as BS
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
@@ -219,7 +227,7 @@ pmAbiVersion = 1
 pmMaxParticles :: CInt
 pmMaxParticles = 16384
 
-pmOk, pmErrJson, pmErrBudget, pmErrCapacity, pmErrArgs, pmErrQuota :: CInt
+pmOk, pmErrJson, pmErrBudget, pmErrCapacity, pmErrArgs, pmErrQuota, pmErrInternal, pmErrState :: CInt
 pmOk = 0
 pmErrJson = -1
 pmErrBudget = -2
@@ -236,6 +244,19 @@ pmErrArgs = -4
 -- refusal after dismissing something, and cannot retry a compile failure
 -- at all.
 pmErrQuota = -5
+
+-- | The firewall caught a Haskell exception (ADR-022 D2, host-runtime
+-- C1.9): something inside the library is broken. Never the host's fault,
+-- never worth retrying, and always worth a bug report — but the process
+-- stays alive and the library stays usable, which is the whole point.
+pmErrInternal = -6
+
+-- | The host called out of order — the runtime is not up, or was shut
+-- down, or is being configured a second time (host-runtime C1.9). The
+-- semantics land with host-runtime F003 and F004; the constant is minted
+-- here so the header, the Haskell mirror and the C# binding are reconciled
+-- once instead of twice.
+pmErrState = -7
 
 -- | 'CastRefusal' → C code. A pure function, so the classification is
 -- testable without a handle in sight, and so the /only/ decision the
@@ -404,12 +425,100 @@ withScene h onNull onInvalid k =
     ResInvalid -> pure onInvalid
     ResLive (SceneCell ref) -> k ref
 
+-- The exception firewall (host-runtime F001, ADR-022 D2) ---------------------
+--
+-- A Haskell exception crossing a @foreign export@ boundary is not an error
+-- the host can handle: the RTS terminates the process and prints to a
+-- stderr nobody is reading. The pure core is total and the boundary turns
+-- errors into values, so nothing here is meant to throw — but heap
+-- exhaustion, a deep recursion on hostile JSON and a future incomplete
+-- pattern are not things a type can rule out, and P-1 says the library
+-- never kills its host.
+--
+-- So every entry point runs inside one of the two combinators below. The
+-- firewall is the /last/ line, not a control-flow device: catching
+-- anything at all means there is a defect to fix.
+
+-- | Run an entry point's body; answer @sentinel@ if it throws.
+--
+-- The sentinel is the type's own way of saying @PM_ERR_INTERNAL@ —
+-- 'pmErrInternal' for the counting symbols, a @NULL@ handle for the two
+-- that return one, @-6.0@ for 'pm_age', @0@ for 'pm_occupancy_mask' and
+-- @()@ for the five that return @void@ and have nothing to say it with.
+firewall :: a -> IO a -> IO a
+firewall = firewallErr nullPtr 0
+
+-- | 'firewall' for the entry points that carry a host error buffer: the
+-- exception's text goes into @err_buf@ on the way out, through the same
+-- truncation-safe 'writeErr' every other failure message uses. 'firewall'
+-- is this with a @NULL@ buffer, which 'writeErr' already treats as a
+-- no-op — so there is one implementation, not two.
+--
+-- __Not all-or-nothing.__ 'pm_observe' promises that a /capacity/ failure
+-- writes no byte at all; the firewall promises no such thing, because an
+-- exception raised half way through a copy leaves the host's arrays half
+-- updated. On this path the library promises exactly two things: it
+-- returns, and it says @PM_ERR_INTERNAL@.
+firewallErr :: CString -> CInt -> a -> IO a -> IO a
+firewallErr buf len sentinel action =
+  -- 'evaluate' is load-bearing. GHC's foreign export wrapper unboxes the
+  -- result /after/ the Haskell action returns, so a body that leaves its
+  -- answer in a thunk (pm_age's @Time t@, pm_is_finished's conditional)
+  -- would throw outside this 'try' and walk straight past the firewall.
+  -- WHNF is enough: CInt, CDouble, Word32, StablePtr and () are complete
+  -- at WHNF, which is why the shell needs no deepseq.
+  tryAny (action >>= evaluate) >>= \case
+    Right a -> pure a
+    Left e -> do
+      msg <- firewallMessage e
+      writeErr buf len msg
+      pure sentinel
+
+-- | 'try' at 'SomeException', written once so the entry points need no
+-- type annotations — and pinned to /every/ exception on purpose (ADR-022
+-- D2): a C boundary has no later moment at which to rethrow, so letting
+-- an asynchronous 'Control.Exception.ThreadKilled' through would kill the
+-- host just as surely as an 'ErrorCall'.
+tryAny :: IO a -> IO (Either SomeException a)
+tryAny = try
+
+-- | The caught exception as text, defensively.
+--
+-- 'displayException' is itself a pure computation over a value that just
+-- proved it can explode, so it gets its own 'try': a bottom hiding inside
+-- the exception's own message must not turn a caught defect into an
+-- uncaught one. The text is bounded here as well as in 'writeErr', so
+-- forcing it cannot run away. Its wording is not part of any contract —
+-- only "readable UTF-8" is.
+firewallMessage :: SomeException -> IO String
+firewallMessage e =
+  tryAny (evaluate (forceString (take firewallMessageLimit rendered))) >>= \case
+    Right msg -> pure msg
+    Left _ -> pure "internal error: exception message unavailable"
+  where
+    rendered = "internal error: " ++ displayException e
+
+-- | Bound on the exception text the firewall will force and hand to
+-- 'writeErr'. Generous next to any host's @err_buf@, and finite next to a
+-- message that generates itself.
+firewallMessageLimit :: Int
+firewallMessageLimit = 512
+
+-- | Force a string's spine /and/ its characters, so that a bottom
+-- anywhere inside it surfaces under the 'try' that asked for it rather
+-- than later, in 'writeErr', outside.
+forceString :: String -> String
+forceString s = go s `seq` s
+  where
+    go [] = ()
+    go (c : cs) = c `seq` go cs
+
 -- Entry points ---------------------------------------------------------------
 
 foreign export ccall pm_abi_version :: IO CInt
 
 pm_abi_version :: IO CInt
-pm_abi_version = pure pmAbiVersion
+pm_abi_version = firewall pmErrInternal (pure pmAbiVersion)
 
 foreign export ccall pm_max_particles :: IO CInt
 
@@ -421,7 +530,7 @@ foreign export ccall pm_max_particles :: IO CInt
 -- it survives a future cap rise without recompiling against a new header
 -- (func-spec 0011 §2, roadmap §4.2).
 pm_max_particles :: IO CInt
-pm_max_particles = pure pmMaxParticles
+pm_max_particles = firewall pmErrInternal (pure pmMaxParticles)
 
 foreign export ccall pm_cast
   :: CString
@@ -451,10 +560,17 @@ pm_cast
   -- ^ error buffer capacity in bytes, including the NUL
   -> IO (StablePtr SpellCell)
 pm_cast json posPtr facingPtr sd errBuf errLen =
-  alloca $ \out -> do
-    poke out nullSpell
-    _ <- pm_cast_ex json posPtr facingPtr sd errBuf errLen out
-    peek out
+  -- Nested firewalls are deliberate and harmless: the body below is
+  -- 'pm_cast_ex', which is already wrapped, so the inner one catches first
+  -- and this one reads back the @NULL@ handle it left in @out@. Each
+  -- exported symbol still carries its own, because the source audit in
+  -- @test\/FFIFirewallSpec.hs@ asks every definition — not every call
+  -- chain — to be protected.
+  firewallErr errBuf errLen nullSpell $
+    alloca $ \out -> do
+      poke out nullSpell
+      _ <- pm_cast_ex json posPtr facingPtr sd errBuf errLen out
+      peek out
 
 foreign export ccall pm_cast_ex
   :: CString
@@ -480,29 +596,30 @@ pm_cast_ex
   -> Ptr (StablePtr SpellCell)
   -- ^ out: the new handle, @NULL@ on failure
   -> IO CInt
-pm_cast_ex json posPtr facingPtr sd errBuf errLen out = do
-  writeOut nullSpell
-  if json == nullPtr
-    then fail' pmErrJson "spell JSON error: null pointer"
-    else do
-      bytes <- BS.packCString json
-      case loadCircle bytes of
-        Left err -> fail' pmErrJson (renderLoadError err)
-        Right circle -> do
-          pos <- peekV3 posPtr
-          facing <- peekV3 facingPtr
-          let ctx = CastContext {casterPos = pos, casterFacing = facing, seed = Seed sd}
-          case castSpell CastRequest {circleOf = circle, ctxOf = ctx} of
-            Left err -> fail' pmErrBudget ("spell compile error: " ++ show err)
-            Right spell -> do
-              handle <- newSpellHandle spell
-              if isNullSpell handle
-                then -- Unreachable in practice: the slot space runs to 2³⁰
-                -- live handles. Reported rather than aliased.
-                  fail' pmErrCapacity "spell handle table exhausted"
-                else do
-                  writeOut handle
-                  pure pmOk
+pm_cast_ex json posPtr facingPtr sd errBuf errLen out =
+  firewallErr errBuf errLen pmErrInternal $ do
+    writeOut nullSpell
+    if json == nullPtr
+      then fail' pmErrJson "spell JSON error: null pointer"
+      else do
+        bytes <- BS.packCString json
+        case loadCircle bytes of
+          Left err -> fail' pmErrJson (renderLoadError err)
+          Right circle -> do
+            pos <- peekV3 posPtr
+            facing <- peekV3 facingPtr
+            let ctx = CastContext {casterPos = pos, casterFacing = facing, seed = Seed sd}
+            case castSpell CastRequest {circleOf = circle, ctxOf = ctx} of
+              Left err -> fail' pmErrBudget ("spell compile error: " ++ show err)
+              Right spell -> do
+                handle <- newSpellHandle spell
+                if isNullSpell handle
+                  then -- Unreachable in practice: the slot space runs to 2³⁰
+                  -- live handles. Reported rather than aliased.
+                    fail' pmErrCapacity "spell handle table exhausted"
+                  else do
+                    writeOut handle
+                    pure pmOk
   where
     writeOut h = if out == nullPtr then pure () else poke out h
     fail' code msg = writeErr errBuf errLen msg >> pure code
@@ -512,9 +629,10 @@ foreign export ccall pm_advance :: StablePtr SpellCell -> CFloat -> IO ()
 -- | Advance the spell's clock by @dt@ seconds, in place.
 pm_advance :: StablePtr SpellCell -> CFloat -> IO ()
 pm_advance h dt =
-  withCell h () () $ \ref -> do
-    spell <- readIORef ref
-    writeIORef ref $! advanceSpell (FrameInput (DeltaTime (cfloatToDouble dt))) spell
+  firewall () $
+    withCell h () () $ \ref -> do
+      spell <- readIORef ref
+      writeIORef ref $! advanceSpell (FrameInput (DeltaTime (cfloatToDouble dt))) spell
 
 foreign export ccall pm_is_finished :: StablePtr SpellCell -> IO CInt
 
@@ -523,9 +641,13 @@ foreign export ccall pm_is_finished :: StablePtr SpellCell -> IO CInt
 -- reports 'pmErrArgs': that is a host bug, not a finished spell.
 pm_is_finished :: StablePtr SpellCell -> IO CInt
 pm_is_finished h =
-  withCell h 1 pmErrArgs $ \ref -> do
-    spell <- readIORef ref
-    pure (if isFinished spell then 1 else 0)
+  -- The sentinel is right here as well as safe: -6 is truthy in C, so a
+  -- host's @while (!pm_is_finished(s))@ leaves the loop instead of
+  -- spinning on a spell that can no longer answer.
+  firewall pmErrInternal $
+    withCell h 1 pmErrArgs $ \ref -> do
+      spell <- readIORef ref
+      pure (if isFinished spell then 1 else 0)
 
 foreign export ccall pm_age :: StablePtr SpellCell -> IO CDouble
 
@@ -534,10 +656,14 @@ foreign export ccall pm_age :: StablePtr SpellCell -> IO CDouble
 -- the same answer a spell that has not been advanced gives.
 pm_age :: StablePtr SpellCell -> IO CDouble
 pm_age h =
-  withCell h 0 0 $ \ref -> do
-    spell <- readIORef ref
-    let Time t = spellAge spell
-    pure (CDouble t)
+  -- @-6.0@ is PM_ERR_INTERNAL's float mirror: an age is never negative, so
+  -- the value is unambiguous, and unlike NaN it will not poison whatever
+  -- clock the host mixes it into.
+  firewall (-6.0) $
+    withCell h 0 0 $ \ref -> do
+      spell <- readIORef ref
+      let Time t = spellAge spell
+      pure (CDouble t)
 
 foreign export ccall pm_observe
   :: StablePtr SpellCell
@@ -583,20 +709,21 @@ pm_observe
   -- ^ capacity of @batch_info@, in batches
   -> IO CInt
 pm_observe h px py pz psize plife pcolor capacity infoPtr maxBatches =
-  pm_observe_ex
-    h
-    px
-    py
-    pz
-    psize
-    plife
-    pcolor
-    nullPtr
-    nullPtr
-    nullPtr
-    capacity
-    infoPtr
-    maxBatches
+  firewall pmErrInternal $
+    pm_observe_ex
+      h
+      px
+      py
+      pz
+      psize
+      plife
+      pcolor
+      nullPtr
+      nullPtr
+      nullPtr
+      capacity
+      infoPtr
+      maxBatches
 
 foreign export ccall pm_observe_ex
   :: StablePtr SpellCell
@@ -660,22 +787,23 @@ pm_observe_ex
   -- ^ capacity of @batch_info@, in batches
   -> IO CInt
 pm_observe_ex h px py pz psize plife pcolor pvx pvy pvz capacity infoPtr maxBatches =
-  withCell h 0 pmErrArgs $ \ref -> do
-    spell <- readIORef ref
-    copyOut
-      (batches (observeSpell spell))
-      px
-      py
-      pz
-      psize
-      plife
-      pcolor
-      pvx
-      pvy
-      pvz
-      capacity
-      infoPtr
-      maxBatches
+  firewall pmErrInternal $
+    withCell h 0 pmErrArgs $ \ref -> do
+      spell <- readIORef ref
+      copyOut
+        (batches (observeSpell spell))
+        px
+        py
+        pz
+        psize
+        plife
+        pcolor
+        pvx
+        pvy
+        pvz
+        capacity
+        infoPtr
+        maxBatches
 
 -- | The copy-out shared by 'pm_observe' and 'pm_scene_observe' (func-spec
 -- 0018 §3.3): a batch list into the host's six columns plus one
@@ -748,7 +876,7 @@ foreign export ccall pm_free :: StablePtr SpellCell -> IO ()
 -- the promise here is the safe half of C2.3: nothing happens, and the host
 -- process lives (ADR-022 D3, revising ADR-0011 D4).
 pm_free :: StablePtr SpellCell -> IO ()
-pm_free = freeSpellHandle
+pm_free h = firewall () (freeSpellHandle h)
 
 -- Scenes (func-spec 0018) ----------------------------------------------------
 --
@@ -770,7 +898,7 @@ foreign export ccall pm_scene_new :: CInt -> IO (StablePtr SceneCell)
 -- §2). Never returns the 'nullScene' handle in this generation.
 pm_scene_new :: CInt -> IO (StablePtr SceneCell)
 pm_scene_new cap =
-  newSceneHandle (newScene (SceneConfig (fromIntegral cap)))
+  firewall nullScene (newSceneHandle (newScene (SceneConfig (fromIntegral cap))))
 
 foreign export ccall pm_scene_free :: StablePtr SceneCell -> IO ()
 
@@ -778,7 +906,7 @@ foreign export ccall pm_scene_free :: StablePtr SceneCell -> IO ()
 -- Freeing 'nullScene' is a no-op, and so is freeing a scene handle that
 -- does not resolve — already freed, or forged (host-runtime C2.3).
 pm_scene_free :: StablePtr SceneCell -> IO ()
-pm_scene_free = freeSceneHandle
+pm_scene_free h = firewall () (freeSceneHandle h)
 
 foreign export ccall pm_scene_cast
   :: StablePtr SceneCell
@@ -814,15 +942,16 @@ pm_scene_cast
   -- ^ out: the admitted spell's id
   -> IO CInt
 pm_scene_cast h json posPtr facingPtr sd errBuf errLen outId =
-  withCast h posPtr facingPtr sd errBuf errLen outId $ \ref ctx ->
-    if json == nullPtr
-      then castFail errBuf errLen pmErrJson "spell JSON error: null pointer"
-      else do
-        bytes <- BS.packCString json
-        case loadCircle bytes of
-          Left err -> castFail errBuf errLen pmErrJson (renderLoadError err)
-          Right circle ->
-            admitInto ref outId errBuf errLen (castInto CastRequest {circleOf = circle, ctxOf = ctx})
+  firewallErr errBuf errLen pmErrInternal $
+    withCast h posPtr facingPtr sd errBuf errLen outId $ \ref ctx ->
+      if json == nullPtr
+        then castFail errBuf errLen pmErrJson "spell JSON error: null pointer"
+        else do
+          bytes <- BS.packCString json
+          case loadCircle bytes of
+            Left err -> castFail errBuf errLen pmErrJson (renderLoadError err)
+            Right circle ->
+              admitInto ref outId errBuf errLen (castInto CastRequest {circleOf = circle, ctxOf = ctx})
 
 foreign export ccall pm_scene_cast_many
   :: StablePtr SceneCell
@@ -856,19 +985,22 @@ pm_scene_cast_many
   -> CInt
   -> Ptr CInt
   -> IO CInt
-pm_scene_cast_many h jsons count posPtr facingPtr sd errBuf errLen outId
-  | count < 0 = castFail errBuf errLen pmErrArgs "scene cast error: negative count"
-  | otherwise =
-      withCast h posPtr facingPtr sd errBuf errLen outId $ \ref ctx ->
-        if count > 0 && jsons == nullPtr
-          then castFail errBuf errLen pmErrArgs "scene cast error: null circle array"
-          else do
-            ptrs <- traverse (peekElemOff jsons) [0 .. fromIntegral count - 1]
-            loaded <- loadCircles ptrs
-            case loaded of
-              Left msg -> castFail errBuf errLen pmErrJson msg
-              Right circles -> admitInto ref outId errBuf errLen (castManyInto circles ctx)
+pm_scene_cast_many h jsons count posPtr facingPtr sd errBuf errLen outId =
+  firewallErr errBuf errLen pmErrInternal body
   where
+    body
+      | count < 0 = castFail errBuf errLen pmErrArgs "scene cast error: negative count"
+      | otherwise =
+          withCast h posPtr facingPtr sd errBuf errLen outId $ \ref ctx ->
+            if count > 0 && jsons == nullPtr
+              then castFail errBuf errLen pmErrArgs "scene cast error: null circle array"
+              else do
+                ptrs <- traverse (peekElemOff jsons) [0 .. fromIntegral count - 1]
+                loaded <- loadCircles ptrs
+                case loaded of
+                  Left msg -> castFail errBuf errLen pmErrJson msg
+                  Right circles -> admitInto ref outId errBuf errLen (castManyInto circles ctx)
+
     -- The composition's circles, or the first decode failure's message.
     loadCircles :: [CString] -> IO (Either String [Circle])
     loadCircles = go id
@@ -939,9 +1071,10 @@ foreign export ccall pm_scene_dismiss :: StablePtr SceneCell -> CInt -> IO ()
 -- reused; the C side therefore needs no generation counter.
 pm_scene_dismiss :: StablePtr SceneCell -> CInt -> IO ()
 pm_scene_dismiss h sid =
-  withScene h () () $ \ref -> do
-    scene <- readIORef ref
-    writeIORef ref $! dismiss (SpellId (fromIntegral sid)) scene
+  firewall () $
+    withScene h () () $ \ref -> do
+      scene <- readIORef ref
+      writeIORef ref $! dismiss (SpellId (fromIntegral sid)) scene
 
 foreign export ccall pm_scene_advance :: StablePtr SceneCell -> CFloat -> IO ()
 
@@ -949,9 +1082,10 @@ foreign export ccall pm_scene_advance :: StablePtr SceneCell -> CFloat -> IO ()
 -- that finished — which is also how their share of the quota comes back.
 pm_scene_advance :: StablePtr SceneCell -> CFloat -> IO ()
 pm_scene_advance h dt =
-  withScene h () () $ \ref -> do
-    scene <- readIORef ref
-    writeIORef ref $! advanceScene (FrameInput (DeltaTime (cfloatToDouble dt))) scene
+  firewall () $
+    withScene h () () $ \ref -> do
+      scene <- readIORef ref
+      writeIORef ref $! advanceScene (FrameInput (DeltaTime (cfloatToDouble dt))) scene
 
 foreign export ccall pm_scene_observe
   :: StablePtr SceneCell
@@ -988,26 +1122,27 @@ pm_scene_observe
   -> CInt
   -> IO CInt
 pm_scene_observe h px py pz psize plife pcolor capacity infoPtr maxBatches =
-  withScene h 0 pmErrArgs $ \ref -> do
-    scene <- readIORef ref
-    -- No velocity out of the scene entry point this round: func-spec 0023
-    -- widens the single-spell path only, so this passes the three @NULL@s
-    -- that make 'copyOut' behave exactly as it did before (the scene
-    -- counterpart is booked, not delivered — func-spec 0023 §10).
-    copyOut
-      (batches (observeScene scene))
-      px
-      py
-      pz
-      psize
-      plife
-      pcolor
-      nullPtr
-      nullPtr
-      nullPtr
-      capacity
-      infoPtr
-      maxBatches
+  firewall pmErrInternal $
+    withScene h 0 pmErrArgs $ \ref -> do
+      scene <- readIORef ref
+      -- No velocity out of the scene entry point this round: func-spec 0023
+      -- widens the single-spell path only, so this passes the three @NULL@s
+      -- that make 'copyOut' behave exactly as it did before (the scene
+      -- counterpart is booked, not delivered — func-spec 0023 §10).
+      copyOut
+        (batches (observeScene scene))
+        px
+        py
+        pz
+        psize
+        plife
+        pcolor
+        nullPtr
+        nullPtr
+        nullPtr
+        capacity
+        infoPtr
+        maxBatches
 
 foreign export ccall pm_scene_budget
   :: StablePtr SceneCell -> Ptr CInt -> Ptr CInt -> IO CInt
@@ -1017,18 +1152,20 @@ foreign export ccall pm_scene_budget
 -- that only wants the other one.
 pm_scene_budget :: StablePtr SceneCell -> Ptr CInt -> Ptr CInt -> IO CInt
 pm_scene_budget h outUsed outCap =
-  withScene h pmErrArgs pmErrArgs $ \ref -> do
-    (used, cap) <- sceneBudget <$> readIORef ref
-    when (outUsed /= nullPtr) (poke outUsed (fromIntegral used))
-    when (outCap /= nullPtr) (poke outCap (fromIntegral cap))
-    pure pmOk
+  firewall pmErrInternal $
+    withScene h pmErrArgs pmErrArgs $ \ref -> do
+      (used, cap) <- sceneBudget <$> readIORef ref
+      when (outUsed /= nullPtr) (poke outUsed (fromIntegral used))
+      when (outCap /= nullPtr) (poke outCap (fromIntegral cap))
+      pure pmOk
 
 foreign export ccall pm_scene_count :: StablePtr SceneCell -> IO CInt
 
 -- | How many spells are live — the capacity 'pm_scene_spells' wants.
 pm_scene_count :: StablePtr SceneCell -> IO CInt
 pm_scene_count h =
-  withScene h 0 pmErrArgs $ \ref -> fromIntegral . length . sceneSpells <$> readIORef ref
+  firewall pmErrInternal $
+    withScene h 0 pmErrArgs $ \ref -> fromIntegral . length . sceneSpells <$> readIORef ref
 
 foreign export ccall pm_scene_spells :: StablePtr SceneCell -> Ptr CInt -> CInt -> IO CInt
 
@@ -1037,16 +1174,17 @@ foreign export ccall pm_scene_spells :: StablePtr SceneCell -> Ptr CInt -> CInt 
 -- do not fit — the same all-or-nothing rule 'pm_observe' follows.
 pm_scene_spells :: StablePtr SceneCell -> Ptr CInt -> CInt -> IO CInt
 pm_scene_spells h outIds maxIds =
-  withScene h 0 pmErrArgs $ \ref -> do
-    ids <- sceneSpells <$> readIORef ref
-    let n = length ids
-    if n > fromIntegral maxIds || (n > 0 && outIds == nullPtr)
-      then pure pmErrCapacity
-      else do
-        mapM_
-          (\(i, SpellId sid) -> pokeElemOff outIds i (fromIntegral sid))
-          (zip [0 ..] ids)
-        pure (fromIntegral n)
+  firewall pmErrInternal $
+    withScene h 0 pmErrArgs $ \ref -> do
+      ids <- sceneSpells <$> readIORef ref
+      let n = length ids
+      if n > fromIntegral maxIds || (n > 0 && outIds == nullPtr)
+        then pure pmErrCapacity
+        else do
+          mapM_
+            (\(i, SpellId sid) -> pokeElemOff outIds i (fromIntegral sid))
+            (zip [0 ..] ids)
+          pure (fromIntegral n)
 
 -- Spatial summary (func-spec 0025) -------------------------------------------
 --
@@ -1065,15 +1203,17 @@ foreign export ccall pm_spell_bounds
 -- corners. 'pmOk', or 'pmErrArgs' (@NULL@ handle or @NULL@ output) with
 -- nothing written.
 pm_spell_bounds :: StablePtr SpellCell -> Ptr CFloat -> Ptr CFloat -> IO CInt
-pm_spell_bounds h outMin outMax
-  | outMin == nullPtr || outMax == nullPtr = pure pmErrArgs
-  | otherwise =
-      withCell h pmErrArgs pmErrArgs $ \ref -> do
-        spell <- readIORef ref
-        let (lo, hi) = spellBoundsOf spell
-        pokeV3 outMin lo
-        pokeV3 outMax hi
-        pure pmOk
+pm_spell_bounds h outMin outMax = firewall pmErrInternal body
+  where
+    body
+      | outMin == nullPtr || outMax == nullPtr = pure pmErrArgs
+      | otherwise =
+          withCell h pmErrArgs pmErrArgs $ \ref -> do
+            spell <- readIORef ref
+            let (lo, hi) = spellBoundsOf spell
+            pokeV3 outMin lo
+            pokeV3 outMax hi
+            pure pmOk
 
 foreign export ccall pm_spell_box
   :: StablePtr SpellCell -> Ptr CFloat -> Ptr CFloat -> Ptr CFloat -> IO CInt
@@ -1092,9 +1232,10 @@ pm_spell_box
   -- ^ out: half-extents, 3 floats
   -> IO CInt
 pm_spell_box h outCenter outAxes outHalf =
-  withCell h pmErrArgs pmErrArgs $ \ref -> do
-    spell <- readIORef ref
-    writeBox (spellBoxOf spell) outCenter outAxes outHalf
+  firewall pmErrInternal $
+    withCell h pmErrArgs pmErrArgs $ \ref -> do
+      spell <- readIORef ref
+      writeBox (spellBoxOf spell) outCenter outAxes outHalf
 
 foreign export ccall pm_emitter_count :: StablePtr SpellCell -> IO CInt
 
@@ -1102,7 +1243,8 @@ foreign export ccall pm_emitter_count :: StablePtr SpellCell -> IO CInt
 -- 'pm_emitter_box' accepts. 0 for a @NULL@ handle.
 pm_emitter_count :: StablePtr SpellCell -> IO CInt
 pm_emitter_count h =
-  withCell h 0 pmErrArgs $ \ref -> fromIntegral . length . emittersOf <$> readIORef ref
+  firewall pmErrInternal $
+    withCell h 0 pmErrArgs $ \ref -> fromIntegral . length . emittersOf <$> readIORef ref
 
 foreign export ccall pm_emitter_box
   :: StablePtr SpellCell -> CInt -> Ptr CFloat -> Ptr CFloat -> Ptr CFloat -> IO CInt
@@ -1118,13 +1260,14 @@ pm_emitter_box
   -> Ptr CFloat
   -> IO CInt
 pm_emitter_box h index outCenter outAxes outHalf =
-  withCell h pmErrArgs pmErrArgs $ \ref -> do
-    spell <- readIORef ref
-    let ems = emittersOf spell
-        i = fromIntegral index :: Int
-    if i < 0 || i >= length ems
-      then pure pmErrArgs
-      else writeBox (emitterBoxOf spell (ems !! i)) outCenter outAxes outHalf
+  firewall pmErrInternal $
+    withCell h pmErrArgs pmErrArgs $ \ref -> do
+      spell <- readIORef ref
+      let ems = emittersOf spell
+          i = fromIntegral index :: Int
+      if i < 0 || i >= length ems
+        then pure pmErrArgs
+        else writeBox (emitterBoxOf spell (ems !! i)) outCenter outAxes outHalf
 
 -- | The copy-out shared by the two box entry points: nothing is written
 -- until every output pointer has been checked, so the error path leaves
@@ -1153,19 +1296,21 @@ foreign export ccall pm_occupancy
 -- @dim@ or a @NULL@ handle, or 'pmErrCapacity' when @capacity < dim³@ —
 -- in which case __nothing is written at all__.
 pm_occupancy :: StablePtr SpellCell -> CInt -> Ptr CInt -> CInt -> IO CInt
-pm_occupancy h dim outCounts capacity
-  | dim <= 0 = pure pmErrArgs
-  | otherwise =
-      withCell h pmErrArgs pmErrArgs $ \ref -> do
-        let n = fromIntegral dim :: Int
-            cells = n * n * n
-        if cells > fromIntegral capacity || outCounts == nullPtr
-          then pure pmErrCapacity
-          else do
-            spell <- readIORef ref
-            let counts = ogCounts (occupancyOf n spell)
-            U.imapM_ (\i c -> pokeElemOff outCounts i (fromIntegral c)) counts
-            pure (fromIntegral cells)
+pm_occupancy h dim outCounts capacity = firewall pmErrInternal body
+  where
+    body
+      | dim <= 0 = pure pmErrArgs
+      | otherwise =
+          withCell h pmErrArgs pmErrArgs $ \ref -> do
+            let n = fromIntegral dim :: Int
+                cells = n * n * n
+            if cells > fromIntegral capacity || outCounts == nullPtr
+              then pure pmErrCapacity
+              else do
+                spell <- readIORef ref
+                let counts = ogCounts (occupancyOf n spell)
+                U.imapM_ (\i c -> pokeElemOff outCounts i (fromIntegral c)) counts
+                pure (fromIntegral cells)
 
 foreign export ccall pm_occupancy_mask :: StablePtr SpellCell -> IO Word32
 
@@ -1174,7 +1319,11 @@ foreign export ccall pm_occupancy_mask :: StablePtr SpellCell -> IO Word32
 -- which is also what an empty spell answers — "nothing anywhere" is the
 -- honest reading of both.
 pm_occupancy_mask :: StablePtr SpellCell -> IO Word32
-pm_occupancy_mask h = withCell h 0 0 $ \ref -> occupancyMask <$> readIORef ref
+-- The firewall's sentinel here is 0 as well: there is no negative
+-- @uint32_t@ to spend, and "nothing anywhere" is the fail-safe answer for
+-- an overlap test — it under-claims rather than over-claims.
+pm_occupancy_mask h =
+  firewall 0 $ withCell h 0 0 $ \ref -> occupancyMask <$> readIORef ref
 
 foreign export ccall pm_scene_spell_bounds
   :: StablePtr SceneCell -> CInt -> Ptr CFloat -> Ptr CFloat -> IO CInt
@@ -1188,18 +1337,20 @@ foreign export ccall pm_scene_spell_bounds
 -- number almost nothing can use.
 pm_scene_spell_bounds
   :: StablePtr SceneCell -> CInt -> Ptr CFloat -> Ptr CFloat -> IO CInt
-pm_scene_spell_bounds h sid outMin outMax
-  | outMin == nullPtr || outMax == nullPtr = pure pmErrArgs
-  | otherwise =
-      withScene h pmErrArgs pmErrArgs $ \ref -> do
-        scene <- readIORef ref
-        case lookupSpell (SpellId (fromIntegral sid)) scene of
-          Nothing -> pure pmErrArgs
-          Just spell -> do
-            let (lo, hi) = spellBoundsOf spell
-            pokeV3 outMin lo
-            pokeV3 outMax hi
-            pure pmOk
+pm_scene_spell_bounds h sid outMin outMax = firewall pmErrInternal body
+  where
+    body
+      | outMin == nullPtr || outMax == nullPtr = pure pmErrArgs
+      | otherwise =
+          withScene h pmErrArgs pmErrArgs $ \ref -> do
+            scene <- readIORef ref
+            case lookupSpell (SpellId (fromIntegral sid)) scene of
+              Nothing -> pure pmErrArgs
+              Just spell -> do
+                let (lo, hi) = spellBoundsOf spell
+                pokeV3 outMin lo
+                pokeV3 outMax hi
+                pure pmOk
 
 -- Projection (func-spec 0011 §3) ---------------------------------------------
 --
@@ -1251,19 +1402,20 @@ pm_project
   -- ^ out: depth
   -> IO CInt
 pm_project plane inX inY inZ count outU outV outDepth =
-  withColumns plane count [inX, inY, inZ, outU, outV, outDepth] $ \viewPlane n ->
-    let go i
-          | i >= n = pure pmOk
-          | otherwise = do
-              x <- peekFloat inX i
-              y <- peekFloat inY i
-              z <- peekFloat inZ i
-              let (V2 u v, depth) = orthographic viewPlane (V3 x y z)
-              pokeFloat outU i u
-              pokeFloat outV i v
-              pokeFloat outDepth i depth
-              go (i + 1)
-     in go 0
+  firewall pmErrInternal $
+    withColumns plane count [inX, inY, inZ, outU, outV, outDepth] $ \viewPlane n ->
+      let go i
+            | i >= n = pure pmOk
+            | otherwise = do
+                x <- peekFloat inX i
+                y <- peekFloat inY i
+                z <- peekFloat inZ i
+                let (V2 u v, depth) = orthographic viewPlane (V3 x y z)
+                pokeFloat outU i u
+                pokeFloat outV i v
+                pokeFloat outDepth i depth
+                go (i + 1)
+       in go 0
 
 foreign export ccall pm_depth_order
   :: CInt -> Ptr CFloat -> Ptr CFloat -> Ptr CFloat -> CInt -> Ptr CInt -> IO CInt
@@ -1293,19 +1445,22 @@ pm_depth_order
   -- ^ out: @count@ indices, far to near
   -> IO CInt
 pm_depth_order plane inX inY inZ count outIndices =
-  withColumns plane count [inX, inY, inZ, castPtr outIndices] $ \viewPlane n -> do
-    xs <- readFloats inX n
-    ys <- readFloats inY n
-    zs <- readFloats inZ n
-    let blank = U.replicate n 0
-    case fromColumns xs ys zs blank blank (U.replicate n 0) of
-      -- Unreachable: the six columns are built to one length. Reported
-      -- rather than thrown, because an exception crossing back into C is
-      -- undefined behaviour.
-      Left _ -> pure pmErrArgs
-      Right pb -> do
-        U.imapM_ (\i j -> pokeElemOff outIndices i (fromIntegral j)) (depthOrder viewPlane pb)
-        pure pmOk
+  firewall pmErrInternal $
+    withColumns plane count [inX, inY, inZ, castPtr outIndices] $ \viewPlane n -> do
+      xs <- readFloats inX n
+      ys <- readFloats inY n
+      zs <- readFloats inZ n
+      let blank = U.replicate n 0
+      case fromColumns xs ys zs blank blank (U.replicate n 0) of
+        -- Unreachable: the six columns are built to one length. Reported
+        -- rather than thrown, because an exception crossing back into C
+        -- used to be undefined behaviour — since host-runtime F001 it is
+        -- PM_ERR_INTERNAL, but reporting a value the caller can classify
+        -- is still the better answer.
+        Left _ -> pure pmErrArgs
+        Right pb -> do
+          U.imapM_ (\i j -> pokeElemOff outIndices i (fromIntegral j)) (depthOrder viewPlane pb)
+          pure pmOk
 
 -- | The shared argument check of the two array entry points: decode the
 -- plane, reject a negative length, and — only when there is an element to

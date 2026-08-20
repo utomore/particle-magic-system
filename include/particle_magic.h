@@ -87,6 +87,29 @@
  * equal a currently live handle -- that is the shared ceiling of any
  * handle scheme, not a gap in this one.
  *
+ * Never terminates your process: every entry point here runs inside an
+ * exception firewall (ADR-022 D2). Whatever goes wrong inside the library
+ * -- exhausted memory, a defect, a case nobody wrote -- it is caught at
+ * this boundary and reported as PM_ERR_INTERNAL rather than taking your
+ * host down with it. The seven entry points with no error channel answer
+ * their own equivalent: pm_cast and pm_scene_new return NULL, pm_age
+ * returns -6.0 (an age is never negative, so the value is unambiguous),
+ * pm_occupancy_mask returns 0, and the five void ones do nothing. When
+ * the call carries an err_buf, the reason is written there in the usual
+ * truncation-safe UTF-8.
+ *
+ * PM_ERR_INTERNAL from pm_is_finished is -6, which C reads as true, so
+ * the usual `while (!pm_is_finished(s))` loop ends rather than spinning
+ * forever on a spell that can no longer answer.
+ *
+ * Two things this promise does NOT include. It is not an error-handling
+ * channel: a well-behaved call never sees PM_ERR_INTERNAL, and one that
+ * does has found a bug in this library, not in your code. And it is not
+ * all-or-nothing -- pm_observe guarantees that a PM_ERR_CAPACITY failure
+ * writes no byte at all, while an exception raised part way through a
+ * copy may leave your arrays half updated. On that path the library
+ * promises exactly two things: it returns, and it says PM_ERR_INTERNAL.
+ *
  * Determinism: the same (json, pos, facing, seed, dt sequence) always
  * produces bit-identical output through either consumption path
  * (ADR-0011 D8), on a given platform. Across platforms the guarantee is
@@ -136,6 +159,16 @@ extern "C" {
    global_cap has no room left for it (func-spec 0018). Only the
    pm_scene_cast* entry points can return it. */
 #define PM_ERR_QUOTA (-5)
+
+/* The firewall caught an exception: something inside the library is
+   broken (ADR-022 D2). Never your call's fault, never worth retrying --
+   but always worth a bug report. The library stays usable and, above all,
+   your process stays alive. See "Never terminates your process" below. */
+#define PM_ERR_INTERNAL (-6)
+
+/* You called out of order: using the library before pm_init, or
+   initialising again after pm_shutdown. */
+#define PM_ERR_STATE (-7)
 
 /* Grid dimension whose cell count fits one uint32_t: 3*3*3 = 27 <= 32,
    which is what lets pm_occupancy_mask answer without an array

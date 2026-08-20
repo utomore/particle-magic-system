@@ -100,6 +100,9 @@ parent: host-runtime
 | F008 A7 | 宿主整合指南的檔頭版本沿革 | 由後落地者加一行 | 接受 |
 | F002 A8（實作期新增） | slot 空間耗盡（2³⁰ 個同時存活）時建立控制代碼會失敗，理論上與標頭「`pm_scene_new` 絕不回 NULL」牴觸 | 回 `PM_ERR_CAPACITY`／`NULL`；實務不可達、無測試能構造 | 接受；**標頭那句散文由 F008 一併更正**（它本來就負責標頭敘述的準確性） |
 | F002 A9（實作期新增） | T8 的「配置量差值為 0」會偶發變紅 | `getAllocationCounter` 以 nursery block 為同步顆粒度，改斷言「20 萬次呼叫總配置 < 65536 位元組且每次 < 128 位元組」，語意不變 | 接受 |
+| F001 A8（實作期新增） | F002 合併後 `withCell`／`withScene` 是四參數、毒化改用新建構函式 | 四個帶 guard 的定義以 `where body` 承接 | 接受（純實作自主權，無契約影響） |
+| F001 A9（實作期新增） | **改寫了 F002 的 T6 斷言** | 原斷言「例外會從 `pm_age`／`pm_scene_count` 逃出」正是本功能要消滅的行為；改為 `Right (-6.0)` 與 `Right pmErrInternal`，案例意圖保留且更銳利（解析後爆／從未解析／已釋放 → 三個相異值） | 接受：這是正當的測試更新，不是為了讓紅燈變綠 |
+| F001 →F005 | 新增符號時的連帶義務 | 新符號必須自行包防火牆，且 `FFIFirewallSpec` 的 `length exports == 29` 守門要同步改成新數字 | 已寫進 F005 的實作 prompt |
 | F005 A1 | **C2.6 與凍結標頭衝突**:推進符號是 `void` | 新增 `pm_advance_ex`/`pm_scene_advance_ex`;符號 31→34 | 接受:新增 C1.12,只加推進的兩個 `_ex`,符號 31→34 |
 | F005 A2 | 規劃器對非有限/負輸入 | NULL 出參、非有限、`max_steps<0`、`acc_in<0` → `PM_ERR_ARGS`;其餘逐位元鏡射 | — |
 | F005 A3 | `_ex` 對 NULL 控制代碼 | 回 `PM_ERR_ARGS` | — |
@@ -136,7 +139,8 @@ parent: host-runtime
 
 | # | feature | Todo | 完整 `cabal test` | 編排者獨立驗證 | checkpoint |
 |---|---|---|---|---|---|
-| 1 | F002 handle-generation | 8/8 | 1797 examples, 0 failures(基線 1788 ＋ 9) | 已重跑,33.2 秒,相同結果 | 見下方 commit |
+| 1 | F002 handle-generation | 8/8 | 1797 examples, 0 failures(基線 1788 ＋ 9) | 已重跑,33.2 秒,相同結果 | `70f27b4` |
+| 2 | F001 exception-firewall | 8/8 | 1804 examples, 0 failures(＋7) | 已重跑,相同結果 | 見下方 commit |
 
 **F002 的接縫實況**(供後續實作者):註冊表是兩張頂層 `IORef (Table a)`(**非 `MVar`**),解析路徑無鎖;所有變動集中在 `Magic.FFI.Registry` 的 `registryInsert`／`registryRelease`,F004 的表級寫入鎖加在那裡即可,22 個呼叫端不動。`withCell`／`withScene` 現在是四參數(`onNull`／`onInvalid`／續體)。F001 的毒化控制代碼改用 `Magic.FFI` 匯出的 `newSpellHandle`／`newSceneHandle`——`newStablePtr . SpellCell` 已不存在,且那個值現在會被判偽造。
 

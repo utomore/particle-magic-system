@@ -35,8 +35,10 @@ import Magic.FFI
   , pmErrArgs
   , pmErrBudget
   , pmErrCapacity
+  , pmErrInternal
   , pmErrJson
   , pmErrQuota
+  , pmErrState
   , pmMaxParticles
   , pmOccupancyDimDefault
   , pmOk
@@ -148,8 +150,40 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
           , ("PM_ERR_CAPACITY", pmErrCapacity)
           , ("PM_ERR_ARGS", pmErrArgs)
           , ("PM_ERR_QUOTA", pmErrQuota)
+          , -- host-runtime F001: the firewall's code and the out-of-order
+            -- code, minted together so the header, the Haskell mirror and
+            -- the C# binding reconcile once instead of twice.
+            ("PM_ERR_INTERNAL", pmErrInternal)
+          , ("PM_ERR_STATE", pmErrState)
           ]
     mapM_ (\(name, value) -> lookup name header `shouldBe` Just (fromIntegral value)) expected
+
+  -- host-runtime F001 T1. Literals on both sides for the same reason
+  -- PM_ERR_QUOTA is pinned: a host's `switch` on the return code compiles
+  -- the number in, so either of these moving would silently reclassify
+  -- every report already deployed.
+  it "pins the internal and state codes at -6 and -7, on both sides" $ do
+    pmErrInternal `shouldBe` -6
+    pmErrState `shouldBe` -7
+    header <- headerDefines
+    lookup "PM_ERR_INTERNAL" header `shouldBe` Just (fromIntegral pmErrInternal)
+    lookup "PM_ERR_STATE" header `shouldBe` Just (fromIntegral pmErrState)
+
+  -- host-runtime F001 T2. The firewall's promise is only worth what a host
+  -- can read, so the header states it; a sentinel word keeps the paragraph
+  -- from being edited away, and the two assertions after it say that
+  -- stating it cost the frozen contract nothing (no symbol joined the 31,
+  -- the generation did not move).
+  it "documents the firewall's sentinels and keeps PM_ABI_VERSION at 1" $ do
+    header <- readUtf8 headerFile
+    header `shouldSatisfy` isInfixOf' "PM_ERR_INTERNAL"
+    header `shouldSatisfy` isInfixOf' "Never terminates your process"
+    header `shouldSatisfy` isInfixOf' "returns -6.0"
+    header `shouldSatisfy` isInfixOf' "pm_occupancy_mask returns 0"
+    declared <- headerFunctions
+    length declared `shouldBe` 31
+    defined <- headerDefines
+    lookup "PM_ABI_VERSION" defined `shouldBe` Just 1
 
   -- Func-spec 0018 S1. The value is pinned here as a literal rather than
   -- only mirrored, because a host's `switch` on the return code compiles
@@ -261,6 +295,8 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
         , "PM_ERR_CAPACITY"
         , "PM_ERR_ARGS"
         , "PM_ERR_QUOTA"
+        , "PM_ERR_INTERNAL"
+        , "PM_ERR_STATE"
         , "PM_OCCUPANCY_DIM_DEFAULT"
         , "PM_PLANE_SIDE_XY"
         , "PM_PLANE_TOP_XZ"

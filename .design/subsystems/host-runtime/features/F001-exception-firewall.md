@@ -3,7 +3,7 @@ id: F001
 type: feature
 title: exception-firewall
 description: 每個 C 匯出符號包例外防火牆，庫永不殺宿主
-status: open
+status: done
 created: 2026-08-20
 updated: 2026-08-20
 depends-on: []
@@ -213,14 +213,14 @@ poisoned <- newStablePtr . SpellCell =<< newIORef (error "poisoned spell")
 
 ## TodoList
 
-- [ ] T1: `Magic.FFI` 新增並匯出 `pmErrInternal = -6`、`pmErrState = -7`，比照 `pmErrQuota` 的宣告與註解風格  `dep: -`
-- [ ] T2: `include/particle_magic.h` 新增兩個 `#define` 與「防火牆哨兵」散文段落（含「庫在任何情況下不終止宿主進程」與 `pm_is_finished` 回 −6 的解釋）；`PM_ABI_VERSION` 與既有 31 個宣告不動  `dep: T1`
-- [ ] T3: 實作 `firewall` / `firewallErr` 兩個組合子（`try` ＋ `evaluate` ＋ 取訊息的二次保護），並加入模組的 Internals 匯出區；新測試模組登記進 `particle-magic.cabal` 的 `test-suite spec` `other-modules`  `dep: T1`
-- [ ] T4: 讓 `firewallErr` 在攔截時把 `"internal error: …"` 寫進 `err_buf`，沿用 `writeErr` 的 UTF-8 截斷；`NULL` 緩衝與 `len <= 0` 為無操作  `dep: T3`
-- [ ] T5: 29 個匯出符號逐一在等號右側最外層套上組合子，依「哨兵表」選哨兵；帶 `err_buf` 的四個用 `firewallErr`；不動任何簽名與既有邏輯  `dep: T3, T4`
-- [ ] T6: 毒化控制代碼的行為驗證：22 個吃控制代碼的符號各自回哨兵、進程存活（`pm_free`／`pm_scene_free` 不強制求值，斷言其為安全的無操作）  `dep: T5`
-- [ ] T7: 合法輸入的輸出逐位元不變的回歸（`pm_observe` 六欄與 `batch_info` 對照 `Magic.Interface` 參考路徑）  `dep: T5`
-- [ ] T8: `bindings/csharp/ParticleMagic.cs` 新增 `ErrInternal`／`ErrState` 兩個常數，行尾註解帶巨集名  `dep: T2`
+- [x] T1: `Magic.FFI` 新增並匯出 `pmErrInternal = -6`、`pmErrState = -7`，比照 `pmErrQuota` 的宣告與註解風格  `dep: -`
+- [x] T2: `include/particle_magic.h` 新增兩個 `#define` 與「防火牆哨兵」散文段落（含「庫在任何情況下不終止宿主進程」與 `pm_is_finished` 回 −6 的解釋）；`PM_ABI_VERSION` 與既有 31 個宣告不動  `dep: T1`
+- [x] T3: 實作 `firewall` / `firewallErr` 兩個組合子（`try` ＋ `evaluate` ＋ 取訊息的二次保護），並加入模組的 Internals 匯出區；新測試模組登記進 `particle-magic.cabal` 的 `test-suite spec` `other-modules`  `dep: T1`
+- [x] T4: 讓 `firewallErr` 在攔截時把 `"internal error: …"` 寫進 `err_buf`，沿用 `writeErr` 的 UTF-8 截斷；`NULL` 緩衝與 `len <= 0` 為無操作  `dep: T3`
+- [x] T5: 29 個匯出符號逐一在等號右側最外層套上組合子，依「哨兵表」選哨兵；帶 `err_buf` 的四個用 `firewallErr`；不動任何簽名與既有邏輯  `dep: T3, T4`
+- [x] T6: 毒化控制代碼的行為驗證：22 個吃控制代碼的符號各自回哨兵、進程存活（`pm_free`／`pm_scene_free` 不強制求值，斷言其為安全的無操作）  `dep: T5`
+- [x] T7: 合法輸入的輸出逐位元不變的回歸（`pm_observe` 六欄與 `batch_info` 對照 `Magic.Interface` 參考路徑）  `dep: T5`
+- [x] T8: `bindings/csharp/ParticleMagic.cs` 新增 `ErrInternal`／`ErrState` 兩個常數，行尾註解帶巨集名  `dep: T2`
 
 ## 1-to-1 測試對照表
 
@@ -239,12 +239,34 @@ poisoned <- newStablePtr . SpellCell =<< newIORef (error "poisoned spell")
 
 - **A1**: `pm_age`（`IO CDouble`）沒有錯誤碼通道，委派決策只涵蓋指標／計數／void 三類 → 採取：哨兵為 `-6.0`（`PM_ERR_INTERNAL` 的浮點鏡像；年齡恆為非負，所以負值無歧義），並寫進標頭 → 影響：若改用 NaN 或 0，要改哨兵表、T6 的期望值與標頭那一句；NaN 會污染宿主時鐘、0 會與「剛施法」混淆，這是選 −6.0 的理由。
 - **A2**: `pm_occupancy_mask`（`IO Word32`）無負值可用 → 採取：哨兵為 `0`，與既有「`NULL` 控制代碼回 0」「空法術回 0」一致，且在重疊測試上是 fail-safe（回報「哪裡都沒有」而非「到處都有」）→ 影響：若改用 `0xFFFFFFFF`（因標頭保證 bits 27..31 恆為 0，該值不可能合法，可被宿主辨識），要改哨兵表、T6 期望值與標頭敘述。
-- **A3**: 契約卡的「一條刻意觸發內部失敗的測試路徑」在 in-process 以毒化控制代碼滿足；純 C 的 out-of-process 宿主（F006 的驗收標準明文要求「同一程式驗證防火牆」）造不出毒化控制代碼 → 採取：本功能只交付 in-process 觸發路徑，不新增任何對外語意、隱藏符號或環境變數開關；建議 F006 以「建置旗標（cabal flag）產出的測試專用共享函式庫，額外匯出一個必定拋例外的符號」解決，該符號不進標頭、不進 `.def` 的出貨版本 → 影響：若編排者裁定要讓出貨版本也能被 C 觸發，本功能要多加一個匯出符號、標頭一條宣告與 `.def` 一行，`FFIContractSpec` 的三方對帳全部跟著動。已評估並否決的替代：靠深度巢狀 JSON 誘發堆疊溢位（跨平台不可重現）、靠 `pm_occupancy` 的巨大 `dim` 誘發堆積耗盡（機器夠大時反而會寫爆宿主緩衝）。
+- **A3**（已由閘門裁決，本輪照此執行）：契約卡的「一條刻意觸發內部失敗的測試路徑」在 in-process 以毒化控制代碼滿足；純 C 的 out-of-process 宿主造不出毒化控制代碼 → 裁決：out-of-process 觸發歸 F006（cabal flag ＋ 獨立 foreign-library，標頭與三方對帳零改動），本功能只交付 in-process 路徑，**未新增任何對外符號** → 實作結果：符合，`FFIContractSpec` 的 31 個宣告／`.def`／`foreign export` 三方對帳一個字未改。
 - **A4**: 「攔截一切 Haskell 例外」是否包含非同步例外 → 採取：以 `SomeException` 全攔、不重拋（ADR-022 D2 的字面意思；C 邊界上沒有「稍後重拋」的地方，讓 `ThreadKilled` 穿出去就等於殺進程）→ 影響：若日後要讓某類非同步例外穿透（例如宿主用 `hs_try_putmvar` 之類的取消機制），要在組合子裡加型別過濾，T3 要多一條「某類例外不被吞」的斷言。
 - **A5**: 防火牆路徑與 all-or-nothing 承諾的關係 → 採取：明文不承諾——例外若發生在複製途中，宿主緩衝可能半更新，庫只承諾「不崩、回哨兵」→ 影響：若編排者要求防火牆也維持 all-or-nothing，觀測類符號必須先寫暫存再整塊搬，與 F010 block-copy-out 的設計直接衝突，應改為那份文檔的議題。
 - **A6**: 兩個組合子的命名（`firewall`／`firewallErr`）與「從 Internals 區匯出」的決定 → 採取：固定下來，因為 T5 的原始碼守門測試要靠名字比對，T3／T4 要直接呼叫它們 → 影響：改名要同步改守門測試的比對字串；這是實作自主權讓渡給可測性的一次刻意取捨。
-- **A7**: ADR-022 背景第 1 條寫「30 個 `foreign export`」，實查為 **29** 個（`src/ffi/Magic/FFI.hs` 有 30 行含 `foreign export ccall`，其中一行是模組 haddock 的引文）；31 個凍結符號 ＝ 29 個 Haskell 匯出 ＋ `pm_init`／`pm_shutdown` 兩個 C 函式，與標頭的 31 條宣告、`.def` 的 31 行相符 → 採取：本文件一律以 29／31 敘述 → 影響：ADR-022 的那個數字建議由編排者修訂（純敘述修正，不動任何決策）。
+- **A7**（已確認並由編排者修訂 ADR-022）：實查為 **29** 個 `foreign export ccall`；31 個凍結符號 ＝ 29 ＋ `pm_init`／`pm_shutdown`。T5 的原始碼守門測試以 `length exports \`shouldBe\` 29` 把這個數字釘住。
+
+- **A8**（本輪新增）：F002 已交付後，`Magic.FFI` 不再匯出可直接建構的 `newStablePtr . SpellCell` 路徑，而 `withCell`／`withScene` 變成四參數（`onNull`／`onInvalid`／續體）→ 採取：毒化控制代碼改用 F002 匯出的 `newSpellHandle`／`newSceneHandle`（參數惰性，內容物為 bottom 但控制代碼合法），逐符號套用改在「函數本體最外層」而非字面上的等號右側（四個帶 guard 的定義以 `where body` 承接，邏輯逐字未動）→ 影響：無契約影響，屬實作自主權範圍。
+
+- **A9**（本輪新增，**需編排者知悉**）：`test/FFIHandleSpec.hs` 的 T6 原本斷言「毒化控制代碼會讓例外逃出 `pm_age`／`pm_scene_count`」（`isLeft`），那正是本功能要消滅的行為 → 採取：把兩條斷言改寫為新語意（`Right (-6.0)` 與 `Right pmErrInternal`），該案例的意圖（證明控制代碼有解析成功）不但保留而且更銳利——「解析後爆掉」「從未解析」「已釋放」現在是三個相異的值而非「例外 vs 0」→ 影響：這是 F001 對 F002 測試的唯一一處必要修改，不涉及任何契約變動。
 
 ## 實作備註
 
-（撰寫時留空）
+**與文檔的偏差（皆屬實作自主權，無契約偏離）**：
+
+1. **毒化控制代碼的造法**：文檔寫的 `newStablePtr . SpellCell =<< newIORef …` 在 F002 之後不成立（那樣造出來的值會被註冊表判為偽造、回 `PM_ERR_ARGS`）。改用 `newSpellHandle (error …)`／`newSceneHandle (error …)`。
+2. **套用形式**：四個帶 guard 的定義（`pm_scene_cast_many`、`pm_spell_bounds`、`pm_occupancy`、`pm_scene_spell_bounds`）無法在字面上的「等號右側最外層」插入呼叫，改為 `f args = firewall sentinel body where body | … = …`，guard 與本體逐字搬入 `body`。
+3. **`pm_age` 的兩個 0**：`withCell h 0 0` 的「`NULL`／無效控制代碼回 0」是 C2.3 的既有承諾，**未改**；`-6.0` 只是防火牆路徑的哨兵。標頭同時陳述這兩件事，兩者不衝突。
+
+**兌現的關鍵細節**：
+
+- `evaluate` 已落實在 `firewallErr` 的 `action >>= evaluate`。T3 的第四條案例（`firewall sentinel (pure (error "thunk"))`）就是它的回歸：拿掉 `evaluate`，`foreign export` 包裝器會在 `try` 之外拆箱，該案例立刻紅。
+- 取訊息的二次保護以 `firewallMessage` 實作：`take 512` ＋ `forceString`（強制 spine 與每個字元）＋ 再一層 `tryAny`，失敗退回固定文字。T4 以一個 `show` 會爆的自訂例外（`Cursed`）驗證。
+- 依賴白名單未動：只用到 `base` 的 `Control.Exception`，沒有 `safe-exceptions`、沒有 `deepseq`（WHNF 對 `CInt`／`CDouble`／`Word32`／`StablePtr`／`()` 即完整值）。
+- `PM_ABI_VERSION` 維持 1、`.def` 未動、標頭只加兩個 `#define` 與一段散文；`headerFunctions` 仍為 31。
+
+**同步修改的既有測試（皆為鏡射性質，非放寬）**：
+
+- `test/FFIContractSpec.hs`：`"agrees with Haskell on every error code"` 的期望表加兩列；`"documents handle safety…"` 的 `#define` 全集清單加兩個名字（該斷言是雙向集合相等，不加就紅）。
+- `test/FFIHandleSpec.hs`：見待確認假設 A9。
+
+**測試結果**：`cabal test` → **1804 examples, 0 failures**（基線 1797，新增 5 條 `FFIFirewallSpec` ＋ 2 條 `FFIContractSpec`）。`cabal build all` 亦全綠。

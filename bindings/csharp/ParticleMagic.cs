@@ -40,6 +40,8 @@ namespace ParticleMagic
         public const int ErrCapacity = -3;      // PM_ERR_CAPACITY
         public const int ErrArgs = -4;          // PM_ERR_ARGS
         public const int ErrQuota = -5;         // PM_ERR_QUOTA: scene full, retry after a Dismiss
+        public const int ErrInternal = -6;      // PM_ERR_INTERNAL: a bug in the library, never in your call
+        public const int ErrState = -7;         // PM_ERR_STATE: called out of order
 
         public const int BlendAlpha = 0;        // PM_BLEND_ALPHA
         public const int BlendAdditive = 1;     // PM_BLEND_ADDITIVE
