@@ -15,10 +15,14 @@
 --     functions. Any behaviour that exists only on the FFI side is a bug —
 --     @test\/Acceptance9Spec.hs@ turns that sentence into an equivalence
 --     law (ADR-0011 D8).
---   * __Handle = 'StablePtr' over an 'IORef'__ (ADR-0011 D4). 'advanceSpell'
---     is pure, hosts want in-place advance, so the handle points at a cell
---     that @pm_advance@ reads-computes-writes back. One handle is owned by
---     one thread; there is no internal lock in v1.
+--   * __Handle = a generation-tagged index over an 'IORef'__ (ADR-0011 D4
+--     as revised by ADR-022 D3). 'advanceSpell' is pure, hosts want
+--     in-place advance, so the handle names a cell that @pm_advance@
+--     reads-computes-writes back. The handle is no longer a live
+--     'StablePtr': it is a word encoding kind, slot and generation, which
+--     "Magic.FFI.Registry" resolves — so a freed, double-freed or forged
+--     handle is an error code rather than undefined behaviour. One handle
+--     is owned by one thread; there is no internal lock in v1.
 --   * __copy-out, never borrow__ (ADR-0011 D3). 'Data.Vector.Unboxed' has
 --     no pointer interface, so @pm_observe@ pokes element by element into
 --     host-owned arrays.
@@ -94,6 +98,15 @@ module Magic.FFI
   , nullScene
   , isNullScene
   , writeErr
+
+    -- * Handle registry internals (host-runtime F002; not part of the C
+    -- contract, exposed so the specs can drive the lifecycle directly)
+  , newSpellHandle
+  , freeSpellHandle
+  , newSceneHandle
+  , freeSceneHandle
+  , spellRegistryStats
+  , sceneRegistryStats
   ) where
 
 import Control.Monad (foldM, when)
@@ -106,20 +119,23 @@ import Foreign.C.Types (CChar, CDouble (..), CFloat (..), CInt (..))
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Utils (copyBytes)
 import Foreign.Ptr (Ptr, castPtr, nullPtr, plusPtr)
-import Foreign.StablePtr
-  ( StablePtr
-  , castPtrToStablePtr
-  , castStablePtrToPtr
-  , deRefStablePtr
-  , freeStablePtr
-  , newStablePtr
-  )
+import Foreign.StablePtr (StablePtr, castPtrToStablePtr, castStablePtrToPtr)
 import Foreign.Storable (peek, peekByteOff, peekElemOff, poke, pokeByteOff, pokeElemOff)
 import GHC.Float (float2Double)
 import qualified GHC.Foreign as GHCF
 import GHC.IO.Encoding (utf8)
 import Magic.Codec (loadCircle, renderLoadError)
 import Magic.Columns (fromColumns)
+import Magic.FFI.Registry
+  ( HandleKind (..)
+  , Registry
+  , Resolved (..)
+  , newRegistry
+  , registryInsert
+  , registryRelease
+  , registryResolve
+  , registryStats
+  )
 import Magic.Interface
   ( ActiveSpell
   , BillboardShape
@@ -177,6 +193,7 @@ import Magic.Scene
   , sceneBudget
   , sceneSpells
   )
+import System.IO.Unsafe (unsafePerformIO)
 
 -- Contract constants ---------------------------------------------------------
 
@@ -291,20 +308,55 @@ newtype SpellCell = SpellCell (IORef ActiveSpell)
 
 -- | The @NULL@ handle. C sees it as a null pointer; every entry point
 -- tolerates it (no-op or neutral value) so a host that forgot to check
--- @pm_cast@'s result gets a quiet failure rather than a crash. Any /other/
--- invalid handle (freed, forged) is undefined behaviour, as in any C API.
+-- @pm_cast@'s result gets a quiet failure rather than a crash.
+--
+-- Any /other/ invalid handle — freed, freed twice, forged, or a
+-- @PmScene*@ where a @PmSpell*@ belongs — is recognised by
+-- "Magic.FFI.Registry" and answered with 'pmErrArgs' (or, for the symbols
+-- with no error channel, a neutral value). It is no longer undefined
+-- behaviour (host-runtime C2.3, ADR-022 D3).
 nullSpell :: StablePtr SpellCell
 nullSpell = castPtrToStablePtr nullPtr
 
 isNullSpell :: StablePtr SpellCell -> Bool
 isNullSpell h = castStablePtrToPtr h == nullPtr
 
-withCell :: StablePtr SpellCell -> b -> (IORef ActiveSpell -> IO b) -> IO b
-withCell h fallback k
-  | isNullSpell h = pure fallback
-  | otherwise = do
-      SpellCell ref <- deRefStablePtr h
-      k ref
+-- | The spell table. A module-level 'IORef' inside, which is also what
+-- keeps the cells reachable: the registry is the GC root the 'StablePtr'
+-- used to be, so a released handle's spell becomes collectable at exactly
+-- the same moment it did before.
+spellRegistry :: Registry SpellCell
+spellRegistry = unsafePerformIO (newRegistry KindSpell)
+{-# NOINLINE spellRegistry #-}
+
+-- | Register a freshly cast spell and hand back its handle.
+--
+-- __Lazy in the spell__, deliberately: @newSpellHandle (error "…")@ yields
+-- a perfectly legal handle whose contents are bottom, which is how a spec
+-- reaches the code behind the handle check.
+newSpellHandle :: ActiveSpell -> IO (StablePtr SpellCell)
+newSpellHandle spell = do
+  ref <- newIORef spell
+  castPtrToStablePtr <$> registryInsert spellRegistry (SpellCell ref)
+
+-- | The body of 'pm_free': a handle that does not resolve (NULL, forged,
+-- already released) is a safe no-op.
+freeSpellHandle :: StablePtr SpellCell -> IO ()
+freeSpellHandle = registryRelease spellRegistry . castStablePtrToPtr
+
+-- | @(live spell handles, slots ever allocated)@.
+spellRegistryStats :: IO (Int, Int)
+spellRegistryStats = registryStats spellRegistry
+
+-- | Three-way handle resolution (host-runtime C2.3): the frozen @NULL@
+-- answer, the invalid answer, or the cell. Every spell entry point that
+-- takes a handle goes through here.
+withCell :: StablePtr SpellCell -> b -> b -> (IORef ActiveSpell -> IO b) -> IO b
+withCell h onNull onInvalid k =
+  registryResolve spellRegistry (castStablePtrToPtr h) >>= \case
+    ResNull -> pure onNull
+    ResInvalid -> pure onInvalid
+    ResLive (SpellCell ref) -> k ref
 
 -- | What a @PmScene*@ points at (func-spec 0018 §3.3): the same shape as
 -- 'SpellCell', for the same reason — 'Magic.Scene.Scene' is an immutable
@@ -324,12 +376,33 @@ nullScene = castPtrToStablePtr nullPtr
 isNullScene :: StablePtr SceneCell -> Bool
 isNullScene h = castStablePtrToPtr h == nullPtr
 
-withScene :: StablePtr SceneCell -> b -> (IORef Scene -> IO b) -> IO b
-withScene h fallback k
-  | isNullScene h = pure fallback
-  | otherwise = do
-      SceneCell ref <- deRefStablePtr h
-      k ref
+-- | The scene table — the same structure as 'spellRegistry', tagged with
+-- the other kind bit so the two handle spaces cannot be confused.
+sceneRegistry :: Registry SceneCell
+sceneRegistry = unsafePerformIO (newRegistry KindScene)
+{-# NOINLINE sceneRegistry #-}
+
+-- | 'newSpellHandle' for scenes, and lazy in the scene for the same
+-- reason.
+newSceneHandle :: Scene -> IO (StablePtr SceneCell)
+newSceneHandle scene = do
+  ref <- newIORef scene
+  castPtrToStablePtr <$> registryInsert sceneRegistry (SceneCell ref)
+
+-- | The body of 'pm_scene_free'.
+freeSceneHandle :: StablePtr SceneCell -> IO ()
+freeSceneHandle = registryRelease sceneRegistry . castStablePtrToPtr
+
+-- | @(live scene handles, slots ever allocated)@.
+sceneRegistryStats :: IO (Int, Int)
+sceneRegistryStats = registryStats sceneRegistry
+
+withScene :: StablePtr SceneCell -> b -> b -> (IORef Scene -> IO b) -> IO b
+withScene h onNull onInvalid k =
+  registryResolve sceneRegistry (castStablePtrToPtr h) >>= \case
+    ResNull -> pure onNull
+    ResInvalid -> pure onInvalid
+    ResLive (SceneCell ref) -> k ref
 
 -- Entry points ---------------------------------------------------------------
 
@@ -422,9 +495,14 @@ pm_cast_ex json posPtr facingPtr sd errBuf errLen out = do
           case castSpell CastRequest {circleOf = circle, ctxOf = ctx} of
             Left err -> fail' pmErrBudget ("spell compile error: " ++ show err)
             Right spell -> do
-              handle <- newStablePtr . SpellCell =<< newIORef spell
-              writeOut handle
-              pure pmOk
+              handle <- newSpellHandle spell
+              if isNullSpell handle
+                then -- Unreachable in practice: the slot space runs to 2³⁰
+                -- live handles. Reported rather than aliased.
+                  fail' pmErrCapacity "spell handle table exhausted"
+                else do
+                  writeOut handle
+                  pure pmOk
   where
     writeOut h = if out == nullPtr then pure () else poke out h
     fail' code msg = writeErr errBuf errLen msg >> pure code
@@ -434,26 +512,29 @@ foreign export ccall pm_advance :: StablePtr SpellCell -> CFloat -> IO ()
 -- | Advance the spell's clock by @dt@ seconds, in place.
 pm_advance :: StablePtr SpellCell -> CFloat -> IO ()
 pm_advance h dt =
-  withCell h () $ \ref -> do
+  withCell h () () $ \ref -> do
     spell <- readIORef ref
     writeIORef ref $! advanceSpell (FrameInput (DeltaTime (cfloatToDouble dt))) spell
 
 foreign export ccall pm_is_finished :: StablePtr SpellCell -> IO CInt
 
 -- | 1 when the spell has outlived its lifetime, 0 while it is running.
--- A @NULL@ handle reports 1 — nothing left to run.
+-- A @NULL@ handle reports 1 — nothing left to run. An /invalid/ handle
+-- reports 'pmErrArgs': that is a host bug, not a finished spell.
 pm_is_finished :: StablePtr SpellCell -> IO CInt
 pm_is_finished h =
-  withCell h 1 $ \ref -> do
+  withCell h 1 pmErrArgs $ \ref -> do
     spell <- readIORef ref
     pure (if isFinished spell then 1 else 0)
 
 foreign export ccall pm_age :: StablePtr SpellCell -> IO CDouble
 
--- | Seconds since this spell was cast.
+-- | Seconds since this spell was cast. There is no error channel in a
+-- @double@, so both a @NULL@ and an invalid handle answer 0 — safe, and
+-- the same answer a spell that has not been advanced gives.
 pm_age :: StablePtr SpellCell -> IO CDouble
 pm_age h =
-  withCell h 0 $ \ref -> do
+  withCell h 0 0 $ \ref -> do
     spell <- readIORef ref
     let Time t = spellAge spell
     pure (CDouble t)
@@ -579,7 +660,7 @@ pm_observe_ex
   -- ^ capacity of @batch_info@, in batches
   -> IO CInt
 pm_observe_ex h px py pz psize plife pcolor pvx pvy pvz capacity infoPtr maxBatches =
-  withCell h 0 $ \ref -> do
+  withCell h 0 pmErrArgs $ \ref -> do
     spell <- readIORef ref
     copyOut
       (batches (observeSpell spell))
@@ -661,12 +742,13 @@ copyOut bs px py pz psize plife pcolor pvx pvy pvz capacity infoPtr maxBatches =
 
 foreign export ccall pm_free :: StablePtr SpellCell -> IO ()
 
--- | Release a handle. Freeing @NULL@ is a no-op (C convention); freeing
--- twice is undefined behaviour (ADR-0011 D4).
+-- | Release a handle. Freeing @NULL@ is a no-op (C convention), and so is
+-- freeing anything else that does not resolve — a handle freed twice, or
+-- one this library never issued. @void@ leaves no room to report it, so
+-- the promise here is the safe half of C2.3: nothing happens, and the host
+-- process lives (ADR-022 D3, revising ADR-0011 D4).
 pm_free :: StablePtr SpellCell -> IO ()
-pm_free h
-  | isNullSpell h = pure ()
-  | otherwise = freeStablePtr h
+pm_free = freeSpellHandle
 
 -- Scenes (func-spec 0018) ----------------------------------------------------
 --
@@ -688,16 +770,15 @@ foreign export ccall pm_scene_new :: CInt -> IO (StablePtr SceneCell)
 -- §2). Never returns the 'nullScene' handle in this generation.
 pm_scene_new :: CInt -> IO (StablePtr SceneCell)
 pm_scene_new cap =
-  newStablePtr . SceneCell =<< newIORef (newScene (SceneConfig (fromIntegral cap)))
+  newSceneHandle (newScene (SceneConfig (fromIntegral cap)))
 
 foreign export ccall pm_scene_free :: StablePtr SceneCell -> IO ()
 
 -- | Release a scene and, with it, every spell still live inside it.
--- Freeing 'nullScene' is a no-op; freeing twice is undefined behaviour.
+-- Freeing 'nullScene' is a no-op, and so is freeing a scene handle that
+-- does not resolve — already freed, or forged (host-runtime C2.3).
 pm_scene_free :: StablePtr SceneCell -> IO ()
-pm_scene_free h
-  | isNullScene h = pure ()
-  | otherwise = freeStablePtr h
+pm_scene_free = freeSceneHandle
 
 foreign export ccall pm_scene_cast
   :: StablePtr SceneCell
@@ -818,12 +899,18 @@ withCast
 withCast h posPtr facingPtr sd errBuf errLen outId k
   | isNullScene h = castFail errBuf errLen pmErrArgs "scene cast error: null scene"
   | outId == nullPtr = castFail errBuf errLen pmErrArgs "scene cast error: null out_id"
-  | otherwise = do
-      poke outId (-1)
-      SceneCell ref <- deRefStablePtr h
-      pos <- peekV3 posPtr
-      facing <- peekV3 facingPtr
-      k ref CastContext {casterPos = pos, casterFacing = facing, seed = Seed sd}
+  | otherwise =
+      -- The handle is resolved /before/ @out_id@ is touched, so an invalid
+      -- scene leaves the host's id word exactly as a NULL scene does: not
+      -- written at all.
+      registryResolve sceneRegistry (castStablePtrToPtr h) >>= \case
+        ResNull -> castFail errBuf errLen pmErrArgs "scene cast error: null scene"
+        ResInvalid -> castFail errBuf errLen pmErrArgs "scene cast error: invalid scene handle"
+        ResLive (SceneCell ref) -> do
+          poke outId (-1)
+          pos <- peekV3 posPtr
+          facing <- peekV3 facingPtr
+          k ref CastContext {casterPos = pos, casterFacing = facing, seed = Seed sd}
 
 -- | Commit an admission decision to the cell, or report the refusal.
 admitInto
@@ -852,7 +939,7 @@ foreign export ccall pm_scene_dismiss :: StablePtr SceneCell -> CInt -> IO ()
 -- reused; the C side therefore needs no generation counter.
 pm_scene_dismiss :: StablePtr SceneCell -> CInt -> IO ()
 pm_scene_dismiss h sid =
-  withScene h () $ \ref -> do
+  withScene h () () $ \ref -> do
     scene <- readIORef ref
     writeIORef ref $! dismiss (SpellId (fromIntegral sid)) scene
 
@@ -862,7 +949,7 @@ foreign export ccall pm_scene_advance :: StablePtr SceneCell -> CFloat -> IO ()
 -- that finished — which is also how their share of the quota comes back.
 pm_scene_advance :: StablePtr SceneCell -> CFloat -> IO ()
 pm_scene_advance h dt =
-  withScene h () $ \ref -> do
+  withScene h () () $ \ref -> do
     scene <- readIORef ref
     writeIORef ref $! advanceScene (FrameInput (DeltaTime (cfloatToDouble dt))) scene
 
@@ -901,7 +988,7 @@ pm_scene_observe
   -> CInt
   -> IO CInt
 pm_scene_observe h px py pz psize plife pcolor capacity infoPtr maxBatches =
-  withScene h 0 $ \ref -> do
+  withScene h 0 pmErrArgs $ \ref -> do
     scene <- readIORef ref
     -- No velocity out of the scene entry point this round: func-spec 0023
     -- widens the single-spell path only, so this passes the three @NULL@s
@@ -930,7 +1017,7 @@ foreign export ccall pm_scene_budget
 -- that only wants the other one.
 pm_scene_budget :: StablePtr SceneCell -> Ptr CInt -> Ptr CInt -> IO CInt
 pm_scene_budget h outUsed outCap =
-  withScene h pmErrArgs $ \ref -> do
+  withScene h pmErrArgs pmErrArgs $ \ref -> do
     (used, cap) <- sceneBudget <$> readIORef ref
     when (outUsed /= nullPtr) (poke outUsed (fromIntegral used))
     when (outCap /= nullPtr) (poke outCap (fromIntegral cap))
@@ -941,7 +1028,7 @@ foreign export ccall pm_scene_count :: StablePtr SceneCell -> IO CInt
 -- | How many spells are live — the capacity 'pm_scene_spells' wants.
 pm_scene_count :: StablePtr SceneCell -> IO CInt
 pm_scene_count h =
-  withScene h 0 $ \ref -> fromIntegral . length . sceneSpells <$> readIORef ref
+  withScene h 0 pmErrArgs $ \ref -> fromIntegral . length . sceneSpells <$> readIORef ref
 
 foreign export ccall pm_scene_spells :: StablePtr SceneCell -> Ptr CInt -> CInt -> IO CInt
 
@@ -950,7 +1037,7 @@ foreign export ccall pm_scene_spells :: StablePtr SceneCell -> Ptr CInt -> CInt 
 -- do not fit — the same all-or-nothing rule 'pm_observe' follows.
 pm_scene_spells :: StablePtr SceneCell -> Ptr CInt -> CInt -> IO CInt
 pm_scene_spells h outIds maxIds =
-  withScene h 0 $ \ref -> do
+  withScene h 0 pmErrArgs $ \ref -> do
     ids <- sceneSpells <$> readIORef ref
     let n = length ids
     if n > fromIntegral maxIds || (n > 0 && outIds == nullPtr)
@@ -981,7 +1068,7 @@ pm_spell_bounds :: StablePtr SpellCell -> Ptr CFloat -> Ptr CFloat -> IO CInt
 pm_spell_bounds h outMin outMax
   | outMin == nullPtr || outMax == nullPtr = pure pmErrArgs
   | otherwise =
-      withCell h pmErrArgs $ \ref -> do
+      withCell h pmErrArgs pmErrArgs $ \ref -> do
         spell <- readIORef ref
         let (lo, hi) = spellBoundsOf spell
         pokeV3 outMin lo
@@ -1005,7 +1092,7 @@ pm_spell_box
   -- ^ out: half-extents, 3 floats
   -> IO CInt
 pm_spell_box h outCenter outAxes outHalf =
-  withCell h pmErrArgs $ \ref -> do
+  withCell h pmErrArgs pmErrArgs $ \ref -> do
     spell <- readIORef ref
     writeBox (spellBoxOf spell) outCenter outAxes outHalf
 
@@ -1015,7 +1102,7 @@ foreign export ccall pm_emitter_count :: StablePtr SpellCell -> IO CInt
 -- 'pm_emitter_box' accepts. 0 for a @NULL@ handle.
 pm_emitter_count :: StablePtr SpellCell -> IO CInt
 pm_emitter_count h =
-  withCell h 0 $ \ref -> fromIntegral . length . emittersOf <$> readIORef ref
+  withCell h 0 pmErrArgs $ \ref -> fromIntegral . length . emittersOf <$> readIORef ref
 
 foreign export ccall pm_emitter_box
   :: StablePtr SpellCell -> CInt -> Ptr CFloat -> Ptr CFloat -> Ptr CFloat -> IO CInt
@@ -1031,7 +1118,7 @@ pm_emitter_box
   -> Ptr CFloat
   -> IO CInt
 pm_emitter_box h index outCenter outAxes outHalf =
-  withCell h pmErrArgs $ \ref -> do
+  withCell h pmErrArgs pmErrArgs $ \ref -> do
     spell <- readIORef ref
     let ems = emittersOf spell
         i = fromIntegral index :: Int
@@ -1069,7 +1156,7 @@ pm_occupancy :: StablePtr SpellCell -> CInt -> Ptr CInt -> CInt -> IO CInt
 pm_occupancy h dim outCounts capacity
   | dim <= 0 = pure pmErrArgs
   | otherwise =
-      withCell h pmErrArgs $ \ref -> do
+      withCell h pmErrArgs pmErrArgs $ \ref -> do
         let n = fromIntegral dim :: Int
             cells = n * n * n
         if cells > fromIntegral capacity || outCounts == nullPtr
@@ -1087,7 +1174,7 @@ foreign export ccall pm_occupancy_mask :: StablePtr SpellCell -> IO Word32
 -- which is also what an empty spell answers — "nothing anywhere" is the
 -- honest reading of both.
 pm_occupancy_mask :: StablePtr SpellCell -> IO Word32
-pm_occupancy_mask h = withCell h 0 $ \ref -> occupancyMask <$> readIORef ref
+pm_occupancy_mask h = withCell h 0 0 $ \ref -> occupancyMask <$> readIORef ref
 
 foreign export ccall pm_scene_spell_bounds
   :: StablePtr SceneCell -> CInt -> Ptr CFloat -> Ptr CFloat -> IO CInt
@@ -1104,7 +1191,7 @@ pm_scene_spell_bounds
 pm_scene_spell_bounds h sid outMin outMax
   | outMin == nullPtr || outMax == nullPtr = pure pmErrArgs
   | otherwise =
-      withScene h pmErrArgs $ \ref -> do
+      withScene h pmErrArgs pmErrArgs $ \ref -> do
         scene <- readIORef ref
         case lookupSpell (SpellId (fromIntegral sid)) scene of
           Nothing -> pure pmErrArgs

@@ -138,8 +138,9 @@ int main(int argc, char **argv)
 
     printf("finished: %d\n", pm_is_finished(spell));
 
-    /* Freeing twice would be undefined behaviour; shutting down twice is
-       not (both calls below are part of the smoke). */
+    /* Freeing twice is safe (the handle is generation-tagged and the
+       second call is a no-op), and so is shutting down twice; the smoke
+       still frees exactly once, which is what a host should do. */
     pm_free(spell);
     pm_shutdown();
     pm_shutdown();

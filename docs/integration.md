@@ -446,7 +446,8 @@ int main(void)
 
 - `pm_init()` 冪等，可以被多個子系統各叫一次。
 - **一個 handle 屬於一個執行緒**（ADR-0011 D4）。庫內部**沒有鎖**。不同 handle 在不同執行緒是安全的；同一個 handle 跨執行緒不是。
-- `pm_free(NULL)` 是 no-op。重複 free、free 過再用是 UB——和任何 C API 一樣。
+- `pm_free(NULL)` 是 no-op。**重複 free、free 過再用、亂造一個 handle 都不再是 UB**：handle 帶世代標籤,庫認得出來並回 `PM_ERR_ARGS`,不會讀已釋放的記憶體、也不會終止你的 process(ADR-022 D3 修訂 ADR-0011 D4)。七個沒有錯誤碼通道的凍結符號改以中性值兌現同一條保證——`pm_advance`／`pm_free`／`pm_scene_free`／`pm_scene_dismiss`／`pm_scene_advance` 無操作,`pm_age` 回 `0.0`,`pm_occupancy_mask` 回 `0`。唯一抓不到的是「偽造的值恰好等於一個現存的合法 handle」,那是任何 handle 方案的共同上限。
+- handle **不是可以解參考的指標**,是一個不透明的識別字(值恆為奇數,永遠不會是對齊的堆積位址)。只把它原樣傳回庫裡。
 - **`pm_shutdown()` 之後不能再 `pm_init()`**：GHC 的 RTS 一旦真正 `hs_exit()`，同一個 process 內無法重啟。長駐型宿主（尤其 Unity Editor）**乾脆永遠不要呼叫它**。
 - 一個 process 只能有一份 GHC RTS——不要把兩個 GHC 產生的共享庫連進同一個宿主。
 

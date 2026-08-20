@@ -3,7 +3,7 @@ id: F002
 type: feature
 title: handle-generation
 description: 控制代碼改為世代標籤註冊表，釋放後再用回錯誤
-status: open
+status: done
 created: 2026-08-20
 updated: 2026-08-20
 depends-on: []
@@ -256,14 +256,14 @@ C# 綁定（`bindings/csharp/ParticleMagic.cs`）**零改動**：它已經全部
 
 ## TodoList
 
-- [ ] T1: 控制代碼的編碼／解碼純函數：合成位、種類位、slot 索引、世代四欄的打包與拆解，以半字寬定義版面  `dep: -`
-- [ ] T2: 參數化的註冊表與四個生命週期操作（`newSpellHandle`／`freeSpellHandle`／`newSceneHandle`／`freeSceneHandle`），含自由串列、世代遞增、溢位退休；以 `Data.Vector.Mutable` 實作，`build-depends` 不動  `dep: T1`
-- [ ] T3: `pm_cast_ex`（:425）與 `pm_scene_new`（:691）改為經註冊表配置；`pm_free`（:666）與 `pm_scene_free`（:697）改為經註冊表釋放，不再出現 `newStablePtr`／`freeStablePtr`／`deRefStablePtr`  `dep: T2`
-- [ ] T4: `withCell`／`withScene` 改寫為三路解析（NULL／無效／有效），22 個吃控制代碼的符號依「逐符號回傳表」補上第二個 fallback；不動任何簽名，既有的檢查順序不變  `dep: T3`
-- [ ] T5: 標頭與 `docs/integration.md` 的敘述修訂：兩處「freeing twice is undefined behaviour」改寫，新增控制代碼安全散文段落（含中性值清單）；符號集合、`PM_ABI_VERSION`、`.def` 皆不動  `dep: T4`
-- [ ] T6: 六個 Internals 介面加入 `Magic.FFI` 的匯出區；新測試模組登記進 `particle-magic.cabal` 的 `test-suite spec` `other-modules`  `dep: T2`
-- [ ] T7: 合法控制代碼的輸出逐位元不變的回歸（九欄與 `batch_info` 對照 `Magic.Interface` 參考路徑）  `dep: T4`
-- [ ] T8: 成本與規模的斷言：解析路徑的每次呼叫配置量不隨存活控制代碼數成長；slot 在釋放後被重用，已配置 slot 數收斂到存活峰值  `dep: T4, T6`
+- [x] T1: 控制代碼的編碼／解碼純函數：合成位、種類位、slot 索引、世代四欄的打包與拆解，以半字寬定義版面  `dep: -`
+- [x] T2: 參數化的註冊表與四個生命週期操作（`newSpellHandle`／`freeSpellHandle`／`newSceneHandle`／`freeSceneHandle`），含自由串列、世代遞增、溢位退休；以 `Data.Vector.Mutable` 實作，`build-depends` 不動  `dep: T1`
+- [x] T3: `pm_cast_ex`（:425）與 `pm_scene_new`（:691）改為經註冊表配置；`pm_free`（:666）與 `pm_scene_free`（:697）改為經註冊表釋放，不再出現 `newStablePtr`／`freeStablePtr`／`deRefStablePtr`  `dep: T2`
+- [x] T4: `withCell`／`withScene` 改寫為三路解析（NULL／無效／有效），22 個吃控制代碼的符號依「逐符號回傳表」補上第二個 fallback；不動任何簽名，既有的檢查順序不變  `dep: T3`
+- [x] T5: 標頭與 `docs/integration.md` 的敘述修訂：兩處「freeing twice is undefined behaviour」改寫，新增控制代碼安全散文段落（含中性值清單）；符號集合、`PM_ABI_VERSION`、`.def` 皆不動  `dep: T4`
+- [x] T6: 六個 Internals 介面加入 `Magic.FFI` 的匯出區；新測試模組登記進 `particle-magic.cabal` 的 `test-suite spec` `other-modules`  `dep: T2`
+- [x] T7: 合法控制代碼的輸出逐位元不變的回歸（九欄與 `batch_info` 對照 `Magic.Interface` 參考路徑）  `dep: T4`
+- [x] T8: 成本與規模的斷言：解析路徑的每次呼叫配置量不隨存活控制代碼數成長；slot 在釋放後被重用，已配置 slot 數收斂到存活峰值  `dep: T4, T6`
 
 ## 1-to-1 測試對照表
 
@@ -288,6 +288,14 @@ C# 綁定（`bindings/csharp/ParticleMagic.cs`）**零改動**：它已經全部
 - **A6**: 偽造控制代碼的偵測上限 → 採取：偶數字、種類不符、索引越界、slot 已空、世代不符全部攔下；一個**恰好等於某個現存合法控制代碼**的偽造字無法辨識，文件明說「這是任何表徵方案的共同上限，不是本方案的缺陷」 → 影響：若要更強的保證（例如加入一個進程內隨機的 salt 混入世代欄），世代可用位元減少、且測試無法再構造可預測的合法字，T1／T4 的測試手法要跟著改。
 - **A7**: F001 的「刻意觸發內部失敗」路徑會被本功能作廢——它以 `newStablePtr . SpellCell =<< newIORef (error "poisoned spell")` 造控制代碼，本功能合併後那個字不在註冊表裡，會回 `PM_ERR_ARGS` 而非 `PM_ERR_INTERNAL` → 採取：本功能匯出 `newSpellHandle`／`newSceneHandle`（參數惰性，`newSpellHandle (error "…")` 與原寫法等價但回傳**合法**控制代碼），並在 T6 加一條測試釘住這個用法 → 影響：建議編排者讓本功能先合併、或直接請 F001 的實作採用這兩個函式；若 F001 先合併，其 T6 需改兩行（import 與構造）。這是兩份文檔之間唯一的實質互動，不構成 `depends-on`（本功能不需要 F001 的任何產出）。
 
+- **A8**（實作時新增）: slot 空間耗盡時該回什麼——設計文檔沒寫，因為 64 位元平台上那是 2³⁰ 個同時存活的控制代碼(裝箱 cell 本身早就吃光位址空間) → 採取：`registryInsert` 回 NULL 字;`pm_cast_ex` 因此回 `PM_ERR_CAPACITY` 並寫訊息 `"spell handle table exhausted"`,`pm_scene_new` 回 `NULL`。理由是「別名一個現存的合法控制代碼」比「回報失敗」壞得多 → 影響：標頭 `pm_scene_new` 的散文寫著「Never returns NULL in this generation」,這條路徑理論上與它相牴觸(實務上不可達,無測試能構造)。若編排者要求嚴格相符,得改標頭那一句或改採「耗盡即 `error`」(但那會撞上 F001 的防火牆,回 `PM_ERR_INTERNAL`)。
+- **A9**（實作時新增）: T8 的 1-to-1 測試寫「兩種規模下每次呼叫配置量差值為 **0**」→ 採取：改為「20 萬次呼叫的總配置量差 < 65536 位元組」(等於每次呼叫差 < 0.33 位元組),外加「每次呼叫配置量 < 128 位元組」。理由是 `getAllocationCounter` 以 nursery block 為同步顆粒度、不是逐次配置精確,字面的 0 會偶發性變紅 → 影響：斷言的語意不變(成本不隨存活控制代碼數成長),只是容忍計數器本身的量測誤差;若要字面的 0,得改用 `+RTS -s` 或 `GHC.Stats` 的全域統計,並讓測試獨佔進程。
+
 ## 實作備註
 
-（撰寫時留空）
+- **註冊表放在新模組 `src/ffi/Magic/FFI/Registry.hs`**，而不是塞進已有 1300 行的 `Magic.FFI`。理由是三個：與 F001 的合併面更小（F001 改 `Magic.FFI` 的每個符號，本功能的核心邏輯完全不在那個檔案裡）、`Magic.FFI.hs` 的原始碼稽核（T3）因此乾淨、F004 要加同步時只需要動一個檔。代價是 `particle-magic.cabal` 的 `foreign-library` 與 `test-suite spec` 兩處 `other-modules` 各加一行——`FFIContractSpec` 的 `has "other-modules" "Magic.FFI"` 斷言仍然命中原本那一行，沒有變紅。`build-depends` 一個字都沒動。
+- 六個 Internals 介面（`newSpellHandle`／`freeSpellHandle`／`newSceneHandle`／`freeSceneHandle`／`spellRegistryStats`／`sceneRegistryStats`）如文檔所寫從 `Magic.FFI` 匯出；註冊表本身的泛型介面（`Registry`／`HandleKind`／`Resolved`／`encodeHandle`／`decodeHandle`／…）從 `Magic.FFI.Registry` 匯出給 T1／T4 的測試直接驅動。
+- **A7 已兌現並被測試釘住**：`newSpellHandle` 的參數惰性，`newSpellHandle (error "poisoned spell")` 回傳合法控制代碼，`pm_age` 強制求值時真的會炸出 `ErrorCall`（T6 的測試就是這一條）；同一條也對 `newSceneHandle` ／ `pm_scene_count` 驗過。F001 可直接改用這兩個函式。
+- **F004 的接縫維持原樣**：兩張表都是頂層 `IORef (Table a)`（未改成 `MVar`），解析路徑只有 `readIORef` ＋ 一次 `MV.read`、不寫入；所有變動集中在 `registryInsert`／`registryRelease` 兩個函數內。
+- 標頭的修訂比文檔預期的稍多一點：除了兩處 `pm_free`／`pm_scene_free` 的散文與新增的「Handle safety」段落，`examples/c/main.c` 那句「Freeing twice would be undefined behaviour」也一併更正（它是同一句話的第三份拷貝，留著就是錯的）。T5 的守門測試直接斷言**整個標頭不再出現 `undefined behaviour`** 字串，並釘住 31 條宣告與 19 個 `#define` 名稱集合不變。
+- `pm_scene_cast`／`pm_scene_cast_many` 的無效控制代碼訊息是 `"scene cast error: invalid scene handle"`；訊息內容不進契約，只是與既有 `"scene cast error: null scene"` 同風格。

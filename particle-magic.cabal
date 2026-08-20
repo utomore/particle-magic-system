@@ -236,6 +236,7 @@ foreign-library particle-magic-ffi
         mod-def-file: particle-magic-ffi.def
     hs-source-dirs:   src/ffi
     other-modules:    Magic.FFI
+                    , Magic.FFI.Registry
     c-sources:        cbits/pm_init.c
     include-dirs:     include
     install-includes: particle_magic.h
@@ -308,6 +309,7 @@ test-suite spec
                     , FFIContractSpec
                     , Acceptance9Spec
                     , Magic.FFI
+                    , Magic.FFI.Registry
                     , ProjectSpec
                     , FlatQuadSpec
                     , FlatEffectsSpec
@@ -426,6 +428,7 @@ test-suite spec
                     , ParamPanelSpec
                     , PanelWriteBackSpec
                     , Acceptance24Spec
+                    , FFIHandleSpec
     build-depends:    base       ^>=4.22
                     , particle-magic:magic-core
                     , particle-magic:magic-boundary

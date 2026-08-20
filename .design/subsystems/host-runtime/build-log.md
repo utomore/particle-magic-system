@@ -98,6 +98,8 @@ parent: host-runtime
 | F008 A5 | Unity 範例不在出貨清單,今天無守門 | 以新 spec 的文字守門涵蓋,不動出貨清單 | 接受 |
 | F008 A6 | `depends-on` 與委派指定值不同 | 改為 `[F001, F005, F007]`(錯誤碼表要消費 F001 的兩個新常數) | 接受;功能規劃 #8 的依賴欄已改為 `#1, #5, #7` |
 | F008 A7 | 宿主整合指南的檔頭版本沿革 | 由後落地者加一行 | 接受 |
+| F002 A8（實作期新增） | slot 空間耗盡（2³⁰ 個同時存活）時建立控制代碼會失敗，理論上與標頭「`pm_scene_new` 絕不回 NULL」牴觸 | 回 `PM_ERR_CAPACITY`／`NULL`；實務不可達、無測試能構造 | 接受；**標頭那句散文由 F008 一併更正**（它本來就負責標頭敘述的準確性） |
+| F002 A9（實作期新增） | T8 的「配置量差值為 0」會偶發變紅 | `getAllocationCounter` 以 nursery block 為同步顆粒度，改斷言「20 萬次呼叫總配置 < 65536 位元組且每次 < 128 位元組」，語意不變 | 接受 |
 | F005 A1 | **C2.6 與凍結標頭衝突**:推進符號是 `void` | 新增 `pm_advance_ex`/`pm_scene_advance_ex`;符號 31→34 | 接受:新增 C1.12,只加推進的兩個 `_ex`,符號 31→34 |
 | F005 A2 | 規劃器對非有限/負輸入 | NULL 出參、非有限、`max_steps<0`、`acc_in<0` → `PM_ERR_ARGS`;其餘逐位元鏡射 | — |
 | F005 A3 | `_ex` 對 NULL 控制代碼 | 回 `PM_ERR_ARGS` | — |
@@ -129,4 +131,12 @@ parent: host-runtime
 **兩處契約措辭再更正**(皆為編排者先前寫得比實測樂觀):C2.2 的「單執行緒宿主零額外成本」與實測不符(原子讀改寫 +6.5 ns/次推進,對照非原子寫入 2.84 ns),改為「不付鎖的成本、每幀路徑無鎖」;M8 的「只依賴產出的共享函式庫本身」沒涵蓋 F006 的測試專用建置目標,已補。ADR-022 D4 同步。
 
 **實作順序(定案)**:F002 → F001 → F003 → F005 → F007 → F004 → F006 → F008。理由:F002 的註冊表是 F001 毒化測試與 F004 同步原語的地基;F007 必須在 F008 之前,否則宿主整合指南的錨點會位移。
+
+### 實作進度
+
+| # | feature | Todo | 完整 `cabal test` | 編排者獨立驗證 | checkpoint |
+|---|---|---|---|---|---|
+| 1 | F002 handle-generation | 8/8 | 1797 examples, 0 failures(基線 1788 ＋ 9) | 已重跑,33.2 秒,相同結果 | 見下方 commit |
+
+**F002 的接縫實況**(供後續實作者):註冊表是兩張頂層 `IORef (Table a)`(**非 `MVar`**),解析路徑無鎖;所有變動集中在 `Magic.FFI.Registry` 的 `registryInsert`／`registryRelease`,F004 的表級寫入鎖加在那裡即可,22 個呼叫端不動。`withCell`／`withScene` 現在是四參數(`onNull`／`onInvalid`／續體)。F001 的毒化控制代碼改用 `Magic.FFI` 匯出的 `newSpellHandle`／`newSceneHandle`——`newStablePtr . SpellCell` 已不存在,且那個值現在會被判偽造。
 

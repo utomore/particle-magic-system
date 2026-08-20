@@ -72,6 +72,21 @@
  * Threading: one handle is owned by one thread. The library itself takes
  * no locks (ADR-0011 D4); different handles on different threads are fine.
  *
+ * Handle safety: every handle is generation-tagged. It is not a pointer
+ * you may dereference -- it is an opaque token whose value encodes which
+ * table it belongs to, which slot, and which generation of that slot.
+ * Pass one back that has already been freed, free one twice,
+ * forge one, or hand a PmScene* to a PmSpell* entry point, and the
+ * library recognises it and answers PM_ERR_ARGS. It does NOT read freed
+ * memory and it does NOT terminate your process (ADR-022 D3, revising
+ * ADR-0011 D4). Seven frozen entry points have no error channel to say it
+ * with, and keep the same promise by doing nothing at all: pm_advance,
+ * pm_free, pm_scene_free, pm_scene_dismiss and pm_scene_advance return
+ * void and are no-ops; pm_age returns 0.0; pm_occupancy_mask returns 0.
+ * The one case that cannot be caught is a forged value that happens to
+ * equal a currently live handle -- that is the shared ceiling of any
+ * handle scheme, not a gap in this one.
+ *
  * Determinism: the same (json, pos, facing, seed, dt sequence) always
  * produces bit-identical output through either consumption path
  * (ADR-0011 D8), on a given platform. Across platforms the guarantee is
@@ -285,8 +300,9 @@ int pm_depth_order(int plane,
                    const float* pos_x, const float* pos_y, const float* pos_z,
                    int count, int* out_indices);
 
-/* Release a handle. Freeing NULL is a no-op; freeing twice is undefined
-   behaviour, as in any C API. */
+/* Release a handle. Freeing NULL is a no-op, and so is freeing a handle
+   that is already released, was never issued here, or belongs to the other
+   handle space -- see "Handle safety" above. */
 void pm_free(PmSpell* spell);
 
 /* --- Scenes (func-spec 0018, ADR-0012) ---------------------------------
@@ -309,7 +325,8 @@ typedef struct PmScene PmScene;
 PmScene* pm_scene_new(int global_cap);
 
 /* Release a scene and everything still live inside it. Freeing NULL is a
-   no-op; freeing twice is undefined behaviour. */
+   no-op, and so is freeing a scene handle that is already released or was
+   never issued here -- see "Handle safety" above. */
 void pm_scene_free(PmScene* scene);
 
 /* Cast one circle into the scene. Returns PM_OK (with *out_id set to the

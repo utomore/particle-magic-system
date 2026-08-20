@@ -234,6 +234,47 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
     -- stride is frozen, which is exactly why they never do (ADR-0013).
     lookup "PM_BATCH_INFO_STRIDE" header `shouldBe` Just 4
 
+  -- host-runtime F002 / C2.3. The header used to promise undefined
+  -- behaviour for a freed or forged handle, which is exactly the promise
+  -- ADR-022 D3 withdrew. The prose is the only part of that change a host
+  -- can read, so it is pinned here: the sentinel word keeps the new
+  -- paragraph from being edited away, and the surrounding assertions state
+  -- that documenting handle safety cost the frozen contract nothing.
+  it "documents handle safety instead of undefined behaviour" $ do
+    header <- readUtf8 headerFile
+    header `shouldSatisfy` isInfixOf' "generation-tagged"
+    header `shouldSatisfy` isInfixOf' "Handle safety"
+    header `shouldSatisfy` (not . isInfixOf' "undefined behaviour")
+    -- The neutral answers of the seven symbols with no error channel are
+    -- part of the documented promise, not an implementation detail.
+    header `shouldSatisfy` isInfixOf' "pm_occupancy_mask returns 0"
+    declared <- headerFunctions
+    length declared `shouldBe` 31
+    defined <- headerDefines
+    sort (map fst defined)
+      `shouldBe` sort
+        [ "PM_ABI_VERSION"
+        , "PM_MAX_PARTICLES"
+        , "PM_OK"
+        , "PM_ERR_JSON"
+        , "PM_ERR_BUDGET"
+        , "PM_ERR_CAPACITY"
+        , "PM_ERR_ARGS"
+        , "PM_ERR_QUOTA"
+        , "PM_OCCUPANCY_DIM_DEFAULT"
+        , "PM_PLANE_SIDE_XY"
+        , "PM_PLANE_TOP_XZ"
+        , "PM_BLEND_ALPHA"
+        , "PM_BLEND_ADDITIVE"
+        , "PM_SHAPE_SQUARE"
+        , "PM_SHAPE_SOFT_DOT"
+        , "PM_SHAPE_RING"
+        , "PM_SHAPE_SPARK"
+        , "PM_SHAPE_TRAIL"
+        , "PM_BATCH_INFO_STRIDE"
+        ]
+    lookup "PM_ABI_VERSION" defined `shouldBe` Just 1
+
   it "keeps the foreign library on the shell-layer dependency whitelist" $ do
     deps <- stanzaField "foreign-library particle-magic-ffi" "build-depends"
     let names = map depName (splitOn ',' deps)
