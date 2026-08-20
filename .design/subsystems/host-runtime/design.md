@@ -241,13 +241,13 @@ related-adr: [adr-0011, adr-0016, ADR-021, ADR-022, ADR-023, ADR-025]
 
 | # | feature | 一句話說明 | 模組 | 依賴 | doc |
 |---|---------|-----------|------|------|-----|
-| 1 | exception-firewall | 每個匯出符號包防火牆，Haskell 例外一律變 `PM_ERR_INTERNAL`，庫永不殺宿主 | M3, M2 | - | - |
-| 2 | handle-generation | 控制代碼改為帶世代標籤的註冊表，use-after-free 與 double-free 回錯誤 | M3 | - | - |
-| 3 | rts-config-init | 帶設定結構的初始化、原子化、關閉後拒絕重入、兩平台關閉語意統一 | M1, M2 | - | - |
+| 1 | exception-firewall | 每個匯出符號包防火牆，Haskell 例外一律變 `PM_ERR_INTERNAL`，庫永不殺宿主 | M3, M2 | - | F001 |
+| 2 | handle-generation | 控制代碼改為帶世代標籤的註冊表，use-after-free 與 double-free 回錯誤 | M3 | - | F002 |
+| 3 | rts-config-init | 帶設定結構的初始化、原子化、關閉後拒絕重入、兩平台關閉語意統一 | M1, M2 | #1 | F003 |
 | 4 | thread-model | 執行緒模型明文化：同控制代碼不丟更新，各條款各有併發測試 | M3, M2 | #2 | - |
-| 5 | step-planner-c-abi | 時步規劃器上 C 面（與邊界層同一份），推進拒收非有限或負的步長 | M2 | - | - |
+| 5 | step-planner-c-abi | 時步規劃器上 C 面（與邊界層同一份），推進拒收非有限或負的步長 | M2 | - | F005 |
 | 6 | oop-load-smoke | out-of-process 載入測試：三平台真的載入共享函式庫，驗證生命週期、防火牆、關閉語意 | M8 | #1, #3 | - |
-| 7 | packaging-content | 封裝內容：Linux standalone、MSVC 匯入庫、macOS 兩架構、版本檔、產物清單守門 | M7 | - | - |
+| 7 | packaging-content | 封裝內容：Linux standalone、MSVC 匯入庫、macOS 兩架構、版本檔、產物清單守門 | M7 | - | F007 |
 | 8 | host-doc-corrections | 修正標頭與文件的過期敘述（粒子上限查詢）、C 範例改用查詢值配容量、範例全部改用時步規劃器 | M7, M6 | #5 | - |
 
 ### 階段二：零複製（P7）
