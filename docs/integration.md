@@ -616,6 +616,53 @@ broad phase 因此是一行：兩道法術的 mask 做 AND，非零才需要細�
 
 跨界等價律（`test/FFISpaceSpec.hs`）：每個進入點與對應的 `Magic.Interface` 函數逐位元相同，13 個範例陣 × 3 種維度。
 
+### 4.8 MSVC 連結（Visual Studio 宿主）
+
+§4.1 給的 `particle-magic-ffi.dll.a` 是 **MinGW** 格式的匯入庫，`cl.exe` 不吃它。發布產物因此另外附一份 COFF 匯入庫 `particle-magic-ffi.lib`（見 [release.md](release.md) §6），MSVC 宿主連它：
+
+```
+cl.exe /nologo /W3 /I <drop> your_host.c <drop>\particle-magic-ffi.lib /Fe:game.exe
+```
+
+`<drop>` 就是解壓出來的那個資料夾——標頭與匯入庫都在裡面，**不需要指向這個 repo 的任何路徑，也不需要機器上有 GHC**。執行期把 `particle-magic-ffi.dll` 放在 exe 旁邊（或任何 `LoadLibrary` 找得到的地方）即可，那份 DLL 是 standalone 的，RTS 在裡面。
+
+驗過的結果：這樣連出來的 exe，`dumpbin /dependents` 只有 **`particle-magic-ffi.dll` 與 `KERNEL32.dll`** 兩個匯入，跑完 120 幀的完整生命週期。`packaging/smoke-msvc.ps1` 就是把上面這段做一遍，退出碼即結論。
+
+**自己產一份匯入庫**（不想等發布包，或想從自己的建置產出來）：權威輸入是 repo 根目錄的 `particle-magic-ffi.def`，也就是 DLL 連結時用的同一份匯出清單，兩條路都可以：
+
+```
+lib.exe /nologo /def:particle-magic-ffi.def /machine:x64 /out:particle-magic-ffi.lib
+llvm-dlltool -m i386:x86-64 -d particle-magic-ffi.def -D particle-magic-ffi.dll -l particle-magic-ffi.lib
+```
+
+第二條用的是 ghcup 隨附的 `llvm-dlltool`，機器上沒有 Visual Studio 也能產；兩種產出都實測可被 `cl.exe` 連結。`packaging/pack.ps1` 先找 `lib.exe`（透過 `vswhere`），找不到就退回 `llvm-dlltool`。
+
+C++ 宿主沒有額外步驟——標頭已經包在 `extern "C"` 裡（§4.3 的錯誤碼與 §4.4 的生命週期規則原封不動適用）。
+
+### 4.9 macOS：`@rpath` 與雙架構
+
+> **本節未經驗證。** 建置設定與打包腳本的 macOS 分支已經寫好，但本輪沒有 macOS 機器產出或檢查過任何一份 `.dylib`；發布清單（[release.md](release.md) §6）的兩個 macOS 平台項因此標 `verified: false`。真的要用，請自己先跑一次完整生命週期再上線。
+
+Cabal **不會**替 foreign library 設 `install_name`，預設會把建置時的絕對路徑寫進 `.dylib`——檔案一搬走，宿主就載不到。本專案的 cabal 檔因此在 `if os(darwin)` 下自己下：
+
+```
+-optl-Wl,-install_name,@rpath/libparticle-magic-ffi.dylib
+```
+
+意思是「我的名字由載入我的人決定」。宿主端相對應地給自己一條 rpath：
+
+```
+clang -I<drop> your_host.c <drop>/libparticle-magic-ffi.dylib \
+      -Wl,-rpath,@executable_path -o game
+```
+
+`@executable_path` 表示「exe 旁邊」；把 `.dylib` 和 exe 放同一層就成立。App bundle 常見的寫法是 `-Wl,-rpath,@executable_path/../Frameworks`。用 `otool -L game` 可以確認宿主記下的是 `@rpath/libparticle-magic-ffi.dylib` 而不是誰的家目錄。
+
+**雙架構**：x86_64 與 arm64 是兩次建置，用 `lipo -create` 併成一份 universal `.dylib`。`packaging/pack.sh` 在 macOS 上接受 `--fat-with <另一個架構的 dylib>` 走這一步。
+
+**Linux 宿主不需要這一節**，但值得知道對應的機制：Linux 產物是 `.so` 加上它整包共享物件閉包放同一層，`.so` 的搜尋路徑是 `$ORIGIN`（＝「我自己所在的資料夾」）。宿主照 §4.1 連結即可，把整個資料夾一起搬走就會動；`packaging/pack.sh --verify` 在乾淨環境下驗過這件事。
+
+
 ---
 
 ## 5. 路線 C：Unity（C#）

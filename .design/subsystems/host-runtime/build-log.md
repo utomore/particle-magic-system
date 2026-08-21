@@ -109,6 +109,10 @@ parent: host-runtime
 | F005（實作期發現） | **自己的測試出現假綠** | 場景版「狀態不變」原本只推進 3 幀取基準，ring-fire 當時一顆粒子都沒有，「前後相同」變成恆真；改為推進 40 幀並加 `liveParticles > 0` 防呆後才有效 | 接受：這是委派模式下最該被抓到的一類問題，執行者自己抓到並修掉 |
 | F005（實作期發現） | 文檔 T6 寫「符號 31 → 34」算漏了 F003 的 `pm_init_ex` | 實際基線是 32，改動後 35 | 接受；**ADR-022 的同一處數字（編排者寫的）已一併更正為 31 → 35** |
 | F005 A5 | `Magic.Step.plan` 的病態案例：有限輸入下比值溢位 → 積壓爆表反而回 0 步 | C 面逐位元鏡射不修 | 接受；**建議在 boundary-host 開一份 bugfix 修 Haskell 面**，C 面會自動跟著修正——留到階段閘門向開發者提出 |
+| F007 A2（結論反轉） | `$ORIGIN` 能否穿過 cabal→ld | 穿得過，**但 cabal 自己在前面寫了 46 條絕對路徑**，`$ORIGIN` 排第 47，於是「自不自足」在開發機上無法回答。`-fno-use-rpaths` **實測無效**（那些條目是 cabal 加的不是 GHC），已從 cabal 檔移除、註解改寫成實況；改由 `pack.sh` 重寫打包後那一份的 RUNPATH | 接受：執行者推翻自己先前的設計假設並留下實測依據 |
+| F007 A7（實作期新增） | 工作樹是 CRLF，而 CRLF 的 shell script 在 POSIX shell 是語法錯誤 | 新增**最小範圍**的 `.gitattributes`：只有 `*.sh text eol=lf` 一行，刻意不寫 `* text=auto`，其餘檔案的換行行為完全不變 | 接受：範圍克制且理由寫在檔案註解裡 |
+| F007 A8（實作期新增） | 無 patchelf 時如何縮短 RUNPATH | `pack.sh` 就地縮短字串（chrpath 的作法）；同時處理 `DT_RPATH` 但**只實測過 RUNPATH** | 接受 |
+| F007 A9（實作期新增） | 閉包檔數隨相依解析而變（本輪 68 個） | 清單以 glob `*.so*` 表達 | 接受；若 release-artifacts 要逐檔比對，屆時請 `pack.sh` 另吐實際清單 |
 | F005 A1 | **C2.6 與凍結標頭衝突**:推進符號是 `void` | 新增 `pm_advance_ex`/`pm_scene_advance_ex`;符號 31→34 | 接受:新增 C1.12,只加推進的兩個 `_ex`,符號 31→34 |
 | F005 A2 | 規劃器對非有限/負輸入 | NULL 出參、非有限、`max_steps<0`、`acc_in<0` → `PM_ERR_ARGS`;其餘逐位元鏡射 | — |
 | F005 A3 | `_ex` 對 NULL 控制代碼 | 回 `PM_ERR_ARGS` | — |
@@ -148,7 +152,10 @@ parent: host-runtime
 | 1 | F002 handle-generation | 8/8 | 1797 examples, 0 failures(基線 1788 ＋ 9) | 已重跑,33.2 秒,相同結果 | `70f27b4` |
 | 2 | F001 exception-firewall | 8/8 | 1804 examples, 0 failures(＋7) | 已重跑,相同結果 | `04ec6ad` |
 | 3 | F003 rts-config-init | 12/12 | Windows 1816 examples 0 failures(＋12);Linux(WSL)1816 examples 0 failures 9 pending | 已直接執行 spec 二進位重跑,38.9 秒,相同結果 | `3dba002` |
-| 4 | F005 step-planner-c-abi | 8/8 | 1831 examples, 0 failures(＋15) | 已重跑,39.9 秒,相同結果 | 見下方 commit |
+| 4 | F005 step-planner-c-abi | 8/8 | 1831 examples, 0 failures(＋15) | 已重跑,39.9 秒,相同結果 | `80fe58d` |
+| 5 | F007 packaging-content | 8/8 | 1838 examples, 0 failures(＋7) | 已重跑,32.9 秒,相同結果;`dist/` 確認已忽略 | 見下方 commit |
+
+**F007 的執行中斷**:第一次委派在寫守門測試時被 watchdog 判定停滯(600 秒無串流進展)而中止,**不是判斷或阻塞問題**。編排者盤點後發現:建置已綠、`.gitattributes` 與 `packaging/` 四支腳本都在,唯一的紅是 `test/PackagingSpec.hs` 兩處 lambda 少了反斜線(其餘 13 個正常,孤立手滑),另有 46 MB 的 `dist/` 產物未被忽略、文檔 8 個 Todo 未勾。以 SendMessage 續跑同一個 agent 收尾,未重寫。
 
 **F002 的接縫實況**(供後續實作者):註冊表是兩張頂層 `IORef (Table a)`(**非 `MVar`**),解析路徑無鎖;所有變動集中在 `Magic.FFI.Registry` 的 `registryInsert`／`registryRelease`,F004 的表級寫入鎖加在那裡即可,22 個呼叫端不動。`withCell`／`withScene` 現在是四參數(`onNull`／`onInvalid`／續體)。F001 的毒化控制代碼改用 `Magic.FFI` 匯出的 `newSpellHandle`／`newSceneHandle`——`newStablePtr . SpellCell` 已不存在,且那個值現在會被判偽造。
 

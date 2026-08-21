@@ -3,9 +3,9 @@ id: F007
 type: feature
 title: packaging-content
 description: 三平台共享函式庫的產物內容、版本檔與清單守門
-status: open
+status: done
 created: 2026-08-20
-updated: 2026-08-20
+updated: 2026-08-21
 depends-on: []
 related-adr: [ADR-021, ADR-025]
 related-feature: []
@@ -202,14 +202,14 @@ if os(darwin)
 
 ## TodoList
 
-- [ ] T1: 建立 `packaging/artifacts.json`：四個平台項、封閉的 `role` 詞彙、`verified` 欄、版本檔 schema　`dep: -`
-- [ ] T2: `docs/release.md` 新增「發布產物」一節，以表格複述同一份清單（含 macOS 未驗證的標註）　`dep: T1`
-- [ ] T3: 版本檔生成：`pack.sh` 與 `pack.ps1` 各自從 cabal `version:` 與標頭 `PM_ABI_VERSION` 讀值，寫出四欄位的 `pm-version.json`　`dep: T1`
-- [ ] T4: `packaging/pack.ps1`：DLL ＋ MinGW `.dll.a` ＋ `lib.exe /def:` 產 MSVC `.lib`（退回 `llvm-dlltool`）＋ 標頭 ＋ 版本檔　`dep: T1, T3`
-- [ ] T5: `packaging/smoke-msvc.ps1`：以 `cl.exe` 編 `examples/c/main.c` 連 MSVC 匯入庫，跑完 120 幀生命週期　`dep: T4`
-- [ ] T6: `packaging/pack.sh` 的 Linux 分支與 `-optl-Wl,-rpath,$ORIGIN`（必要時後製）：蒐集閉包、`--verify` 在乾淨環境驗自足　`dep: T1, T3`
-- [ ] T7: macOS 建置設定：`if os(darwin)` 的 `install_name` 選項、`pack.sh` 的 dylib 與雙架構分支、清單與文件標 `verified: false`　`dep: T1, T6`
-- [ ] T8: `docs/integration.md` 新增「MSVC 連結」與「macOS `@rpath`」兩節；`test/PackagingSpec.hs` 進 cabal `other-modules`　`dep: T4, T7`
+- [x] T1: 建立 `packaging/artifacts.json`：四個平台項、封閉的 `role` 詞彙、`verified` 欄、版本檔 schema　`dep: -`
+- [x] T2: `docs/release.md` 新增「發布產物」一節，以表格複述同一份清單（含 macOS 未驗證的標註）　`dep: T1`
+- [x] T3: 版本檔生成：`pack.sh` 與 `pack.ps1` 各自從 cabal `version:` 與標頭 `PM_ABI_VERSION` 讀值，寫出四欄位的 `pm-version.json`　`dep: T1`
+- [x] T4: `packaging/pack.ps1`：DLL ＋ MinGW `.dll.a` ＋ `lib.exe /def:` 產 MSVC `.lib`（退回 `llvm-dlltool`）＋ 標頭 ＋ 版本檔　`dep: T1, T3`
+- [x] T5: `packaging/smoke-msvc.ps1`：以 `cl.exe` 編 `examples/c/main.c` 連 MSVC 匯入庫，跑完 120 幀生命週期　`dep: T4`
+- [x] T6: `packaging/pack.sh` 的 Linux 分支與 `-optl-Wl,-rpath,$ORIGIN`（必要時後製）：蒐集閉包、`--verify` 在乾淨環境驗自足　`dep: T1, T3`
+- [x] T7: macOS 建置設定：`if os(darwin)` 的 `install_name` 選項、`pack.sh` 的 dylib 與雙架構分支、清單與文件標 `verified: false`　`dep: T1, T6`
+- [x] T8: `docs/integration.md` 新增「MSVC 連結」與「macOS `@rpath`」兩節；`test/PackagingSpec.hs` 進 cabal `other-modules`　`dep: T4, T7`
 
 ## 1-to-1 測試對照表
 
@@ -233,6 +233,50 @@ if os(darwin)
 - **A5: CI 的 windows-latest 上 `lib.exe` 是否在 PATH 未查證。** → 採取：`pack.ps1` 先用 `vswhere` 找 MSVC，找不到退回 `llvm-dlltool`；本機兩條路都已實測可連結。→ 影響：只影響 CI 步驟（不屬本 feature）。
 - **A6: 產物清單的位置與格式由本文件自行決定（`packaging/artifacts.json`）。** → 採取：JSON，唯一權威在檔案本身，文件複述、測試比對——與 authoring-engineering 的「文字合約」模式同型。→ 影響：release-artifacts 若偏好別的位置，改一個路徑常數即可，格式不必動。
 
+- **A7: 工作樹是 CRLF，而 CRLF 的 shell script 對任何 POSIX shell 都是語法錯誤。** → 採取：新增 `.gitattributes`，**只有一行** `*.sh text eol=lf`，刻意不寫 `* text=auto`，所以其他檔案的 `core.autocrlf` 行為完全不變。→ 影響：這是本 repo 第一份 `.gitattributes`；日後若要訂全樹的 eol 政策，落腳點就是這個檔。
+- **A8: 沒有 patchelf 時，`pack.sh` 就地縮短 RUNPATH 字串。** → 採取：ELF 的字串是 NUL 結尾且 `$ORIGIN` 比 cabal 寫的任何東西都短，所以在原位寫入 `$ORIGIN\0` 永遠安全（這正是 `chrpath` 的作法，少一個相依）。腳本仍然優先用 `patchelf`（裝了就走它）。→ 影響：只影響手段。腳本同時處理 `DT_RUNPATH` 與 `DT_RPATH` 兩種標籤，但**只實測過 RUNPATH 那條**（GHC 9.14.1 產出的就是 RUNPATH）。
+- **A9: 清單裡 `runtime-closure` 那一列的 `name` 是 glob（`*.so*`）而不是檔名。** → 採取：閉包的檔數隨相依解析而變（本輪實測 68 個），清單記的是「這個角色存在」，實際自足性由 `pack.sh --verify` 保證；守門測試對這一個 token 有特例。→ 影響：若 release-artifacts 想逐檔比對上傳結果，得請 `pack.sh` 另外吐一份實際檔案清單，格式不必動。
+
 ## 實作備註
 
-（撰寫時留空）
+### 已實測（這是本功能的重點，不是紙上規格）
+
+**Linux 閉包（T6，WSL Debian 13 + GHC 9.14.1，2026-08-21）**——`packaging/pack.sh --out ~/pm-drop --verify` 退出碼 **0**：
+
+- 產物資料夾 **71 個檔**：`libparticle-magic-ffi.so` ＋ **68 個共享物件閉包** ＋ 標頭 ＋ 版本檔。`libgmp.so.10` 與 `libffi.so.8` 都在裡面。
+- `env -i` 乾淨環境下 `ldd`：**0 個 not found**、**0 條解析落在產物資料夾之外**（只有 `libc.so.6`／`libm.so.6` 兩個 glibc 本體例外，那是刻意不帶的）。
+- dlopen 探針（純 C、`cc` 編、`env -i` 執行）：載入成功，`pm_init()` → `pm_abi_version()` 回 **1**、`pm_max_particles()` 回 **16384** → `pm_shutdown()`。
+- 反向驗證：把 `libgmp.so.10` 從資料夾拿掉，`ldd` 立刻改解析到 `/lib/x86_64-linux-gnu/libgmp.so.10`——也就是 `--verify` 的「解析落在資料夾外」判準真的會抓到缺檔，不是恆真斷言。
+
+**Windows MSVC（T4／T5，VS 2026 Community 14.51.36231，2026-08-21）**——`packaging/smoke-msvc.ps1` 退出碼 **0**：
+
+- `pack.ps1` 透過 `vswhere` 找到 `lib.exe`，以 repo 那份 `particle-magic-ffi.def` 產出 `particle-magic-ffi.lib`。
+- `cl.exe` **只**看得到產物資料夾（`/I <drop>` ＋ 連 `<drop>\particle-magic-ffi.lib`），沒有任何路徑指向 `dist-newstyle`。
+- 編出的 `pm_msvc.exe` 跑完 **120 幀**完整生命週期、印出 `finished: 0`。
+- `dumpbin /dependents`：匯入**只有** `particle-magic-ffi.dll` 與 `kernel32.dll`。
+- **退回路徑也實測過**：`pack.ps1 -NoMsvc` 走 ghcup 隨附的 `llvm-dlltool`（`C:\ghcup\ghc\9.14.1\mingw\bin\llvm-dlltool.exe`），產出的 `.lib` 一樣被 `cl.exe` 連結成功、smoke 一樣退出碼 0。這把 **A5** 從「未查證」變成「兩條路都在本機跑過」。
+
+**版本檔（T3）**——Windows 端 `commit` 取到真值 `80fe58d`；WSL 的 `~/pm-smoke` 不是 git 工作樹，`commit` 寫 `unknown`。**A4 的兩條路徑都實際走過。**
+
+### A2 的結論：`$ORIGIN` 穿得過去，但不夠
+
+`-optl-Wl,-rpath,$ORIGIN` 原樣通過 cabal → GHC → gcc → ld（實測：RUNPATH 第 47 個條目就是 `$ORIGIN`）。**但它是最後一個**——cabal 自己在前面寫了 46 條絕對路徑（這台機器的 cabal store 與 `~/.ghcup`）。對真正的宿主機器無害（那些目錄不存在，載入器直接跳過），但它讓「這包到底自不自足」在開發機上**無法回答**。
+
+因此 `pack.sh` 對打包後的那一份把 RUNPATH 改寫成只剩 `$ORIGIN`：有 `patchelf` 就用它，沒有就就地縮短字串（A8）。改寫之後 `--verify` 的斷言才是精確的。
+
+順帶一提，`-fno-use-rpaths` 試過且**實測無效**——那 46 條是 cabal 加的，不是 GHC 加的，所以那個旗標從 cabal 檔裡拿掉了，註解也改成寫實況。
+
+另一個實測到的好消息：本專案的 `.so` 有 **70 條 NEEDED，而 ldd 解析出的也正好是 70 個**——整個閉包都是**直接**相依。ELF 載入器先廣度處理直接相依、再依 SONAME 比對已載入者，所以 `$ORIGIN` 只掛在我們自己的 `.so` 上就夠了，不需要對 68 個相依逐一改 rpath。
+
+### 與文檔原案的差異
+
+- **`.def` 的符號數是 35，不是文件寫的 31**。F001／F002／F003 合併後多了 `pm_init_ex`、`pm_plan_steps`、`pm_advance_ex`、`pm_scene_advance_ex`。守門測試斷言 **35**，且本功能一個字都沒改 `.def` 與標頭。
+- **新增 `.gitattributes`**（A7）與 **`.gitignore` 加 `dist/`**——產物是幾十 MB 的建置輸出，不進版控；進版控的是 `packaging/artifacts.json` 這份清單。兩者都不在原 TodoList 上，是落地時才浮現的必要條件。
+- `pack.ps1` 多了一個 `-NoMsvc` 旗標，存在的唯一理由是：讓退回路徑在**有** MSVC 的機器上被跑過，而不是第一次在沒有 MSVC 的 runner 上才發現它壞了。
+- 版本檔以無 BOM 的 UTF-8 寫出（Windows PowerShell 5.1 的 `Set-Content -Encoding utf8` 會加 BOM，`{` 前面的 BOM 會噎死不少 JSON reader）。
+
+### 測試
+
+`cabal test`：**1838 examples, 0 failures**（基線 1831 ＋ `PackagingSpec` 的 7 條）。既有測試沒有一條變紅。
+
+`PackagingSpec` 全部是靜態比對——它不建置、不打包。真正的量測在上面那一節，由 `pack.sh --verify` 與 `smoke-msvc.ps1` 執行；守門測試的職責是讓那些結論不會無聲過期（腳本還在、清單與文件還一致、macOS 還誠實地標著未驗證）。

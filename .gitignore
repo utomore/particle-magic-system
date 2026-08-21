@@ -1,4 +1,9 @@
 dist-newstyle/
+# Release drops assembled by packaging/pack.sh and packaging/pack.ps1
+# (host-runtime F007). A drop is tens of megabytes of build output; what
+# belongs in version control is packaging/artifacts.json, the manifest
+# that says what a drop must contain.
+dist/
 *.hi
 *.o
 pm-stdout.txt

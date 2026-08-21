@@ -1,0 +1,7 @@
+# The working tree is CRLF (core.autocrlf=true) and that is fine for every
+# file here except one kind: a shell script with CRLF line endings is a
+# syntax error to every POSIX shell that reads it. packaging/pack.sh runs
+# on Linux and macOS, so it is checked out LF everywhere.
+#
+# Deliberately narrow: no `* text=auto` line, so nothing else changes.
+*.sh text eol=lf

@@ -1,0 +1,52 @@
+{
+  "note": "host-runtime F007 / design.md C4. The machine-readable manifest of what a release drop contains, one entry per file. This file is the single authority: docs/release.md restates it as a table and test/PackagingSpec.hs asserts the two agree in both directions, so dropping a file from a platform turns 'cabal test' red. The 'role' vocabulary is closed - runtime, runtime-closure, import-lib-mingw, import-lib-msvc, header, version - and 'verified' is an honesty field: false means the build settings are written but no machine has produced or checked that drop.",
+  "version-file": {
+    "name": "pm-version.json",
+    "fields": ["package-version", "abi-version", "platform", "commit"]
+  },
+  "platforms": [
+    {
+      "id": "windows-x86_64",
+      "verified": true,
+      "files": [
+        { "name": "particle-magic-ffi.dll", "role": "runtime" },
+        { "name": "particle-magic-ffi.dll.a", "role": "import-lib-mingw" },
+        { "name": "particle-magic-ffi.lib", "role": "import-lib-msvc" },
+        { "name": "particle_magic.h", "role": "header" },
+        { "name": "pm-version.json", "role": "version" }
+      ]
+    },
+    {
+      "id": "linux-x86_64",
+      "verified": true,
+      "files": [
+        { "name": "libparticle-magic-ffi.so", "role": "runtime" },
+        {
+          "name": "*.so*",
+          "role": "runtime-closure",
+          "note": "Every shared object the runtime resolves, copied next to it; the file count varies with dependency resolution, so the manifest records that the role exists and packaging/pack.sh --verify guarantees the set is self-contained."
+        },
+        { "name": "particle_magic.h", "role": "header" },
+        { "name": "pm-version.json", "role": "version" }
+      ]
+    },
+    {
+      "id": "macos-x86_64",
+      "verified": false,
+      "files": [
+        { "name": "libparticle-magic-ffi.dylib", "role": "runtime" },
+        { "name": "particle_magic.h", "role": "header" },
+        { "name": "pm-version.json", "role": "version" }
+      ]
+    },
+    {
+      "id": "macos-arm64",
+      "verified": false,
+      "files": [
+        { "name": "libparticle-magic-ffi.dylib", "role": "runtime" },
+        { "name": "particle_magic.h", "role": "header" },
+        { "name": "pm-version.json", "role": "version" }
+      ]
+    }
+  ]
+}
