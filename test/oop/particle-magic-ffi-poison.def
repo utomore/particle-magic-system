@@ -1,0 +1,48 @@
+; NOT A SHIPPED FILE. The export list of the poison foreign library
+; (host-runtime F006 T9): a mirror of particle-magic-ffi.def plus the one
+; test-only symbol pm_poison_spell, which triggers the exception firewall
+; from C so the out-of-process smoke can watch it work.
+;
+; The poison library is built only under `cabal build -foop-poison
+; particle-magic-ffi-poison`, is named differently from the shipped DLL,
+; and never leaves the build tree. This mirror WOULD rust silently -- the
+; shipped .def grows and nothing here would notice -- so
+; test/OopSmokeSpec.hs pins the difference between the two lists to exactly
+; {pm_poison_spell}, in both directions.
+EXPORTS
+    pm_init
+    pm_init_ex
+    pm_shutdown
+    pm_abi_version
+    pm_cast
+    pm_cast_ex
+    pm_advance
+    pm_advance_ex
+    pm_is_finished
+    pm_age
+    pm_observe
+    pm_observe_ex
+    pm_free
+    pm_max_particles
+    pm_project
+    pm_depth_order
+    pm_scene_new
+    pm_scene_free
+    pm_scene_cast
+    pm_scene_cast_many
+    pm_scene_dismiss
+    pm_scene_advance
+    pm_scene_advance_ex
+    pm_scene_observe
+    pm_scene_budget
+    pm_scene_count
+    pm_scene_spells
+    pm_spell_bounds
+    pm_spell_box
+    pm_emitter_count
+    pm_emitter_box
+    pm_occupancy
+    pm_occupancy_mask
+    pm_scene_spell_bounds
+    pm_plan_steps
+    pm_poison_spell

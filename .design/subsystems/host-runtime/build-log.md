@@ -115,6 +115,10 @@ parent: host-runtime
 | F007 A9（實作期新增） | 閉包檔數隨相依解析而變（本輪 68 個） | 清單以 glob `*.so*` 表達 | 接受；若 release-artifacts 要逐檔比對，屆時請 `pack.sh` 另吐實際清單 |
 | F004（實作期發現） | **同一個假綠陷阱又出現一次** | 首版寫成「每執行緒 1000 步」，法術年齡只有 0.12 s、ring-fire 此時沒有粒子，逐位元比對會退化成兩個空 buffer；改為固定總步數 8192（恰好 1.0 s、2049 粒），且每次逐位元比對前先斷言存活粒子 > 0 | 接受：F005 踩過同一個坑，經由 prompt 傳遞後被 F004 自己攔下——這條經驗要留在紀錄裡 |
 | F004（量測更新） | C2.2 括號內的成本數字 | 實作後重測為單執行緒 +6.0 ns、8 執行緒 +8.8 ns（設計期估 +6.5 ns），仍在「個位數奈秒」內 | 接受；**C2.2 與 ADR-022 D4 的數字已更新為兩個實測值** |
+| F006 A12（實作期新增） | F002 落地後控制代碼已是註冊表索引，原毒化寫法失效 | 毒化符號改為交出「內容物為 bottom 的**全新**合法控制代碼」；比原案多一條更強的證據——毒化前施的法術在毒化後仍跑得動 | 接受 |
+| F006 A13（實作期新增） | **F003 A10 的缺口在 Linux 上已關閉** | 新增第八個 probe：以 dlsym 的 `hs_init` 先起 RTS 再呼叫 `pm_init_ex`，斷言標頭逐平台表的最後一列，Linux PASS；Windows 不匯出 RTS 符號故 SKIP | 接受；**Windows 那一半仍留給階段二的 F011** |
+| F006 A14（實作期新增） | harness 的必需符號表會落後於出貨面 | 加第五條 hspec 守門：`REQUIRED_SYMBOLS` ≡ 出貨 `.def`（出貨面已從 31 長到 35） | 接受 |
+| F006（反向驗證） | 假綠防治 | **兩平台各跑七種變異注入**：整數欄差 1、checksum 大幅偏離、末位差 1（Windows 紅／Linux 綠，證明容差分支在做事）、golden 截短、**強制粒子數歸零（F004／F005 踩過的那個形狀）**、rts-config 錯值、firewall 改餵健康控制代碼——全部如預期變紅；五條 hspec 守門也逐條注入變紅 | 接受：這是階段一最徹底的一次反向驗證 |
 | F005 A1 | **C2.6 與凍結標頭衝突**:推進符號是 `void` | 新增 `pm_advance_ex`/`pm_scene_advance_ex`;符號 31→34 | 接受:新增 C1.12,只加推進的兩個 `_ex`,符號 31→34 |
 | F005 A2 | 規劃器對非有限/負輸入 | NULL 出參、非有限、`max_steps<0`、`acc_in<0` → `PM_ERR_ARGS`;其餘逐位元鏡射 | — |
 | F005 A3 | `_ex` 對 NULL 控制代碼 | 回 `PM_ERR_ARGS` | — |
@@ -156,7 +160,8 @@ parent: host-runtime
 | 3 | F003 rts-config-init | 12/12 | Windows 1816 examples 0 failures(＋12);Linux(WSL)1816 examples 0 failures 9 pending | 已直接執行 spec 二進位重跑,38.9 秒,相同結果 | `3dba002` |
 | 4 | F005 step-planner-c-abi | 8/8 | 1831 examples, 0 failures(＋15) | 已重跑,39.9 秒,相同結果 | `80fe58d` |
 | 5 | F007 packaging-content | 8/8 | 1838 examples, 0 failures(＋7) | 已重跑,32.9 秒,相同結果;`dist/` 確認已忽略 | `eed790e` |
-| 6 | F004 thread-model | 8/8 | 1846 examples, 0 failures(＋8) | 已重跑,41.2 秒,相同結果 | 見下方 commit |
+| 6 | F004 thread-model | 8/8 | 1846 examples, 0 failures(＋8) | 已重跑,41.2 秒,相同結果 | `66bbe06` |
+| 7 | F006 oop-load-smoke | 12/12 | 1851 examples, 0 failures(＋5);out-of-process:Windows 5 pass／3 skip、Linux 7 pass／1 skip(毒化庫 6／8 pass) | 已重跑,41.1 秒,相同結果;確認毒化庫是 flag 開關、預設不建置 | 見下方 commit |
 
 **F007 的執行中斷**:第一次委派在寫守門測試時被 watchdog 判定停滯(600 秒無串流進展)而中止,**不是判斷或阻塞問題**。編排者盤點後發現:建置已綠、`.gitattributes` 與 `packaging/` 四支腳本都在,唯一的紅是 `test/PackagingSpec.hs` 兩處 lambda 少了反斜線(其餘 13 個正常,孤立手滑),另有 46 MB 的 `dist/` 產物未被忽略、文檔 8 個 Todo 未勾。以 SendMessage 續跑同一個 agent 收尾,未重寫。
 

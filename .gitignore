@@ -7,3 +7,8 @@ dist/
 *.hi
 *.o
 pm-stdout.txt
+# The out-of-process smoke's executable (host-runtime F006). Built by
+# test/oop/build.{sh,ps1} from the checked-in test/oop/oop_smoke.c, next to
+# its source so run.{sh,ps1} can find it without a build directory.
+test/oop/oop-smoke
+test/oop/oop-smoke.exe

@@ -3,9 +3,9 @@ id: F006
 type: feature
 title: oop-load-smoke
 description: 純 C 程式跨進程載入共享函式庫，驗證生命週期與執行期契約
-status: open
+status: done
 created: 2026-08-20
-updated: 2026-08-20
+updated: 2026-08-21
 depends-on: [F001, F003]
 related-adr: [ADR-022, ADR-021]
 related-feature: []
@@ -190,7 +190,7 @@ oop-smoke <library-path> --probe <name> ...     子進程：只跑一個 probe�
 
 符號表分三級：
 
-- **必要（31 個凍結符號）**：任何一個解析不到就是 FAIL。這一條在 Windows 上順帶是**出貨匯出面的跨進程驗收**——`.def` 漏一行，這裡就紅，而 `FFIContractSpec` 只看得到文字。
+- **必要（出貨 `.def` 的全部 EXPORTS；設計時 31 個，F003／F005 合併後為 **35** 個，見 A14）**：任何一個解析不到就是 FAIL。這一條在 Windows 上順帶是**出貨匯出面的跨進程驗收**——`.def` 漏一行，這裡就紅，而 `FFIContractSpec` 只看得到文字。
 - **選配（`pm_init_ex`、`pm_plan_steps`、`pm_stats`、`pm_advance_ex`…）**：解析不到只代表對應的 feature 還沒合併，用來決定期望值（見 4）。
 - **測試專用（`pm_poison_spell`）**：只有毒化建置才有；解析不到就把防火牆 probe 判成 SKIP。
 
@@ -294,14 +294,19 @@ F001 A3 把這個機制的裁決交給本文件。**裁決：cabal flag `oop-poi
 3. **`test/oop/poison/Magic/FFI/Poison.hs`**：整個模組只有一個匯出：
 
    ```haskell
-   foreign export ccall pm_poison_spell :: StablePtr SpellCell -> IO ()
+   -- 實作時的最終形狀（F002 落地後改，見 A12）。控制代碼已是註冊表
+   -- 世代索引，`spellRegistry` 未匯出，所以不再「改寫既有控制代碼」，
+   -- 改為交出一個內容物是 bottom 的全新合法控制代碼——用的是
+   -- `newSpellHandle` 自己文件明寫的刻意惰性。
+   foreign export ccall "pm_poison_spell"
+     pm_poison_spell :: IO (StablePtr SpellCell)
 
-   -- 把控制代碼的內容物換成一顆會爆的 thunk。本體不拋例外（不然
-   -- 就變成在測我們自己），失敗要發生在之後被呼叫的「真正的」符號裡。
-   pm_poison_spell :: StablePtr SpellCell -> IO ()
-   pm_poison_spell h = firewall () $ do
-     SpellCell ref <- deRefStablePtr h
-     writeIORef ref (error "pm_poison_spell: deliberate internal failure (F006)")
+   -- 本體不拋例外（不然就變成在測我們自己），失敗要發生在之後被呼叫
+   -- 的「真正的」出貨符號裡；仍套一次 firewall，免得新符號成為破口。
+   pm_poison_spell :: IO (StablePtr SpellCell)
+   pm_poison_spell =
+     firewall nullSpell $
+       newSpellHandle (error "pm_poison_spell: deliberate internal failure (host-runtime F006)")
    ```
 
    它住在 `src/ffi` **之外**，所以 `FFIContractSpec.foreignExports`（只讀 `src/ffi/Magic/FFI.hs`）與 F001 的原始碼守門測試（同一個剖析手法）都看不到它——**三方對帳零改動**。
@@ -416,6 +421,7 @@ probe 的動作（跑在子進程裡，因為「防火牆失效」的表現就�
 | `state-after-shutdown` | C2.5／I3（關閉後） |
 | `state-reinit` | C2.5（關閉後不得再初始化） |
 | `rts-config` | C1.5 |
+| `rts-prestarted` | C1.5（「RTS 已在跑」那一列；實作時新增，見 A13） |
 | `firewall` | C2.1 |
 
 ### N3 測試專用建置面（不進出貨）
@@ -424,7 +430,7 @@ probe 的動作（跑在子進程裡，因為「防火牆失效」的表現就�
 |---|---|
 | `flag oop-poison` | `default: False`、`manual: True`。唯一作用是讓下一列變成可建置 |
 | `foreign-library particle-magic-ffi-poison` | `if !flag(oop-poison)` 時 `buildable: False`。欄位與出貨 stanza 逐字相同，另加 `test/oop/poison` 到 `hs-source-dirs`、`Magic.FFI.Poison` 到 `other-modules`，Windows 用 `test/oop/particle-magic-ffi-poison.def` |
-| `Magic.FFI.Poison` | 一個模組、一個匯出：`foreign export ccall pm_poison_spell :: StablePtr SpellCell -> IO ()` |
+| `Magic.FFI.Poison` | 一個模組、一個匯出：`foreign export ccall pm_poison_spell :: IO (StablePtr SpellCell)`——回傳一個內容物為 bottom 的**全新**合法控制代碼（實作時因 F002 落地而改，見 A12） |
 | `test/oop/particle-magic-ffi-poison.def` | 出貨 `.def` ＋ 一行 `pm_poison_spell`，差集由守門測試釘住 |
 
 ### N4 檔案
@@ -439,18 +445,18 @@ probe 的動作（跑在子進程裡，因為「防火牆失效」的表現就�
 
 ## TodoList
 
-- [ ] T1: `test/oop/oop_smoke.c` 骨架：平台載入器抽象（`LoadLibraryA`／`GetProcAddress` ↔ `dlopen`／`dlsym`）、probe 註冊表與 `--list`／`--all`／`--probe` 分派、報告行與退出碼契約　`dep: -`
-- [ ] T2: probe `load`：31 個凍結符號全部解析成功（缺一即 FAIL）、`pm_abi_version() == PM_ABI_VERSION`、`pm_max_particles() > 0` 並以其值配置六欄　`dep: T1`
-- [ ] T3: probe `life`：`examples/c/main.c` 的呼叫序列跑完 120 幀 ＋ `finished:` 行，與 `examples/haskell/expected-output.txt` 逐行比對　`dep: T2`
-- [ ] T4: golden 的平台規則搬進 C：整數欄與非數字詞全平台逐字元；`age`／`checksum` 在 `#ifdef _WIN32` 外走 `1e-5` 相對容差，失敗訊息帶 `platformScopeNote` 同語氣的說明　`dep: T3`
-- [ ] T5: 每幀六欄（含 `color`）的 FNV-1a 64 摘要，依 `PerfGoldenSpec` 的定義實作，末幀值印進報告作為診斷（不斷言）　`dep: T3`
-- [ ] T6: 父進程的子進程機制：Win32 `CreateProcessA` ＋ `GetExitCodeProcess`；POSIX `fork` ＋ `execv` ＋ `waitpid`（`WIFSIGNALED` 一律視為「沒活著跑完」），把 0／20／21／其他翻成 PASS／FAIL／SKIP／PENDING　`dep: T1`
-- [ ] T7: probe `state-uninit`／`state-after-shutdown`／`state-reinit`：各型別回傳一個代表符號的哨兵斷言；期望值由 `pm_init_ex` 是否解析得到決定（不存在 ⇒ PENDING，存在 ⇒ 必須回 `PM_ERR_STATE` 且子進程 exit 0）　`dep: T6, F003`
-- [ ] T8: probe `rts-config`：`pm_init_ex` 帶 capabilities=2／nursery=64 MiB／`PM_GC_NONMOVING`／統計旗標；Linux 以 dlsym 的 `n_capabilities`、`RtsFlags`（需 `PM_OOP_WITH_RTS_HEADERS`）、`getRTSStatsEnabled()` 四項斷言，Windows 只斷言 `PM_OK` ＋ 後續生命週期並印 SKIP 理由　`dep: T7`
-- [ ] T9: 毒化建置面：`flag oop-poison`、`foreign-library particle-magic-ffi-poison`（`buildable: False` 除非開旗標）、`test/oop/poison/Magic/FFI/Poison.hs`、`test/oop/particle-magic-ffi-poison.def`　`dep: F001`
-- [ ] T10: probe `firewall`：cast → 一幀成功 → `pm_poison_spell` → 六個真實符號各自回哨兵 → `pm_free` 安全 → **新的一次 cast 仍成功** → exit 0；`pm_poison_spell` 不存在時回 21（SKIP）　`dep: T9, T6`
-- [ ] T11: `test/oop/build.{sh,ps1}` 與 `run.{sh,ps1}`：選 C 編譯器、`-I include`、Linux 選配 `-I$(ghc --print-libdir)/*/rts-*/include` ＋ `-DPM_OOP_WITH_RTS_HEADERS`、grep 標頭決定 `-DPM_OOP_HAS_RTS_STATS`、定位共享函式庫、退出碼即結論　`dep: T1`
-- [ ] T12: `test/oop/README.md`（probe 清單、退出碼表、兩種建置模式、PENDING／SKIP 語意）＋ `test/OopSmokeSpec.hs` 四條守門；新 spec 進 cabal `other-modules`，`test/oop/*` 進 `extra-source-files`　`dep: T9, T11`
+- [x] T1: `test/oop/oop_smoke.c` 骨架：平台載入器抽象（`LoadLibraryA`／`GetProcAddress` ↔ `dlopen`／`dlsym`）、probe 註冊表與 `--list`／`--all`／`--probe` 分派、報告行與退出碼契約　`dep: -`
+- [x] T2: probe `load`：出貨 `.def` 的全部匯出符號（實作時為 35 個）全部解析成功（缺一即 FAIL）、`pm_abi_version() == PM_ABI_VERSION`、`pm_max_particles() > 0` 並以其值配置六欄　`dep: T1`
+- [x] T3: probe `life`：`examples/c/main.c` 的呼叫序列跑完 120 幀 ＋ `finished:` 行，與 `examples/haskell/expected-output.txt` 逐行比對　`dep: T2`
+- [x] T4: golden 的平台規則搬進 C：整數欄與非數字詞全平台逐字元；`age`／`checksum` 在 `#ifdef _WIN32` 外走 `1e-5` 相對容差，失敗訊息帶 `platformScopeNote` 同語氣的說明　`dep: T3`
+- [x] T5: 每幀六欄（含 `color`）的 FNV-1a 64 摘要，依 `PerfGoldenSpec` 的定義實作，末幀值印進報告作為診斷（不斷言）　`dep: T3`
+- [x] T6: 父進程的子進程機制：Win32 `CreateProcessA` ＋ `GetExitCodeProcess`；POSIX `fork` ＋ `execv` ＋ `waitpid`（`WIFSIGNALED` 一律視為「沒活著跑完」），把 0／20／21／其他翻成 PASS／FAIL／SKIP／PENDING　`dep: T1`
+- [x] T7: probe `state-uninit`／`state-after-shutdown`／`state-reinit`：各型別回傳一個代表符號的哨兵斷言；期望值由 `pm_init_ex` 是否解析得到決定（不存在 ⇒ PENDING，存在 ⇒ 必須回 `PM_ERR_STATE` 且子進程 exit 0）　`dep: T6, F003`
+- [x] T8: probe `rts-config`：`pm_init_ex` 帶 capabilities=2／nursery=64 MiB／`PM_GC_NONMOVING`／統計旗標；Linux 以 dlsym 的 `n_capabilities`、`RtsFlags`（需 `PM_OOP_WITH_RTS_HEADERS`）、`getRTSStatsEnabled()` 四項斷言，Windows 只斷言 `PM_OK` ＋ 後續生命週期並印 SKIP 理由　`dep: T7`
+- [x] T9: 毒化建置面：`flag oop-poison`、`foreign-library particle-magic-ffi-poison`（`buildable: False` 除非開旗標）、`test/oop/poison/Magic/FFI/Poison.hs`、`test/oop/particle-magic-ffi-poison.def`　`dep: F001`
+- [x] T10: probe `firewall`：cast → 一幀成功 → `pm_poison_spell` → 六個真實符號各自回哨兵 → `pm_free` 安全 → **新的一次 cast 仍成功** → exit 0；`pm_poison_spell` 不存在時回 21（SKIP）　`dep: T9, T6`
+- [x] T11: `test/oop/build.{sh,ps1}` 與 `run.{sh,ps1}`：選 C 編譯器、`-I include`、Linux 選配 `-I$(ghc --print-libdir)/*/rts-*/include` ＋ `-DPM_OOP_WITH_RTS_HEADERS`、grep 標頭決定 `-DPM_OOP_HAS_RTS_STATS`、定位共享函式庫、退出碼即結論　`dep: T1`
+- [x] T12: `test/oop/README.md`（probe 清單、退出碼表、兩種建置模式、PENDING／SKIP 語意）＋ `test/OopSmokeSpec.hs` 四條守門；新 spec 進 cabal `other-modules`，`test/oop/*` 進 `extra-source-files`　`dep: T9, T11`
 
 ## 1-to-1 測試對照表
 
@@ -459,7 +465,7 @@ probe 的動作（跑在子進程裡，因為「防火牆失效」的表現就�
 | Todo | 測試 | 說明 |
 |------|------|------|
 | T1 | `oop-smoke <lib> --list` 退出碼 0 且印出 N2 的七個 probe 名稱 | 骨架、註冊表與分派可用；也是 T12 第 4 條守門的比對來源 |
-| T2 | probe `load` | 31 個必要符號逐一解析（缺一個就指名是哪一個）；世代相符；`pm_max_particles()` 為正且被用作容量。Windows 上這一條同時是 `.def` 匯出面的跨進程驗收 |
+| T2 | probe `load` | 35 個必要符號逐一解析（實測數；由新增的第五條 hspec 守門與 `.def` 對帳）（缺一個就指名是哪一個）；世代相符；`pm_max_particles()` 為正且被用作容量。Windows 上這一條同時是 `.def` 匯出面的跨進程驗收 |
 | T3 | probe `life` | 120 幀 ＋ `finished:` 行與 golden 相符；任何一幀 `pm_observe` 回負值即 FAIL 並印幀號。已在 Windows 實測 0／120 不符（查證 E2） |
 | T4 | probe `life`（非參考平台分支） | 整數欄在兩平台皆逐字元相等；浮點欄在非參考平台走容差。已在 Linux 實測：9／120 行的 `checksum` 末位差 1、四個整數欄與 `age` 全同（查證 E3），全部落在容差內 |
 | T5 | probe `life` 的報告行含 `digest=` | 末幀 FNV-1a 值可讀且穩定；同一平台重跑相同（Windows 實測 `2423589825964152005`）。**診斷不斷言**——它的斷言化是 ADR-024 落地後的動作 |
@@ -485,6 +491,56 @@ probe 的動作（跑在子進程裡，因為「防火牆失效」的表現就�
 - **A10: 修正 F003 E3-1 的一句敘述。** → 採取：本文件以 E5 的量測為準——Linux 的 `.so` **自己**只匯出 `pm_*`（`nm -D` 實測），RTS 符號是**相依鏈上的 `libHSrts-1.0.3_thr-ghc9.14.1.so`** 匯出的，`dlsym` 沿 handle 的相依鏈找得到（`dladdr` 實證）。實務結論與 F003 相同（Linux 可斷言、Windows 不可），但敘述不同。→ 影響：建議編排者請 F003 修訂那一句（純敘述修正，不動任何決策）；同時提醒 F007：若日後收斂 Linux 匯出面或改變閉包擺法，本功能 Linux 端的三條 RTS 斷言會受影響。
 - **A11: `test/oop/` 不進 `packaging/artifacts.json`。** → 採取：那份清單是**產品產物**的權威（F007 N1），測試 harness 不是產物；本功能的「出貨清單」解讀為 cabal 的 `extra-source-files`（`examples/c/main.c` 早就在那裡，同一條紀律）。→ 影響：若編排者認為 harness 應隨產物一起發布，往 `artifacts.json` 加一個 `role` 即可，F007 的封閉詞彙要跟著加一個值。
 
+- **A12（實作時新增，取代 A3 的觸發形狀）：F002 handle-generation 已落地，控制代碼不再是「指向 `IORef` 的 `StablePtr`」，而是註冊表裡的世代索引（ADR-022 D3），`spellRegistry` 未從 `Magic.FFI` 匯出。** → 採取：毒化符號改成 `pm_poison_spell :: IO (StablePtr SpellCell)`——**回傳一個全新的合法控制代碼，內容物是 bottom**，用的是 `newSpellHandle` 自己文件裡明寫「__Lazy in the spell__, deliberately: `newSpellHandle (error "…")` yields a perfectly legal handle whose contents are bottom」的那條保證（`src/ffi/Magic/FFI.hs:369-375`)。A3 的所有理由與成本結論完全不變（`src/ffi` 之外、三方對帳零改動、標頭與 C# 不動),只有簽名與「毒化誰」變了。→ 影響:比原設計**更好**——毒化的是一顆新法術,不是既有的那顆,所以「毒化之後庫仍可用」多了一條更強的證據:**毒化前施的那顆法術在毒化後仍然跑得動**(probe 已斷言)。N3 表中 `pm_poison_spell` 的簽名要跟著改。
+- **A13(實作時新增,補上 F003 A10 的缺口):新增第八個 probe `rts-prestarted`,覆蓋「RTS 已起但沒開統計」的宿主。** → 採取:編排者點名「你若能在 out-of-process 覆蓋它就覆蓋」。harness 是唯一能控制 RTS 何時啟動的測試,所以它以 dlsym 取得**同一條相依鏈上的** `hs_init` 先把 RTS 叫起來,再呼叫 `pm_init_ex`,斷言標頭那張逐平台表最後一列的四件事:`pm_init_ex` 回 `PM_ERR_STATE`(第二種意義)、capability 數仍然生效、`getRTSStatsEnabled()` 仍為 false、**庫仍可施法可觀測**。Linux 實測 PASS;Windows 不匯出任何 RTS 符號,回 SKIP 並印出理由。→ 影響:N2 的 probe 清單從七個變八個(README ↔ 程式碼雙向對帳已同步)。**F003 A10 的缺口在 Linux 上已關閉,Windows 仍留給 F011 的 `pm_stats`**——那是唯一能讓 Windows 宿主機械驗證這一列的路。
+- **A14(實作時新增):hspec 守門從四條變五條。** → 採取:多一條「`oop_smoke.c` 的 `REQUIRED_SYMBOLS` 表 ≡ 出貨 `.def` 的 `EXPORTS`」。理由與 A8 同源:出貨面已經從設計時的 31 個長到 **35 個**(F003 的 `pm_init_ex`、F005 的 `pm_advance_ex`／`pm_scene_advance_ex`／`pm_plan_steps`),這張表若落後,probe `load` 就會安靜地少驗最新的入口點,而那正是它跨進程驗收匯出面的全部價值。→ 影響:出貨 `.def` 每加一行,`oop_smoke.c` 要跟著加一行,否則 `cabal test` 紅。這是刻意的。
+
 ## 實作備註
 
-（撰寫時留空）
+### 交付與實跑結果
+
+兩平台各實跑一次,**兩邊都零失敗**:
+
+| 平台 | 出貨庫 | 毒化庫 |
+|---|---|---|
+| Windows x86_64(ghcup clang 建置 harness) | 5 passed, 0 failed, 3 skipped, 0 pending | 6 passed, 0 failed, 2 skipped, 0 pending |
+| Linux x86_64(WSL Debian, GHC 9.14.1, gcc) | **7 passed**, 0 failed, 1 skipped, 0 pending | **8 passed, 0 failed, 0 skipped, 0 pending** |
+
+Windows 的三個 SKIP 是 `rts-config`／`rts-prestarted`(`.def` 不匯出 RTS 符號)與 `firewall`(出貨庫沒有觸發符號),每一條都印出理由。Linux 全綠含四條 RTS 斷言(caps、stats、nursery、gc)。
+
+### 「還沒修 vs 修好了」今天走哪一支
+
+**全部走「修好了」那一支。** `pm_init_ex` 在兩平台都解析得到,`gate_landed()` 為真,所以三個狀態 probe 走的是**嚴格斷言**分支,實測 PASS,不是 PENDING。PENDING 那一支在今天的程式碼上**不可能被走到**,它留著的唯一用途是「閘門被移除」時的最便宜偵測器(此時它會印 `I3 gate not landed`)。A4 的判準因此已從「等待中」變成「回歸偵測器」。
+
+### 假綠防護與反向驗證(F004／F005 前車之鑑)
+
+golden 比對確實有「粒子數為零就恆真」的風險——**這份 golden 的 frame 0 就是 `particles 0`**。probe `life` 因此有三條非空斷言:峰值粒子數必須 > 0、末幀 checksum 不得恰為 0、比對行數必須恰為 121。每一條都做了**反向驗證**(兩平台各跑一次,全部如預期變紅):
+
+| 反向注入 | 期望 | Windows | Linux |
+|---|---|---|---|
+| 整數欄 `particles 289`→`288` | FAIL(粒子數在所有平台都逐字元) | exit 20 ✔ | exit 20 ✔ |
+| `checksum` 偏離 41.6(遠超容差) | FAIL | exit 20 ✔ | exit 20 ✔ |
+| `checksum` 末位差 1(容差內) | Windows FAIL／Linux PASS | exit 20 ✔ | exit 0 ✔ |
+| golden 只剩 60 行 | FAIL(行數守門) | exit 20 ✔ | — |
+| **把每幀粒子數強制歸零**(F004／F005 的假綠形狀) | FAIL(非空守門先於比對開口) | exit 20 ✔ | exit 20 ✔ |
+| `rts-config` 要 2 個 capability 但斷言 3 | FAIL | — | exit 20 ✔ |
+| `firewall` 改用**健康**的控制代碼取代毒化的 | FAIL(`pm_observe` 回 1 而非 −6) | exit 20 ✔ | exit 20 ✔ |
+
+五條 hspec 守門也逐條反向驗證:抽掉 `extra-source-files` 一行、讓毒化 `.def` 少一個名字、從 README 拿掉一個 probe、讓 `REQUIRED_SYMBOLS` 少一個符號、把 `flag oop-poison` 的 `default` 翻成 `True`——**五條各自變紅,沒有一條是恆真的**。
+
+**容差分支確實在做事**(這一條特別驗過):把 `OOP_REFERENCE_PLATFORM` 強制成 1 在 Linux 重編,同一份 golden 立刻 **9／121 行不符,全部在 `checksum` 末位**——與設計時的 E3 量測逐字相符。所以 Linux 的 PASS 不是「規則太鬆所以什麼都過」,而是「9 個末位差被容差吸收、其餘 112 行與所有整數欄逐字元相等」。
+
+### 與設計的偏差
+
+1. **必要符號 31 → 35。** 設計寫作時 `.def` 是 31 行;F003 與 F005 合併後是 35。harness 的表對齊今天的 `.def`,並由新增的第五條 hspec 守門釘住(A14)。
+2. **毒化符號的簽名。** `StablePtr SpellCell -> IO ()` → `IO (StablePtr SpellCell)`,原因與後果見 A12。
+3. **probe 七個 → 八個。** 新增 `rts-prestarted`,原因見 A13。
+4. **`--list` 每行多印一欄用途說明**(以 TAB 分隔,第一欄仍是 probe 名稱)。N1 的「一行一個名稱」仍然成立,守門測試讀的也是第一欄。
+5. **`PmConfig.stats` 已定案**,欄位名就是 `stats`(常數 `PM_STATS_OFF`／`PM_STATS_ON`)。A5 的「不寫死名字」機制照留:`build.sh`／`build.ps1` grep 標頭的 `uint32_t stats;` 決定 `PM_OOP_HAS_RTS_STATS`,所以標頭改名時 harness 少一條斷言而不是編不過。
+
+### 承諾兌現
+
+- **三方對帳零改動**:`test/FFIContractSpec.hs`、`test/BindingContractSpec.hs` 一個字都沒動,`include/particle_magic.h`、`particle-magic-ffi.def`、`bindings/csharp/ParticleMagic.cs`、`PM_ABI_VERSION` 一個位元都沒動。毒化面完全住在 `test/oop/` 與一個 `default: False`、`manual: True` 的 cabal flag 後面,產物檔名 `particle-magic-ffi-poison.{dll,so}` 與出貨的不同。
+- **harness 零 Haskell 連結**:只 `#include "particle_magic.h"` 與平台載入器標頭;Linux 選配的 `-I<ghc rts include>` 只取 `RTS_FLAGS` 的**版面**,指標一律來自 `dlsym`。連結面只有 C 執行期、`-ldl`、`-lm`。
+- **不動 CI**:`.github/workflows/ci.yml` 未修改。接線屬 authoring-engineering 的 ci-load-smoke-step;本功能只保證退出碼與報告格式穩定,且兩平台本機可重複執行。
+- **不重覆 F007**:`run.sh`／`run.ps1` 預設指向 `dist-newstyle`,也接受 `packaging/pack.{sh,ps1}` 的產出資料夾;閉包自足性仍由 `pack.sh --verify` 斷言,本功能不重跑。`test/oop/` 依 A11 未進 `packaging/artifacts.json`。

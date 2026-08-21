@@ -46,10 +46,37 @@ extra-source-files: include/particle_magic.h
                     examples/haskell/cabal.project
                     examples/haskell/expected-output.txt
                     examples/haskell/README.md
+                    test/oop/oop_smoke.c
+                    test/oop/build.sh
+                    test/oop/build.ps1
+                    test/oop/run.sh
+                    test/oop/run.ps1
+                    test/oop/README.md
+                    test/oop/particle-magic-ffi-poison.def
+                    test/oop/poison/Magic/FFI/Poison.hs
 
 source-repository head
     type:     git
     location: https://github.com/utomore/particle-magic-system.git
+
+-- The exception firewall (host-runtime C2.1) answers a bug inside this
+-- library. No legitimate call produces one -- a call that did would be a
+-- defect to fix rather than a fixture to test with -- so the only honest
+-- way for the out-of-process smoke to watch the firewall work is to build
+-- a SEPARATE library carrying one deliberate trigger (host-runtime F006
+-- T9, design.md M8).
+--
+-- `manual: True` and `default: False` mean solver-driven builds never turn
+-- it on: `cabal build all` does not build the poison library at all, which
+-- matters because a standalone DLL is expensive to link. The stanza below
+-- also gives its product a DIFFERENT FILE NAME, which is a harder guard
+-- than the flag: a poison build can never be mistaken for a shipped drop.
+flag oop-poison
+    description: Build particle-magic-ffi-poison, the test-only library
+                 whose one extra symbol triggers the exception firewall
+                 from C. Never shipped; see test/oop/README.md.
+    default:     False
+    manual:      True
 
 -- Architecture boundary is enforced by this package structure
 -- (func-spec 0001 §3, guarded by test/BoundarySpec.hs):
@@ -284,6 +311,46 @@ foreign-library particle-magic-ffi
     if os(darwin)
         ghc-options: "-optl-Wl,-install_name,@rpath/libparticle-magic-ffi.dylib"
 
+-- The poison library (host-runtime F006 T9). Field for field the stanza
+-- above, plus exactly three differences:
+--
+--   * test/oop/poison on hs-source-dirs and Magic.FFI.Poison on
+--     other-modules -- the one module that is not in src/ffi, which is why
+--     FFIContractSpec's three-way reconciliation (it reads
+--     src/ffi/Magic/FFI.hs, the shipped .def and the header) needs no
+--     change at all;
+--   * its own mod-def-file, a mirror of the shipped one plus the extra
+--     symbol. test/OopSmokeSpec.hs pins the difference to exactly
+--     {pm_poison_spell} so the mirror cannot rust;
+--   * buildable: False unless -foop-poison, so this costs nothing in a
+--     normal build.
+--
+-- The product is particle-magic-ffi-poison.dll / libparticle-magic-ffi-
+-- poison.so, so packaging/artifacts.json (which names the shipped files
+-- literally) cannot pick it up by accident.
+foreign-library particle-magic-ffi-poison
+    if !flag(oop-poison)
+        buildable:    False
+    type:             native-shared
+    if os(windows)
+        options:      standalone
+        mod-def-file: test/oop/particle-magic-ffi-poison.def
+    hs-source-dirs:   src/ffi, test/oop/poison
+    other-modules:    Magic.FFI
+                    , Magic.FFI.Registry
+                    , Magic.FFI.Poison
+    c-sources:        cbits/pm_init.c
+                    , cbits/pm_gate.c
+    include-dirs:     include
+    build-depends:    base       ^>=4.22
+                    , particle-magic:magic-boundary
+                    , bytestring ^>=0.12
+                    , vector     ^>=0.13
+    default-language: GHC2021
+    ghc-options:      -Wall -O2 -threaded
+    if os(linux)
+        ghc-options: "-optl-Wl,-rpath,$ORIGIN"
+
 test-suite spec
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
@@ -472,6 +539,7 @@ test-suite spec
                     , FFIAdvanceGuardSpec
                     , FFIThreadSpec
                     , PackagingSpec
+                    , OopSmokeSpec
     -- host-runtime F003: the same two C translation units the foreign
     -- library is built from, so FFIRuntimeSpec drives the real state
     -- machine and the real gate in process rather than a copy of them.
