@@ -108,7 +108,7 @@ parent: host-runtime
 | F003 →F005 | 新符號的雙重義務 | 新等式 `foreignExportSymbols ≡ pm_hs_ ＋ (headerFunctions \ 三個 lifecycle)` 不寫死清單：F005 的三個新符號要同時加 `pm_hs_*` 匯出名**與** `cbits/pm_gate.c` 的閘門包裝，漏一個就紅 | 已寫進 F005 的實作 prompt；F005 三重義務全數履行 |
 | F005（實作期發現） | **自己的測試出現假綠** | 場景版「狀態不變」原本只推進 3 幀取基準，ring-fire 當時一顆粒子都沒有，「前後相同」變成恆真；改為推進 40 幀並加 `liveParticles > 0` 防呆後才有效 | 接受：這是委派模式下最該被抓到的一類問題，執行者自己抓到並修掉 |
 | F005（實作期發現） | 文檔 T6 寫「符號 31 → 34」算漏了 F003 的 `pm_init_ex` | 實際基線是 32，改動後 35 | 接受；**ADR-022 的同一處數字（編排者寫的）已一併更正為 31 → 35** |
-| F005 A5 | `Magic.Step.plan` 的病態案例：有限輸入下比值溢位 → 積壓爆表反而回 0 步 | C 面逐位元鏡射不修 | 接受；**建議在 boundary-host 開一份 bugfix 修 Haskell 面**，C 面會自動跟著修正——留到階段閘門向開發者提出 |
+| F005 A5 | `Magic.Step.plan` 的病態案例：有限輸入下比值溢位 → 積壓爆表反而回 0 步 | C 面逐位元鏡射不修 | **已結案**:由 `boundary-host/B001` 修復,C 面是轉呼不是複製,自動跟著正確 |
 | F007 A2（結論反轉） | `$ORIGIN` 能否穿過 cabal→ld | 穿得過，**但 cabal 自己在前面寫了 46 條絕對路徑**，`$ORIGIN` 排第 47，於是「自不自足」在開發機上無法回答。`-fno-use-rpaths` **實測無效**（那些條目是 cabal 加的不是 GHC），已從 cabal 檔移除、註解改寫成實況；改由 `pack.sh` 重寫打包後那一份的 RUNPATH | 接受：執行者推翻自己先前的設計假設並留下實測依據 |
 | F007 A7（實作期新增） | 工作樹是 CRLF，而 CRLF 的 shell script 在 POSIX shell 是語法錯誤 | 新增**最小範圍**的 `.gitattributes`：只有 `*.sh text eol=lf` 一行，刻意不寫 `* text=auto`，其餘檔案的換行行為完全不變 | 接受：範圍克制且理由寫在檔案註解裡 |
 | F007 A8（實作期新增） | 無 patchelf 時如何縮短 RUNPATH | `pack.sh` 就地縮短字串（chrpath 的作法）；同時處理 `DT_RPATH` 但**只實測過 RUNPATH** | 接受 |
@@ -127,7 +127,7 @@ parent: host-runtime
 | F005 A2 | 規劃器對非有限/負輸入 | NULL 出參、非有限、`max_steps<0`、`acc_in<0` → `PM_ERR_ARGS`;其餘逐位元鏡射 | — |
 | F005 A3 | `_ex` 對 NULL 控制代碼 | 回 `PM_ERR_ARGS` | — |
 | F005 A4 | `pm_plan_steps` 是純函數卻需先 `pm_init` | 維持 Haskell 匯出,標頭明文要求;錯誤碼交 F003 的 I3 | — |
-| F005 A5 | `plan 1e-300 8 1e300 0` 病態結果 | 逐位元鏡射不修;若判為缺陷應在 boundary-host 開 bugfix | 接受:逐位元鏡射不修;病態案例留待 boundary-host 有需求再開 bugfix |
+| F005 A5 | `plan 1e-300 8 1e300 0` 病態結果 | 逐位元鏡射不修;若判為缺陷應在 boundary-host 開 bugfix | **已結案**:由 `boundary-host/B001` 修復,C 面是轉呼不是複製,自動跟著正確 |
 | F007 A1 | **C4 的 Linux standalone 不可行** | 改「`.so` ＋ 閉包 ＋ `$ORIGIN`」,已在乾淨環境實測通過 | 接受:C4 Linux 列改「`.so` ＋ 閉包 ＋ `$ORIGIN`」(已套用) |
 | F007 A2 | `$ORIGIN` 能否穿過 cabal→ld | 未測;允許退回 `patchelf`(WSL 目前沒有) | — |
 | F007 A3 | macOS 全未驗證 | `install_name`/雙架構/PIC 皆為紙上設定 | — |
@@ -192,7 +192,21 @@ parent: host-runtime
 
 **抽象邊界(檢查 5)**:C2.2／C2.4／C2.5／C4 裡的實測敘事括號屬 Level 2 越界——那些是 build-log 與 ADR 的內容,建議清掉。**這是編排者在閘門修訂契約時寫進去的**。
 
-**尚未處理的開放項**:F005 A5 的 `Magic.Step.plan` bugfix 未開;F003 A10 的 Windows 那一半待 F011;F008 A7 的版本號待使用者;OOP smoke 與毒化建置未進 CI(屬 authoring-engineering 的 ci-load-smoke-step)。
+### 閘門後的修復(使用者裁決:先修兩條高的再進階段二)
+
+| id | 缺陷 | 結果 |
+|---|---|---|
+| `host-runtime/B001` | 整合指南三處教錯契約 ＋ **守門假綠**(reject 比對字面字串,新散文多「仍然」少「屬於」就漏網) | 守門改為三層:正規化後比對語意片段、結構性斷言(「無鎖」前四字必須是「每幀路徑」——錯的是範圍不是用詞)、正向錨點釘住權威敘述。**六個變異全紅**,含一個從沒人寫過的第三種說法。順帶掛版本 1.4 與 frontmatter |
+| `host-runtime/B002` | `capabilities == 0` 在降級路徑被靜默丟棄 | 採「當真實請求套用」而非回錯誤碼——該列的 capability 數**辦得到**,回 `PM_ERR_STATE` 等於謊報,且會讓每個照建議寫法歸零 `PmConfig` 的宿主都收到錯誤。非降級路徑一併查證(對 0 寫 `-N`),兩條路徑同源。Linux out-of-process 探針補 end-to-end |
+| `boundary-host/B001` | `Magic.Step.plan` 有限輸入下截斷護欄失效 | **根因比原述更廣**:護欄被放在已失去資訊的量上(`floor :: Double -> Int` 在 Int 值域外不飽和),所以病態域是「比值離開 Int 值域」而非「溢位成 Inf」;`-O2` 下會回**負步數**,累加器也會被 `Infinity` 毒化。判斷移到 `floor` 之前,證明對所有落在 Int 內的比值恆等 → 合法輸入逐位元不變(等價律 3000 組、不變式 20000 組) |
+
+**第四次假綠,也是最細的一次**:`boundary-host/B001` 的變異注入把判斷式改成差一的 `ratio > maxSteps`,**第一次全綠**——它的逐位元保護測試缺了「`n` 恰等於 `maxSteps` 且有餘額」那一列。補四列邊界後才如預期變紅。教訓寫進文檔:逐位元保護測試只挑典型輸入時,擋得住「功能被拆掉」的變異,擋不住「邊界被挪半步」的變異,而後者才是修改真正的風險面。
+
+**環境問題**:三個 bugfix agent 共用同一個 `dist-newstyle`,撞到 Windows 的 `spec.exe.manifest` 刪除競態,也讓彼此在對方紅燈期間看到假失敗(兩個 agent 都正確辨識出「那不是我的檔案」)。**日後平行跑實作類 agent 要考慮這一點。**
+
+**修復後全套驗證**(編排者獨立重跑):`cabal build all` 綠、`cabal test` **1879 examples, 0 failures**、`PM_ABI_VERSION` 仍為 1、35 個宣告、`docs/integration.md` 掛 1.4。
+
+**尚未處理的開放項**
 
 **F007 的執行中斷**:第一次委派在寫守門測試時被 watchdog 判定停滯(600 秒無串流進展)而中止,**不是判斷或阻塞問題**。編排者盤點後發現:建置已綠、`.gitattributes` 與 `packaging/` 四支腳本都在,唯一的紅是 `test/PackagingSpec.hs` 兩處 lambda 少了反斜線(其餘 13 個正常,孤立手滑),另有 46 MB 的 `dist/` 產物未被忽略、文檔 8 個 Todo 未勾。以 SendMessage 續跑同一個 agent 收尾,未重寫。
 

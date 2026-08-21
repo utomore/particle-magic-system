@@ -249,6 +249,57 @@ static int pm_rt_validate(const PmConfig* cfg)
     return PM_OK;
 }
 
+/* Degrading -------------------------------------------------------------
+
+   The header's last row: the GHC runtime was already up before we were
+   asked, so hs_init_ghc's option string is no longer a way to say
+   anything. What survives is the runtime's own API -- setNumCapabilities
+   and nothing else -- and the promise that whatever cannot be applied is
+   REPORTED rather than dropped (C2.4).
+
+   capabilities == 0 is a request, not a blank. The header defines it as
+   "follow the hardware", and it is what a host gets by zeroing PmConfig
+   and filling in `size`, which is the documented way to write one. The
+   startup path spells it `-N`; here the only way to say it is to ask the
+   hardware ourselves and pass the number on. Treating 0 as "the host said
+   nothing" left that request neither applied nor counted into
+   PM_ERR_STATE -- silently dropped, which is the one thing C2.4 forbids
+   (B002).
+
+   No clamp to PM_MAX_CAPABILITIES: that bound exists because a host's
+   number reaches an RTS that would abort the process on a bad one, and
+   the hardware's own count is not a host's number. `-N` on the startup
+   path is unclamped for the same reason, and the two paths have to mean
+   the same thing. */
+int pm_runtime_apply_to_running(const PmConfig* cfg)
+{
+    uint32_t want;
+    int rc = PM_OK;
+
+    /* pm_init's own call: conservative defaults, asking for nothing.
+       Frozen behaviour -- it must stay a no-op here. */
+    if (cfg == NULL) {
+        return PM_OK;
+    }
+
+    want = cfg->capabilities;
+    if (want == 0) {
+        want = (uint32_t)getNumberOfProcessors();
+        if (want == 0) {
+            want = 1; /* an unanswerable machine is still one capability */
+        }
+    }
+    setNumCapabilities(want);
+
+    /* The three the runtime can only be told while it starts. */
+    if (cfg->nursery_bytes != 0
+        || cfg->gc_mode != PM_GC_DEFAULT
+        || (cfg->stats == PM_STATS_ON && !getRTSStatsEnabled())) {
+        rc = PM_ERR_STATE;
+    }
+    return rc;
+}
+
 /* Starting -------------------------------------------------------------- */
 
 static int pm_rt_start(const PmConfig* cfg)
@@ -288,16 +339,7 @@ static int pm_rt_start(const PmConfig* cfg)
         pm_rt_paired = 1;
         pm_rt_is_ours = 0;
 
-        if (cfg != NULL) {
-            if (cfg->capabilities != 0) {
-                setNumCapabilities(cfg->capabilities);
-            }
-            if (cfg->nursery_bytes != 0
-                || cfg->gc_mode != PM_GC_DEFAULT
-                || (cfg->stats == PM_STATS_ON && !getRTSStatsEnabled())) {
-                rc = PM_ERR_STATE;
-            }
-        }
+        rc = pm_runtime_apply_to_running(cfg);
     }
 
     atomic_store_explicit(&pm_rt_state, PM_RT_RUNNING, memory_order_release);

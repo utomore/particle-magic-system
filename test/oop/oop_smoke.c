@@ -1043,6 +1043,121 @@ static int probe_rts_prestarted(void)
 #endif
 }
 
+/* --- probe: rts-prestarted-zero-caps (host-runtime B002) ------------------
+ *
+ * The same row as rts-prestarted, asked the way the header tells a host to
+ * ask: zero PmConfig, set `size`, fill in nothing you do not care about.
+ * That leaves capabilities at 0, which the header defines as "follow the
+ * hardware" -- a request like any other, and the one field this row still
+ * has an API to honour.
+ *
+ * B002 was exactly here: 0 was read as "the host said nothing", so the
+ * request was neither applied nor counted into PM_ERR_STATE. Silently
+ * dropped, which C2.4 forbids.
+ *
+ * It needs a process of its own -- the state machine allows one
+ * initialisation per process, so the sibling probe's non-zero request
+ * cannot share one -- and that is what --all already gives every probe.
+ * Windows exports no RTS symbol, so there it is a SKIP; Linux is the only
+ * platform where n_capabilities can be read back through dlsym.
+ */
+static int probe_rts_prestarted_zero_caps(void)
+{
+#if defined(_WIN32)
+    note("hs_init / n_capabilities are not exported on this platform (.def); "
+         "the zero-capability request cannot be observed here");
+    return PROBE_SKIP;
+#else
+    void (*hs_init_fn)(int *, char ***) =
+        (void (*)(int *, char ***))lib_sym(g_lib, "hs_init");
+    uint32_t *n_capabilities = (uint32_t *)lib_sym(g_lib, "n_capabilities");
+    uint32_t (*processors)(void) =
+        (uint32_t (*)(void))lib_sym(g_lib, "getNumberOfProcessors");
+    fn_init_ex init_ex;
+    fn_void_v shutdown = (fn_void_v)need("pm_shutdown");
+    fn_cast cast = (fn_cast)need("pm_cast");
+    fn_free release = (fn_free)need("pm_free");
+    static char argv0[] = "oop-smoke";
+    static char *argv_[] = {argv0, NULL};
+    char **pargv = argv_;
+    int argc_ = 1;
+    PmConfig cfg;
+    const float pos[3] = {1.5f, 0.25f, -2.0f};
+    const float facing[3] = {0.0f, 0.0f, 1.0f};
+    char err[512];
+    char *json;
+    PmSpell *spell;
+    uint32_t before, want;
+    int rc;
+
+    if (!gate_landed()) {
+        note("pm_init_ex is not exported (host-runtime F003 not landed)");
+        return PROBE_FAIL;
+    }
+    if (!hs_init_fn || !n_capabilities) {
+        note("hs_init / n_capabilities did not resolve");
+        return PROBE_SKIP;
+    }
+    init_ex = (fn_init_ex)need("pm_init_ex");
+    if (!init_ex || !shutdown || !cast || !release) return PROBE_FAIL;
+
+    /* Be the Haskell host. hs_init takes no RTS options, so the runtime
+       comes up at the runtime's own default of one capability -- which is
+       what makes "follow the hardware" observable at all. */
+    hs_init_fn(&argc_, &pargv);
+    before = *n_capabilities;
+    want = processors ? processors() : 0;
+    if (want != 0 && before >= want) {
+        note("the pre-started runtime already has %u capabilities and the "
+             "machine has %u: this probe cannot tell the two cases apart",
+             (unsigned)before, (unsigned)want);
+        return PROBE_SKIP;
+    }
+
+    /* The documented default way to write a config, and nothing else. */
+    memset(&cfg, 0, sizeof cfg);
+    cfg.size = (uint32_t)sizeof cfg;
+
+    rc = init_ex(&cfg);
+    /* Nothing in this config is a field the row cannot honour, so there is
+       no degradation to report: PM_ERR_STATE here would mean the library
+       refused a request it was able to satisfy. */
+    if (rc != PM_OK) {
+        note("pm_init_ex with a zeroed config = %d, expected PM_OK (%d): "
+             "the only field asked for is the one this row still applies",
+             rc, PM_OK);
+        return PROBE_FAIL;
+    }
+    if (*n_capabilities == before) {
+        note("n_capabilities is still %u: capabilities = 0 means 'follow "
+             "the hardware' (particle_magic.h), and a request that is "
+             "neither applied nor reported is the silent drop C2.4 forbids",
+             (unsigned)before);
+        return PROBE_FAIL;
+    }
+    if (want != 0 && *n_capabilities != want) {
+        note("n_capabilities = %u, but the machine has %u and 'follow the "
+             "hardware' has to mean the hardware",
+             (unsigned)*n_capabilities, (unsigned)want);
+        return PROBE_FAIL;
+    }
+
+    /* And the library is up, exactly as on the sibling row. */
+    json = read_whole_file(g_spell_path, NULL);
+    if (!json) { note("cannot read spell %s", g_spell_path); return PROBE_FAIL; }
+    err[0] = '\0';
+    spell = cast(json, pos, facing, OOP_SEED, err, (int)sizeof err);
+    free(json);
+    if (!spell) { note("pm_cast failed after a zeroed pm_init_ex: %s", err); return PROBE_FAIL; }
+    release(spell);
+    shutdown();
+    note("runtime already up, capabilities = 0: applied as %u (the machine's "
+         "own count), reported PM_OK, library usable",
+         (unsigned)*n_capabilities);
+    return PROBE_PASS;
+#endif
+}
+
 /* --- probe: firewall (C2.1) ---------------------------------------------
  *
  * The trigger is a test-only symbol that exists only in the poison build
@@ -1189,6 +1304,7 @@ static const Probe PROBES[] = {
     {"state-reinit", probe_state_reinit, "C2.5 the one-way door"},
     {"rts-config", probe_rts_config, "C1.5 settings reaching the runtime"},
     {"rts-prestarted", probe_rts_prestarted, "C1.5 the already-running-runtime row"},
+    {"rts-prestarted-zero-caps", probe_rts_prestarted_zero_caps, "C2.4 capabilities=0 on that row (B002)"},
     {"firewall", probe_firewall, "C2.1 exception firewall"},
 };
 #define PROBE_COUNT ((int)(sizeof PROBES / sizeof PROBES[0]))

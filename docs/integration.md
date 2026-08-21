@@ -5,14 +5,15 @@ title: host-integration-guide
 description: 各語言宿主怎麼接上本系統的整合指南與資料合約
 status: done
 created: 2026-08-14
-updated: 2026-08-16
-related-adr: [adr-0008, adr-0011, adr-0012]
-related-spec: [func-0009, func-0011, func-0018]
+updated: 2026-08-21
+related-adr: [adr-0008, adr-0011, adr-0012, adr-022]
+related-spec: [func-0009, func-0011, func-0018, func-0025]
 ---
 
 # 宿主整合指南
 
-> 版本：1.3（2026-08-16，enhance-0001 落地後：**母語路線補上可跑的範例**——§1 的路線表加一欄「可跑的範例」、§3 開頭補齊 `bytestring`／`vector` 兩個容易漏的依賴並指向 [`examples/haskell/`](../examples/haskell/)、新增 **§3.3「2D／像素風宿主食譜」**（五步，不分語言，§4.5 交叉指路）、§8 新增一列誠實記帳「像素風只有食譜，沒有像素風的參考實作」。合約零變更：沒有新語意、沒有動 JSON schema、ABI version 仍為 1）
+> 版本：1.4（2026-08-21，host-runtime 子系統階段一交付後：**執行期契約從口頭變成明文**——§4.3 的錯誤表補上 `PM_ERR_INTERNAL`（−6）與 `PM_ERR_STATE`（−7）兩列；§4.4 的關閉語意改寫成**單向門**（`pm_shutdown()` 之後 `pm_init_ex()` 回 `PM_ERR_STATE`、其餘符號回哨兵，**不再殺掉宿主 process**，Windows 與 Linux 一致）；新增 **§4.4.1「執行期設定 `pm_init_ex()`」**（`PmConfig` 與逐平台生效表）與 **§4.4.2「執行緒模型」**（可直接併發與必須自行序列化的兩張清單，取代舊的那句話歸屬規則，並隨之對齊 §4.6、§6、§8 的三份副本）；時步規劃器上 C 面（`pm_plan_steps` 與帶錯誤碼的 `pm_advance_ex`／`pm_scene_advance_ex`），§2.4、§4.2、§5.4、§6 的主迴圈範例全部改用它而不再手寫 `while`；新增 §4.8「MSVC 連結」與 §4.9「macOS `@rpath` 與雙架構」。合約零移除：`PM_ABI_VERSION` 仍為 **1**，全部是加法）
+> 1.3（2026-08-16，enhance-0001 落地後：**母語路線補上可跑的範例**——§1 的路線表加一欄「可跑的範例」、§3 開頭補齊 `bytestring`／`vector` 兩個容易漏的依賴並指向 [`examples/haskell/`](../examples/haskell/)、新增 **§3.3「2D／像素風宿主食譜」**（五步，不分語言，§4.5 交叉指路）、§8 新增一列誠實記帳「像素風只有食譜，沒有像素風的參考實作」。合約零變更：沒有新語意、沒有動 JSON schema、ABI version 仍為 1）
 > 1.2（2026-08-16，spec 0018 交付後：場景層整個上 C ABI——新增 §4.6、`PM_ERR_QUOTA` 進 §4.3 的錯誤表、§3.2 與 §8 的「只在 Haskell 面」收窄為「不進場景的合成只在 Haskell 面」。ABI version 仍為 1——全部是加法。1.1 為 spec 0011 交付後：投影三件套上 C ABI、C# 參考綁定與 Unity 範例成為真檔案）
 > 對象：想把這套粒子魔法系統接進自己遊戲的人——Unity、Godot、C/C++ 引擎、Haskell 專案，或完全自製的前端。
 > 相關文件：[architecture.md](arch/architecture.md)（系統設計）、[roadmap.md](roadmap.md)（還缺什麼）、[`include/particle_magic.h`](../include/particle_magic.h)（凍結的 C 合約）、[`bindings/csharp/ParticleMagic.cs`](../bindings/csharp/ParticleMagic.cs)（C# 參考綁定）、[`examples/haskell/`](../examples/haskell/)（Haskell 最小宿主）、[`examples/c/`](../examples/c/)（C 最小宿主）、[`examples/unity/`](../examples/unity/)（Unity 最小範例）
@@ -644,7 +645,7 @@ pm_scene_free(sc);
 | **六欄開多大** | 用你傳給 `pm_scene_new` 的 `global_cap`,**不要**用 `pm_max_particles()`——後者界定的是**單一法術**。搞反的症狀是第二張陣進場後 `pm_scene_observe` 開始回 `PM_ERR_CAPACITY`,而且照慣例整幀不寫,看起來像閃爍不像錯誤 |
 | **新錯誤碼 `PM_ERR_QUOTA`（−5）** | 法術編得起來,只是場景滿了——這是唯一值得**反應**（先 `pm_scene_dismiss` 再重試）而不只是記 log 的失敗。被拒的那一次**場景一個位元都沒變**,`pm_scene_count`／`_spells`／`_budget` 三者皆與拒收前相同 |
 | **場景獨佔其法術** | 進了場景的法術**沒有** `PmSpell*`;不能丟給 `pm_free`,也不能把既有的 `PmSpell*` 搬進場景。每次施法二選一 |
-| **一個 scene 一個執行緒** | 與 `PmSpell*` 同一條紀律,庫內仍然無鎖 |
+| **併發規則與 `PmSpell*` 同一條** | 不同場景之間隨便併發;同一個場景的併發 `pm_scene_cast`／`_cast_many`／`_dismiss` 保證**不丟更新**、配額**一個法術只算一次**,但誰先誰後不保證。每幀路徑無鎖（§4.4.2） |
 
 `SpellId` 遞增不重用,所以陳舊的 id 是**惰性**而非歧義:`pm_scene_dismiss` 對未知／已結束的 id 是 no-op,宿主不必先查法術還活著沒有,也不需要 generation counter。
 
@@ -863,7 +864,7 @@ void Update()
 1. `pm_init()` 一次，之後不要 `pm_shutdown()`（除非你真的要結束 process）。
 2. 啟動時比對 `pm_abi_version()` 與你編譯時的 `PM_ABI_VERSION`。
 3. 六條陣列由**你**配置、由**你**持有，長度用 `pm_max_particles()` 查（不要用 `PM_MAX_PARTICLES` 常數，見 §2.5）；庫只往裡面寫。
-4. 一個 handle 一個執行緒。
+4. 不同 handle 之間隨便併發;同一個 handle 的併發推進與施法保證**不丟更新**（N 次併發推進恰好 N 步），但**順序不保證**。`pm_free` 與同 handle 的其他呼叫、以及「這一幀的觀測要對應這一幀的推進」這種成對操作，要**你**自己序列化（見 §4.4.2 的兩張清單）。
 5. 固定 `dt`；一幀多步 `advance`、只 `observe` 一次。步數用 `pm_plan_steps` 規劃，**不要自己寫 `while`**——手寫的沒有單幀上限，一次卡頓就是死亡螺旋，累加器用 `float` 還會漂（見 §2.4）。
 6. `pm_observe` 回負數＝什麼都沒寫；不要用上一幀的殘留資料當這一幀畫。
 7. 顏色是 `0xRRGGBBAA`；位置是右手系。
@@ -899,7 +900,7 @@ void Update()
 | **場景不報批次歸屬** | `pm_scene_observe`（與 `observeScene`）都不告訴你某個 batch 屬於哪一張陣;要按法術分別上色／分別剔除的宿主目前得自己開多個場景。做法已知且為純加法，記在 func-spec 0018 §8-1 |
 | **合成後只有一個 blend mode** | 合成法術渲染成一個 batch，混合模式取第一張陣的（ADR-0012 D5）。把火（additive）與水（alpha）疊起來，整體以第一張的模式繪製 |
 | **同 handle 不保證順序** | 同一個 handle 的併發操作保證**不丟更新**（N 次併發推進恰好 N 步），但**順序**不保證；`pm_free` 與同 handle 的其他呼叫、以及推進／觀測的配對，要宿主自己序列化（§4.4.2） |
-| **RTS 不可重啟** | `pm_shutdown()` 之後不能再 `pm_init()`；一個 process 一份 GHC RTS |
+| **關閉是單向門** | 一個 process 一份 GHC RTS，所以 `pm_shutdown()` 之後這個 process 就不能再使用本庫。但它**不再殺掉宿主 process**：`pm_init_ex()` 回 `PM_ERR_STATE`、`pm_init()` 是無操作、其餘符號一律回自己的哨兵值，Windows 與 Linux 語意完全一致（§4.4）。長駐型宿主（尤其 Unity Editor）乾脆永遠不要呼叫它 |
 | **DLL 約 46 MB** | `standalone` 內嵌整個 GHC RTS 的代價；換來的是宿主端零 Haskell 依賴。（量測基準：GHC 9.14.1、Windows x86_64、`standalone` 建置的 `particle-magic-ffi.dll`，2026-08-21 實測 47,990,272 bytes ＝ 45.8 MiB） |
 | **macOS 沒有任何機器驗過** | CI 矩陣是 `windows-latest` 與 `ubuntu-latest`（`.github/workflows/ci.yml`），兩個平台**每次都跑完整的 hspec 套件**，Windows 與 Linux 因此都是實測過的。macOS 的 `.dylib` 只有 cabal 的建置設定與封裝腳本（`@rpath`、`lipo`），沒有一台機器建過或跑過——`packaging/artifacts.json` 把兩個 macOS 目標記為 `verified: false`，見 §4.9 |
 | **billboard 形狀是無參數列舉** | func-spec 0015 起有四種形狀碼（square／soft-dot／ring／spark），但形狀**永遠不帶參數**（拉伸、旋轉需另開查詢，ADR-0013）；怎麼畫每種形狀由宿主自行決定（demo 用 64×64 程序生成 alpha 貼圖，RGB 全白、顏色仍來自頂點色） |

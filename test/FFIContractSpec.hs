@@ -41,6 +41,10 @@ module FFIContractSpec
 import Control.Exception (evaluate)
 import Data.Char (isAlphaNum, isSpace)
 import Data.List (isPrefixOf, nub, sort)
+-- host-runtime B001: the retired-claim vocabulary and its normalisation
+-- live there, so F004 T6 below and the guide's own self-consistency spec
+-- cannot drift apart.
+import DocContradictionSpec (guideOutsideAuthority, retiredClaims)
 import Magic.Compile (budgetCap)
 import Magic.FFI
   ( blendCode
@@ -360,12 +364,24 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
   -- host-runtime F004 T6. The header is normative but a C# host reads the
   -- binding and a Unity host reads the guide, so all three have to say the
   -- same thing. Sentinels on the way in, the retired claims asserted out.
+  --
+  -- host-runtime B001: the two "out" needles used to be whole literal
+  -- sentences, and this test was green while the guide still said
+  -- 「一個 handle 一個執行緒」 and 「庫內仍然無鎖」 in two other sections --
+  -- a dropped particle and an inserted adverb were the entire distance
+  -- between the retired claim and the string being looked for. The needles
+  -- now come from "DocContradictionSpec", which owns them as normalised
+  -- semantic fragments and adds the structural half (§8 against §4.4) that
+  -- no word list can express. Importing rather than copying is the point:
+  -- one vocabulary, so it cannot go stale in one place only. The text is
+  -- the guide minus §4.4 and §4.4.2, the two sections licensed to quote
+  -- what they retired.
   it "keeps the integration guide and the C# binding in step with the header's thread model" $ do
-    doc <- readUtf8 integrationDoc
+    doc <- guideOutsideAuthority
     (["不丟更新"], isInfixOf' "不丟更新" doc) `shouldBe` (["不丟更新"], True)
     mapM_
-      (\needle -> (needle, isInfixOf' needle doc) `shouldBe` (needle, False))
-      ["一個 handle 屬於一個執行緒", "庫內無鎖"]
+      (\claim -> (claim, isInfixOf' (fst claim) doc) `shouldBe` (claim, False))
+      retiredClaims
     binding <- readUtf8 bindingFile
     ("one scene per thread", isInfixOf' "one scene per thread" binding)
       `shouldBe` ("one scene per thread", False)

@@ -83,6 +83,7 @@ firewall regression is one `FAIL` line instead of a vanished harness.
 | `state-reinit` | the door is one-way: `pm_init` after `pm_shutdown` does nothing and `pm_init_ex` answers `PM_ERR_STATE` (C2.5). |
 | `rts-config` | `pm_init_ex` with capabilities, nursery, GC mode and statistics reaches the *runtime* (C1.5) — see the platform table below. |
 | `rts-prestarted` | the header's "the runtime was ALREADY running" row: `hs_init` first, then `pm_init_ex` reports `PM_ERR_STATE` in its second sense while the library stays up and usable, capabilities still apply, and statistics correctly do not. |
+| `rts-prestarted-zero-caps` | the same row asked the header's own default way — zero `PmConfig`, set `size`, fill in nothing — so `capabilities` is 0, i.e. *follow the hardware*. That is a request, and it has to be applied (`n_capabilities` reaches the machine's count) rather than dropped in silence (C2.4, host-runtime B002). Linux only: Windows exports neither `hs_init` nor `n_capabilities`. |
 | `firewall` | with the poison library: six shipped symbols answer `PM_ERR_INTERNAL`, `pm_free` stays a safe no-op, the process lives, and the library still casts afterwards (C2.1). |
 
 `--list` prints exactly this set of names; `test/OopSmokeSpec.hs` asserts
