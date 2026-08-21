@@ -95,18 +95,30 @@ uint8_t a =  c        & 0xFF;
 
 模擬假設**固定 `dt`**（[architecture §11](arch/architecture.md#11-不容易擴充與改動的地方明知的代價) 把它列為系統公理）。力場層的確定性與可回放性依賴這一點。
 
-正確做法是 accumulator：渲染幀率浮動，模擬永遠走固定步。
+正確做法是 accumulator：渲染幀率浮動，模擬永遠走固定步。累加器是**你的**，但那段算術不必你寫——`pm_plan_steps()` 就是庫自己用的那一份：
 
 ```c
-accumulator += frame_time;
-while (accumulator >= FIXED_DT) {          /* 每步都 advance */
-    pm_advance(spell, FIXED_DT);
-    accumulator -= FIXED_DT;
+#define FIXED_DT_F (1.0f / 60.0f)           /* pm_advance_ex 收的 */
+#define FIXED_DT   ((double)FIXED_DT_F)     /* pm_plan_steps 規劃用的 */
+#define MAX_STEPS_PER_FRAME 8
+
+static double acc = 0.0;                    /* 累加器，雙精度 */
+int steps;
+
+pm_plan_steps(FIXED_DT, MAX_STEPS_PER_FRAME, frame_time, acc, &steps, &acc);
+while (steps-- > 0) {                       /* 每步都 advance */
+    pm_advance_ex(spell, FIXED_DT_F);
 }
 pm_observe(spell, ...);                     /* 每個畫面幀只取樣一次 */
 ```
 
-`pm_advance` 只推進時鐘（有力場時順便積分），取樣發生在 `pm_observe`——所以「一幀跑三個固定步」不會付三倍的取樣成本。
+三件事值得知道：
+
+- **單幀最大步數是死亡螺旋防護**。手寫的 `while (acc >= dt)` 沒有上限：一次關卡載入的卡頓、一個中斷點，就會在單幀要求上百步，於是下一幀更晚、要求更多步。規劃器截斷在 `MAX_STEPS_PER_FRAME`，並**丟棄剩下的積壓**——模擬變慢，而不是凍結。範例取的 `8` 沿用本 repo demo 外殼跑完整個 POC 的值（`app/Main.hs` 的 `lcMaxStepsPerFrame`）。
+- **規劃器是雙精度**，推進的 `dt` 是單精度。累加器用 `float` 會對著雙精度的模擬慢慢漂，所以 `FIXED_DT` 由 `FIXED_DT_F` 加寬而來，兩邊永遠是同一個數。
+- **和 Haskell 面同一份實作**（`Magic.Step.plan`）。C 宿主與 Haskell 宿主餵同一串幀時間，會排出逐位元相同的步數序列。
+
+`pm_advance` / `pm_advance_ex` 只推進時鐘（有力場時順便積分），取樣發生在 `pm_observe`——所以「一幀跑三個固定步」不會付三倍的取樣成本。`pm_advance_ex` 與 `pm_advance` 對合法的 `dt` 執行完全相同的程式碼，只多一個錯誤碼通道。
 
 ### 2.5 六條陣列要開多大
 
@@ -120,6 +132,8 @@ pm_observe(spell, ...);                     /* 每個畫面幀只取樣一次 */
 int cap = pm_max_particles();
 float* px = malloc(cap * sizeof(float));   /* ... 六條 */
 ```
+
+可執行的完整版在 [§4.2](#42-最小完整迴圈) 與 [`examples/c/main.c`](../examples/c/main.c)——這一條規則曾經只寫在這裡、範例卻用常數配置，所以現在兩邊由同一支守門測試（`test/ExampleLoopSpec.hs`）釘在一起。
 
 Haskell 宿主無此問題（`observeSpell` 回的 buffer 自己帶長度）。
 
@@ -380,22 +394,32 @@ gcc -Iinclude your_host.c path/to/particle-magic-ffi.dll.a -o game.exe
 ```c
 #include "particle_magic.h"
 
-static float px[PM_MAX_PARTICLES], py[PM_MAX_PARTICLES], pz[PM_MAX_PARTICLES];
-static float sz[PM_MAX_PARTICLES], lf[PM_MAX_PARTICLES];
-static uint32_t col[PM_MAX_PARTICLES];
-static int      info[8 * PM_BATCH_INFO_STRIDE];
+#define FIXED_DT_F (1.0f / 60.0f)                /* pm_advance_ex 收的 */
+#define FIXED_DT   ((double)FIXED_DT_F)          /* pm_plan_steps 規劃用的 */
+#define MAX_STEPS_PER_FRAME 8                    /* 死亡螺旋防護，見 §2.4 */
+
+static float *px, *py, *pz, *sz, *lf;
+static uint32_t *col;
+static int    info[8 * PM_BATCH_INFO_STRIDE];
 
 int main(void)
 {
     char  err[256];
     const float pos[3]    = {0, 0, 0};
     const float facing[3] = {0, 0, 1};
+    int    cap;
+    double acc = 0.0;
 
     pm_init();                                   /* 冪等，啟動 GHC RTS */
 
     if (pm_abi_version() != PM_ABI_VERSION) {    /* header 與 .dll 是同一代嗎 */
         return 1;
     }
+
+    /* 六條欄的長度來自執行期查詢，不是 header 的凍結常數（見 §2.5） */
+    cap = pm_max_particles();
+    px = malloc(cap * sizeof(float));            /* ... 六條都一樣 */
+    /* ... py, pz, sz, lf, col ... */
 
     PmSpell *s = pm_cast(json_text, pos, facing, 42, err, sizeof err);
     if (!s) {                                    /* NULL = 失敗，原因在 err */
@@ -404,10 +428,17 @@ int main(void)
     }
 
     while (!pm_is_finished(s)) {
-        pm_advance(s, 1.0f / 60.0f);
+        int steps;
+
+        /* 幀時間交給規劃器，它決定這一幀要走幾個固定步（最多 8 個） */
+        pm_plan_steps(FIXED_DT, MAX_STEPS_PER_FRAME, seconds_since_last_frame,
+                      acc, &steps, &acc);
+        while (steps-- > 0) {
+            pm_advance_ex(s, FIXED_DT_F);
+        }
 
         int n = pm_observe(s, px, py, pz, sz, lf, col,
-                           PM_MAX_PARTICLES, info, 8);
+                           cap, info, 8);
         if (n < 0) { break; }                    /* PM_ERR_CAPACITY */
 
         for (int i = 0; i < n; i++) {
@@ -427,7 +458,7 @@ int main(void)
 }
 ```
 
-`examples/c/main.c` 是這段的完整可執行版（150 行，印出逐幀摘要而非畫圖）。
+`examples/c/main.c` 是這段的完整可執行版（印出逐幀摘要而非畫圖，含六條欄的配置與釋放、以及每個回傳碼的檢查）。兩邊必須同步：`test/ExampleLoopSpec.hs` 守著這一點。
 
 ### 4.3 錯誤處理
 
@@ -437,6 +468,8 @@ int main(void)
 | 想知道**為什麼**失敗 | 改用 `pm_cast_ex(..., &spell)`：回 `PM_OK` / `PM_ERR_JSON`（JSON 不合法或符文 tag 不認識）/ `PM_ERR_BUDGET`（合法，但要求的粒子數超過上限） |
 | `pm_observe` 空間不足 | `PM_ERR_CAPACITY`，**一個位元組都不寫**——不會有半更新的幀 |
 | `pm_project` / `pm_depth_order` 參數不合法 | `PM_ERR_ARGS`（`NULL` 指標、負長度、未知 plane），同樣**一個位元組都不寫** |
+| **呼叫順序錯了** | `PM_ERR_STATE`（−7）：`pm_init()` 之前就呼叫、`pm_shutdown()` 之後再初始化、重複帶設定初始化、或設定在當前平台無法生效。是**你的**呼叫順序問題，不是法術的問題（見 §4.4） |
+| **庫內部出錯** | `PM_ERR_INTERNAL`（−6）：例外防火牆攔到了庫自己的失敗（記憶體耗盡、缺陷、沒人寫到的情況）。永遠不是你這次呼叫的錯，**不必重試**，你的 process 也不受影響——但值得回報一個 bug。良好行為的呼叫永遠不會看到它 |
 | `pm_scene_cast` / `pm_scene_cast_many` 失敗 | 同樣四碼加一：`PM_ERR_JSON` / `PM_ERR_BUDGET`（單張陣自己就編不出來）/ **`PM_ERR_QUOTA`**（編得出來，但場景放不下——見 §4.6）/ `PM_ERR_ARGS`（`NULL` 場景、`NULL out_id`、負 count）。四種都寫人類可讀原因進 `err_buf`，且**場景完全未變** |
 
 錯誤訊息與 demo HUD 上顯示的是同一句（共用 `Magic.Codec.renderLoadError`），含 JSON 路徑，例如
@@ -777,9 +810,15 @@ void Update()
 {
     if (spell == IntPtr.Zero) return;
 
-    // 1. 固定時步 accumulator：模擬永遠走 FixedDt，畫面幀率隨意
-    accumulator += Time.deltaTime;
-    while (accumulator >= FixedDt) { Pm.pm_advance(spell, FixedDt); accumulator -= FixedDt; }
+    // 1. 固定時步：步數交給庫的規劃器算（雙精度累加器＋單幀上限，見 §2.4）
+    int steps;
+    double nextAcc;                                         // accumulator 欄位必須是 double
+    if (Pm.pm_plan_steps(FixedDtSeconds, MaxStepsPerFrame, Time.deltaTime,
+                         accumulator, out steps, out nextAcc) == Pm.Ok)
+    {
+        accumulator = nextAcc;                              // 被拒時兩個 out 都沒寫，累加器維持原值
+        for (int i = 0; i < steps; i++) Pm.pm_advance_ex(spell, FixedDt);
+    }
 
     // 2. 一幀取樣一次，寫進重複使用的六條欄（capacity 來自 pm_max_particles()）
     int n = Pm.pm_observe(spell, px, py, pz, sz, lf, col, capacity, info, MaxBatches);
@@ -825,7 +864,7 @@ void Update()
 2. 啟動時比對 `pm_abi_version()` 與你編譯時的 `PM_ABI_VERSION`。
 3. 六條陣列由**你**配置、由**你**持有，長度用 `pm_max_particles()` 查（不要用 `PM_MAX_PARTICLES` 常數，見 §2.5）；庫只往裡面寫。
 4. 一個 handle 一個執行緒。
-5. 固定 `dt`；一幀多步 `advance`、只 `observe` 一次。
+5. 固定 `dt`；一幀多步 `advance`、只 `observe` 一次。步數用 `pm_plan_steps` 規劃，**不要自己寫 `while`**——手寫的沒有單幀上限，一次卡頓就是死亡螺旋，累加器用 `float` 還會漂（見 §2.4）。
 6. `pm_observe` 回負數＝什麼都沒寫；不要用上一幀的殘留資料當這一幀畫。
 7. 顏色是 `0xRRGGBBAA`；位置是右手系。
 8. 每個 `pm_cast` 配一個 `pm_free`。
@@ -861,8 +900,8 @@ void Update()
 | **合成後只有一個 blend mode** | 合成法術渲染成一個 batch，混合模式取第一張陣的（ADR-0012 D5）。把火（additive）與水（alpha）疊起來，整體以第一張的模式繪製 |
 | **同 handle 不保證順序** | 同一個 handle 的併發操作保證**不丟更新**（N 次併發推進恰好 N 步），但**順序**不保證；`pm_free` 與同 handle 的其他呼叫、以及推進／觀測的配對，要宿主自己序列化（§4.4.2） |
 | **RTS 不可重啟** | `pm_shutdown()` 之後不能再 `pm_init()`；一個 process 一份 GHC RTS |
-| **DLL 約 46 MB** | `standalone` 內嵌整個 GHC RTS 的代價；換來的是宿主端零 Haskell 依賴 |
-| **只有 win64 被完整實測** | `.so` / `.dylib` 由 cabal stanza 天然涵蓋，但沒有列入驗收 |
+| **DLL 約 46 MB** | `standalone` 內嵌整個 GHC RTS 的代價；換來的是宿主端零 Haskell 依賴。（量測基準：GHC 9.14.1、Windows x86_64、`standalone` 建置的 `particle-magic-ffi.dll`，2026-08-21 實測 47,990,272 bytes ＝ 45.8 MiB） |
+| **macOS 沒有任何機器驗過** | CI 矩陣是 `windows-latest` 與 `ubuntu-latest`（`.github/workflows/ci.yml`），兩個平台**每次都跑完整的 hspec 套件**，Windows 與 Linux 因此都是實測過的。macOS 的 `.dylib` 只有 cabal 的建置設定與封裝腳本（`@rpath`、`lipo`），沒有一台機器建過或跑過——`packaging/artifacts.json` 把兩個 macOS 目標記為 `verified: false`，見 §4.9 |
 | **billboard 形狀是無參數列舉** | func-spec 0015 起有四種形狀碼（square／soft-dot／ring／spark），但形狀**永遠不帶參數**（拉伸、旋轉需另開查詢，ADR-0013）；怎麼畫每種形狀由宿主自行決定（demo 用 64×64 程序生成 alpha 貼圖，RGB 全白、顏色仍來自頂點色） |
 | **只有 Unity 被實測過** | C# 綁定在 Unity 6000.5.7f1 batchmode 實測通過（[0011 §9.3](spec/func-0011-host-integration-surface.md)，可用 `examples/unity/PmSmoke.cs` 一鍵複驗）；Godot／Unreal／其他 .NET 宿主只有合約保證，沒有實測 |
 | **空間摘要交資訊，不交判定** | func-spec 0025 給的是包絡與佔用格網（§3.1.1／§4.7），**不是**碰撞判定：「粒子撞到牆會怎樣」是遊戲層的規則。真要做碰撞回饋（粒子反彈）需要把結果送回模擬，那會是輸出第一次影響輸入，屬於另一輪。視錐剔除同理——核心沒有相機概念（ADR-0008） |

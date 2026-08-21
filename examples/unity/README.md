@@ -57,7 +57,7 @@ GHC 的 RTS **停掉之後無法在同一個 process 重啟**，而 Unity Editor
 | 事 | 做法 | 做錯的症狀 |
 |---|---|---|
 | **手性** | 右手系（+Z 朝觀者）↔ Unity 左手系：進出各翻一次 Z（`PmConvert.ToPm` / `-pz[i]`） | 不會崩潰；`vortex` 力場旋轉方向反過來 |
-| **固定時步** | accumulator，一幀可能 `pm_advance` 好幾次，`pm_observe` 只一次 | 幀率影響模擬結果，重播不一致 |
+| **固定時步** | 用 `Pm.pm_plan_steps` 規劃：`double` 累加器＋單幀步數上限（範例取 8），一幀可能 `pm_advance_ex` 好幾次，`pm_observe` 只一次 | 幀率影響模擬結果，重播不一致；自己寫 `while (accumulator >= FixedDt)` 則多一個症狀——一次讀取卡頓就要求上百步，下一幀更晚，死亡螺旋 |
 | **緩衝大小** | `Pm.pm_max_particles()`，不要用 `PM_MAX_PARTICLES` 常數 | 核心上限提升後 `pm_observe` 回 `PM_ERR_CAPACITY`，整幀不畫 |
 
 `PM_MAX_PARTICLES` 永遠是第 1 代的 4096（header 凍結）；`pm_max_particles()` 才是跟著核心走的查詢。
@@ -113,7 +113,10 @@ unity run <你的專案> --non-interactive -- \
 ```csharp
 scene = Pm.pm_scene_new(globalCap);          // 一次
 ...
-Pm.pm_scene_advance(scene, fixedDt);         // 固定時步，一幀可能多次
+int steps;                                   // 固定時步，一幀可能多次
+Pm.pm_plan_steps(fixedDtSeconds, maxStepsPerFrame, Time.deltaTime,
+                 accumulator, out steps, out accumulator);
+for (int i = 0; i < steps; i++) Pm.pm_scene_advance_ex(scene, fixedDt);
 int batches = Pm.pm_scene_observe(scene, px, py, pz, size, life, color,
                                   globalCap, batchInfo, maxBatches);
 // batchInfo 的佈局、PM_BATCH_INFO_STRIDE、手性、深度排序全部與 pm_observe 相同

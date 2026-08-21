@@ -33,8 +33,13 @@
 
 #define MAX_BATCHES 64
 #define MAX_SPELLS 16
-#define DT (1.0f / 60.0f)
 #define SEED 20260814u
+
+/* One fixed step in both precisions, and the per-frame step ceiling --
+   same discipline and same value as examples/c/main.c. */
+#define FIXED_DT_F (1.0f / 60.0f)
+#define FIXED_DT   ((double)FIXED_DT_F)
+#define MAX_STEPS_PER_FRAME 8
 
 static const float caster_pos[3]    = {1.5f, 0.25f, -2.0f};
 static const float caster_facing[3] = {0.0f, 0.0f, 1.0f};
@@ -175,10 +180,26 @@ static void report(PmScene *scene, struct columns *c, int frame)
 static int run_until(PmScene *scene, struct columns *c, int frame,
                      int target, int limit)
 {
-    int end = frame + limit;
+    int    end = frame + limit;
+    double acc = 0.0;
 
     while (frame < end && pm_scene_count(scene) > target) {
-        pm_scene_advance(scene, DT);
+        int steps = 0;
+
+        /* Same planner as the single-cast example: a real host passes the
+           measured frame time, this one synthesises exactly one fixed
+           step, so the trace keeps its one-step-per-frame rhythm. */
+        if (pm_plan_steps(FIXED_DT, MAX_STEPS_PER_FRAME, FIXED_DT, acc,
+                          &steps, &acc) != PM_OK) {
+            fprintf(stderr, "frame %d: pm_plan_steps failed\n", frame);
+            return frame;
+        }
+        while (steps-- > 0) {
+            if (pm_scene_advance_ex(scene, FIXED_DT_F) != PM_OK) {
+                fprintf(stderr, "frame %d: pm_scene_advance_ex failed\n", frame);
+                return frame;
+            }
+        }
         ++frame;
         if (frame % 60 == 0) {
             report(scene, c, frame);

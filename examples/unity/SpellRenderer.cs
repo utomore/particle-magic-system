@@ -6,8 +6,10 @@
 // What it demonstrates, in order of how easy each is to get wrong:
 //
 //   1. pm_init() exactly once, pm_shutdown() never (README §4).
-//   2. A fixed-timestep accumulator: the simulation always steps FixedDt,
-//      the frame rate does whatever it does.
+//   2. A fixed-timestep accumulator with a per-frame step ceiling, planned
+//      by the library's own pm_plan_steps rather than by hand: the
+//      simulation always steps FixedDt, the frame rate does whatever it
+//      does, and one loading hitch cannot ask for hundreds of steps.
 //   3. The handedness flip -- the library's space is right-handed, Unity's
 //      is left-handed, so Z is negated in both directions.
 //   4. Reused, pre-allocated columns sized from pm_max_particles().
@@ -39,6 +41,16 @@ public class SpellRenderer : MonoBehaviour
     const int MaxBatches = 8;
     const float FixedDt = 1f / 60f;
 
+    // The same step, widened for the planner: pm_plan_steps works in
+    // double, pm_advance_ex takes a float. Deriving one from the other is
+    // what keeps the planned time and the advanced time the same number.
+    const double FixedDtSeconds = FixedDt;
+
+    // Ceiling on simulation steps in one rendered frame -- the
+    // spiral-of-death guard. 8 is the value the repo's demo shell runs on
+    // (app/Main.hs, lcMaxStepsPerFrame).
+    const int MaxStepsPerFrame = 8;
+
     // --- Host-owned buffers, allocated once (a per-frame array is just
     // --- garbage for the collector to sweep).
     float[] px, py, pz, size, life;
@@ -53,7 +65,10 @@ public class SpellRenderer : MonoBehaviour
     Mesh mesh;
 
     IntPtr spell = IntPtr.Zero;
-    float accumulator;
+
+    // Double, because pm_plan_steps is: a float accumulator drifts against
+    // a double simulation. PmSmoke.cs reaches this field by name.
+    double accumulator;
 
     // The GHC runtime starts once per process and cannot be restarted, so
     // this runs before any scene and nothing ever stops it. See README §4.
@@ -116,21 +131,34 @@ public class SpellRenderer : MonoBehaviour
             spell = IntPtr.Zero;
         }
 
-        accumulator = 0f;
+        accumulator = 0.0;
     }
 
     void Update()
     {
         if (spell == IntPtr.Zero) return;
 
-        // Fixed timestep. Determinism -- and the force-field integrator --
-        // assume a constant dt, so several steps per rendered frame is
-        // normal and costs almost nothing: sampling happens in pm_observe.
-        accumulator += Time.deltaTime;
-        while (accumulator >= FixedDt)
+        // Fixed timestep, planned by the library instead of by hand.
+        // Determinism -- and the force-field integrator -- assume a
+        // constant dt, so several steps per rendered frame is normal and
+        // costs almost nothing: sampling happens in pm_observe. What the
+        // hand-rolled accumulator loop this replaces lacked is the
+        // ceiling: one loading hitch and it asks for hundreds of steps,
+        // which makes the next frame later still.
+        int steps;
+        double nextAccumulator;
+        if (Pm.pm_plan_steps(FixedDtSeconds, MaxStepsPerFrame, Time.deltaTime,
+                             accumulator, out steps, out nextAccumulator) == Pm.Ok)
         {
-            Pm.pm_advance(spell, FixedDt);
-            accumulator -= FixedDt;
+            accumulator = nextAccumulator;
+            for (int i = 0; i < steps; i++) Pm.pm_advance_ex(spell, FixedDt);
+        }
+        else
+        {
+            // The planner writes neither output when it rejects an
+            // argument, so the accumulator keeps last frame's value and
+            // the clock simply does not move this frame.
+            Debug.LogWarning("particle-magic: pm_plan_steps rejected this frame's timing");
         }
 
         int batches = Pm.pm_observe(spell, px, py, pz, size, life, color,

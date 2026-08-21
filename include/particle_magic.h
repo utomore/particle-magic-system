@@ -16,16 +16,30 @@
  *   pm_init();
  *   char err[256];
  *   const float pos[3] = {0, 0, 0}, facing[3] = {0, 0, 1};
+ *
+ *   int cap = pm_max_particles();
+ *   ...  allocate px, py, pz, size, life and color: cap elements each.
+ *        Ask the query, never the PM_MAX_PARTICLES macro -- see below ...
+ *
  *   PmSpell* s = pm_cast(json, pos, facing, 42, err, sizeof err);
  *   if (!s) { fprintf(stderr, "%s\n", err); return 1; }
+ *
+ *   double acc = 0.0;
  *   while (!pm_is_finished(s)) {
- *       pm_advance(s, 1.0f / 60.0f);
+ *       int steps;
+ *       pm_plan_steps(1.0 / 60.0, 8, seconds_since_last_frame,
+ *                     acc, &steps, &acc);
+ *       while (steps-- > 0) pm_advance_ex(s, 1.0f / 60.0f);
  *       int n = pm_observe(s, px, py, pz, size, life, color,
- *                          PM_MAX_PARTICLES, info, 8);
+ *                          cap, info, 8);
  *       ...  feed your vertex buffer from the six arrays ...
  *   }
  *   pm_free(s);
  *   pm_shutdown();
+ *
+ * The 8 handed to pm_plan_steps is the ceiling on steps in one frame --
+ * the spiral-of-death guard. See "Fixed timesteps" at the bottom of this
+ * header for why the loop is not a hand-rolled while (acc >= dt).
  *
  * Scenes:
  *
@@ -37,8 +51,12 @@
  *   int id;
  *   if (pm_scene_cast(sc, json, pos, facing, 42, err, sizeof err, &id) != PM_OK)
  *       fprintf(stderr, "%s\n", err);
+ *   double acc = 0.0;
  *   for (;;) {
- *       pm_scene_advance(sc, 1.0f / 60.0f);
+ *       int steps;
+ *       pm_plan_steps(1.0 / 60.0, 8, seconds_since_last_frame,
+ *                     acc, &steps, &acc);
+ *       while (steps-- > 0) pm_scene_advance_ex(sc, 1.0f / 60.0f);
  *       int n = pm_scene_observe(sc, px, py, pz, size, life, color,
  *                                MY_CAPACITY, info, MY_MAX_BATCHES);
  *       ...  same six columns, same batch_info layout as pm_observe ...
@@ -191,16 +209,20 @@ extern "C" {
 /* Generation of this ABI. Compare against pm_abi_version() at startup. */
 #define PM_ABI_VERSION 1
 
-/* Upper bound on the particles a single spell can produce, i.e. the
-   capacity each of the six columns needs. Mirrors the core's budgetCap. */
+/* This ABI's first-generation capacity FLOOR, frozen at 4096 forever. It
+   is not the cap and it does not mirror anything: the core's own cap has
+   been higher than this since func-spec 0012, and being frozen this macro
+   could not follow. What it is good for is exactly one thing -- code
+   compiled against any version of this header allocates a buffer the
+   library will never overrun. */
 #define PM_MAX_PARTICLES 4096
 
-/* ... and, being frozen, it stays 4096 forever: it is the first
-   generation's value, kept so code compiled against any version of this
-   header keeps allocating a buffer the library will never overrun. A
-   later core may raise the real cap; pm_max_particles() is the query that
-   follows it, so new hosts should size their columns from that instead
-   (func-spec 0011 section 2). */
+/* ... so size your columns from pm_max_particles() instead. The query
+   follows the core, the macro cannot (func-spec 0011 section 2). A host
+   that sizes from the macro is not broken -- it keeps working, and keeps
+   getting PM_ERR_CAPACITY out of pm_observe for every spell that wants
+   more than PM_MAX_PARTICLES particles, which the all-or-nothing rule
+   turns into a frame that is not drawn at all. */
 
 /* Error codes. Functions returning a count return a non-negative number on
    success and one of these on failure; functions returning a handle return
@@ -385,9 +407,12 @@ void pm_shutdown(void);
 int pm_abi_version(void);
 
 /* The particle cap this build actually enforces -- the capacity each of
-   pm_observe's six columns needs. Today it answers PM_MAX_PARTICLES; it
-   is the value to allocate from, because unlike the macro it tracks the
-   core (see PM_MAX_PARTICLES above). */
+   pm_observe's six columns needs.
+
+   It already answers more than PM_MAX_PARTICLES, and will answer more
+   again the next time the core's cap rises -- which is precisely why it,
+   and not the frozen macro, is the value to allocate from (see
+   PM_MAX_PARTICLES above). */
 int pm_max_particles(void);
 
 /* Compile a magic circle from UTF-8 JSON and cast it at (caster_pos,
@@ -401,8 +426,8 @@ PmSpell* pm_cast(const char* circle_json,
 
 /* pm_cast with the failure classified: returns PM_OK, PM_ERR_JSON (the
    JSON did not decode) or PM_ERR_BUDGET (it did, but asks for more
-   particles than PM_MAX_PARTICLES). *out_spell is the new handle, or NULL
-   on any failure. */
+   particles than pm_max_particles() reports -- the enforced cap, not the
+   frozen macro). *out_spell is the new handle, or NULL on any failure. */
 int pm_cast_ex(const char* circle_json,
                const float caster_pos[3], const float caster_facing[3],
                uint64_t seed, char* err_buf, int err_len,
@@ -535,7 +560,15 @@ typedef struct PmScene PmScene;
 /* global_cap = total particles the scene may hold across every live
    spell. Size YOUR six columns from this, not from pm_max_particles()
    (which bounds one spell). A negative cap is legal and means a scene
-   that admits nothing. Never returns NULL in this generation. */
+   that admits nothing.
+
+   Returns NULL only when no scene could be made at all: before pm_init
+   or after pm_shutdown (see the state machine above), if the firewall
+   catches an internal failure, or if the handle registry has no slot
+   left -- which takes 2^30 live handles and so is not reachable by any
+   real host. Not a cap refusal and not an argument error; those are
+   reported by pm_scene_cast, not here. Check it anyway: it costs one
+   branch and it is the only wrong answer this call can give. */
 PmScene* pm_scene_new(int global_cap);
 
 /* Release a scene and everything still live inside it. Freeing NULL is a

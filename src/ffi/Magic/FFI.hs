@@ -605,10 +605,15 @@ foreign export ccall "pm_hs_max_particles" pm_max_particles :: IO CInt
 -- | The particle cap this build of the core actually enforces — the
 -- capacity each of @pm_observe@'s six columns needs.
 --
--- Today it answers @PM_MAX_PARTICLES@ (4096). The header constant is
--- frozen at that value; this query is not, so a host that allocates from
--- it survives a future cap rise without recompiling against a new header
--- (func-spec 0011 §2, roadmap §4.2).
+-- It already answers more than @PM_MAX_PARTICLES@: the header constant is
+-- frozen at the first generation's 4096 and this query is not, which is
+-- the entire point of splitting them (func-spec 0011 §2, roadmap §4.2). A
+-- host that allocates from the query survives a cap rise without
+-- recompiling against a new header — and one already happened.
+--
+-- The number itself lives in 'pmMaxParticles' above, together with the
+-- account of that rise. Deliberately not repeated here: a third copy of a
+-- value is a third thing to go stale.
 pm_max_particles :: IO CInt
 pm_max_particles = firewall pmErrInternal (pure pmMaxParticles)
 
@@ -1021,7 +1026,10 @@ foreign export ccall "pm_hs_scene_new" pm_scene_new :: CInt -> IO (StablePtr Sce
 -- A negative cap is /not/ rejected: 'newScene' defines it as a scene that
 -- admits nothing, and turning a defined behaviour into an argument error
 -- here would be a semantic the Haskell path does not have (func-spec 0018
--- §2). Never returns the 'nullScene' handle in this generation.
+-- §2). Answers the 'nullScene' handle only when no scene could be made at
+-- all: the firewall catching an internal failure, or the registry running
+-- out of slots (2³⁰ live handles — unreachable in practice, but not a
+-- promise this function is in a position to make).
 pm_scene_new :: CInt -> IO (StablePtr SceneCell)
 pm_scene_new cap =
   firewall nullScene (newSceneHandle (newScene (SceneConfig (fromIntegral cap))))

@@ -247,6 +247,38 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
     queried `shouldBe` pmMaxParticles
     fromIntegral queried `shouldBe` budgetCap
 
+  -- host-runtime F008 T1. The pair above says the two constants may
+  -- differ; this says the header stops claiming they do not. "Today it
+  -- answers PM_MAX_PARTICLES" was written before func-spec 0012 raised
+  -- the core cap and was false from that day on, which is the failure
+  -- mode a frozen header invites: the value stayed honest, the prose
+  -- around it did not. The sentinel keeps the replacement from being
+  -- tidied away, and the last assertion pins the prose to the fact rather
+  -- than to a number that would expire again.
+  it "says what pm_max_particles actually answers" $ do
+    header <- readUtf8 headerFile
+    (["Today it answers"], isInfixOf' "Today it answers" header)
+      `shouldBe` (["Today it answers"], False)
+    header `shouldSatisfy` isInfixOf' "more than PM_MAX_PARTICLES"
+    queried <- pm_max_particles
+    defined <- headerDefines
+    case lookup "PM_MAX_PARTICLES" defined of
+      Nothing -> expectationFailure "no PM_MAX_PARTICLES define in the header"
+      Just frozen -> fromIntegral queried `shouldSatisfy` (> frozen)
+
+  -- host-runtime F008 T2. The same sentence had a second copy in the
+  -- Haskell shell. Fixing one and not the other is how a third copy gets
+  -- written next time, so both are pinned here, and the haddock is
+  -- required to carry the sentinel in the block that belongs to the
+  -- query rather than anywhere in the file.
+  it "keeps the Haskell-side haddock in step with the query" $ do
+    source <- readUtf8 ffiSource
+    (["Today it answers"], isInfixOf' "Today it answers" source)
+      `shouldBe` (["Today it answers"], False)
+    let haddock = haddockAbove "pm_max_particles :: IO CInt" source
+    haddock `shouldSatisfy` not . null
+    haddock `shouldSatisfy` isInfixOf' "more than @PM_MAX_PARTICLES@"
+
   it "agrees with Haskell on the ABI version" $ do
     header <- headerDefines
     lookup "PM_ABI_VERSION" header `shouldBe` Just (fromIntegral pmAbiVersion)
@@ -681,6 +713,16 @@ splitOn :: Char -> String -> [String]
 splitOn c s = case break (== c) s of
   (chunk, []) -> [chunk]
   (chunk, _ : rest) -> chunk : splitOn c rest
+
+-- | The run of haddock comment lines immediately above a declaration
+-- (host-runtime F008 T2). Scoped rather than whole-file so that a
+-- sentinel present somewhere else entirely cannot stand in for the one
+-- that belongs to this function.
+haddockAbove :: String -> String -> String
+haddockAbove decl contents =
+  case break (decl `isPrefixOf`) (lines contents) of
+    (_, []) -> ""
+    (before, _) -> unlines (reverse (takeWhile (("--" `isPrefixOf`) . trim) (reverse before)))
 
 isInfixOf' :: String -> String -> Bool
 isInfixOf' needle haystack = any (needle `isPrefixOf`) (tails' haystack)

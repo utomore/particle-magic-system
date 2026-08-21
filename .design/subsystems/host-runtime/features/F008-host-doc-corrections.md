@@ -3,9 +3,9 @@ id: F008
 type: feature
 title: host-doc-corrections
 description: 修正粒子上限過期敘述並讓非 Haskell 範例改用時步規劃器
-status: open
+status: done
 created: 2026-08-20
-updated: 2026-08-20
+updated: 2026-08-21
 depends-on: [F001, F005, F007]
 related-adr: [ADR-022]
 related-feature: []
@@ -242,18 +242,19 @@ related-feature: []
 
 ## TodoList
 
-- [ ] T1: 標頭的粒子上限敘述改為實況——`PM_MAX_PARTICLES` define 的上下兩段註解（`:100-101`、`:104-109`）、`pm_max_particles()` 的註解（`:172-176`）、`pm_cast_ex` 的預算說明（`:187-190`），並植入哨兵詞　`dep: -`
-- [ ] T2: `src/ffi/Magic/FFI.hs:343-349` 的 haddock 改為實況，指回同檔 `pmMaxParticles` 的既有說明，不製造第三份敘述　`dep: T1`
-- [ ] T3: 標頭檔頭兩段 usage sketch（`:14-28` 單張陣、`:36-46` 場景）改用 `pm_max_particles()` 配容量 ＋ `pm_plan_steps` ＋ `pm_advance_ex`／`pm_scene_advance_ex`，單幀最大步數 8　`dep: F005, T1`
-- [ ] T4: `examples/c/main.c` 以 `pm_max_particles()` 動態配置六條欄（形狀照 `scene.c:81-97`），`pm_observe` 的容量改用同一個值，繪製與輸出格式不動　`dep: T3`
-- [ ] T5: `examples/c/main.c` 主迴圈改用 `pm_plan_steps` ＋ `pm_advance_ex`（`FIXED_DT_F` / `FIXED_DT` 雙常數紀律），120 幀輸出逐位元不變　`dep: F005, T4`
-- [ ] T6: `examples/c/scene.c` 的 `run_until`（`:175-188`）改用 `pm_plan_steps` ＋ `pm_scene_advance_ex`；容量路徑（`probe_budget`）不動　`dep: F005, T5`
-- [ ] T7: `examples/unity/SpellRenderer.cs`：`accumulator` 改 `double`（名稱不變）、新增 `MaxStepsPerFrame = 8`、`Update` 改用 `pm_plan_steps` ＋ `pm_advance_ex` 並檢查回傳碼；容量路徑與繪製不動　`dep: F005`
-- [ ] T8: `examples/unity/PmSmoke.cs` 的 `Pump`（`:318-322`）反射賦值改為 `double`，註解同步；`examples/unity/README.md:60,116` 的時步敘述跟著改　`dep: T7`
-- [ ] T9: `docs/integration.md` 三段迴圈食譜改用規劃器——§2.4（`:94-107`）、§4.2（`:380-430`，容量同時改用查詢值）、§5.4（`:625-646`）、§6 第 5 條（`:678`）；§2.5 補一句指回 §4.2　`dep: T5, T7`
-- [ ] T10: `docs/integration.md` §4.3 錯誤表（`:434-440`）新增 `PM_ERR_INTERNAL`（−6）與 `PM_ERR_STATE`（−7）兩列，語意逐字取自 C1.9　`dep: F001`
-- [ ] T11: `docs/integration.md` §8（`:706-721`）誠實清單更新：`:715` 平台實測改為 CI 矩陣的實況（Windows ＋ Linux，macOS 未驗）、`:714` DLL 大小補量測基準（值不變）　`dep: -`
-- [ ] T12: 新增 `test/ExampleLoopSpec.hs` 並登記進 `particle-magic.cabal` 的 `test-suite spec` `other-modules`，`cabal test` 全綠（含既有 `ExampleHostSpec`、`FFIContractSpec`、`BindingContractSpec` 無回歸）　`dep: T1..T11`
+- [x] T1: 標頭的粒子上限敘述改為實況——`PM_MAX_PARTICLES` define 的上下兩段註解、`pm_max_particles()` 的註解、`pm_cast_ex` 的預算說明，並植入哨兵詞　`dep: -`
+- [x] T2: `src/ffi/Magic/FFI.hs` 的 `pm_max_particles` haddock 改為實況，指回同檔 `pmMaxParticles` 的既有說明，不製造第三份敘述　`dep: T1`
+- [x] T3: 標頭檔頭兩段 usage sketch（單張陣、場景）改用 `pm_max_particles()` 配容量 ＋ `pm_plan_steps` ＋ `pm_advance_ex`／`pm_scene_advance_ex`，單幀最大步數 8　`dep: F005, T1`
+- [x] T4: `examples/c/main.c` 以 `pm_max_particles()` 動態配置六條欄（形狀照 `scene.c` 的 `alloc_columns`／`free_columns`），`pm_observe` 的容量改用同一個值，繪製與輸出格式不動　`dep: T3`
+- [x] T5: `examples/c/main.c` 主迴圈改用 `pm_plan_steps` ＋ `pm_advance_ex`（`FIXED_DT_F` / `FIXED_DT` 雙常數紀律），120 幀輸出逐位元不變　`dep: F005, T4`
+- [x] T6: `examples/c/scene.c` 的 `run_until` 改用 `pm_plan_steps` ＋ `pm_scene_advance_ex`；容量路徑（`probe_budget`）不動　`dep: F005, T5`
+- [x] T7: `examples/unity/SpellRenderer.cs`：`accumulator` 改 `double`（名稱不變）、新增 `MaxStepsPerFrame = 8`、`Update` 改用 `pm_plan_steps` ＋ `pm_advance_ex` 並檢查回傳碼；容量路徑與繪製不動　`dep: F005`
+- [x] T8: `examples/unity/PmSmoke.cs` 的 `Pump` 反射賦值改為 `double`，註解同步；`examples/unity/README.md` 的兩處時步敘述跟著改　`dep: T7`
+- [x] T9: `docs/integration.md` 三段迴圈食譜改用規劃器——§2.4、§4.2（容量同時改用查詢值）、§5.4、§6 第 5 條；§2.5 補一句指回 §4.2　`dep: T5, T7`
+- [x] T10: `docs/integration.md` §4.3 錯誤表新增 `PM_ERR_INTERNAL`（−6）與 `PM_ERR_STATE`（−7）兩列，語意逐字取自 C1.9　`dep: F001`
+- [x] T11: `docs/integration.md` §8 誠實清單更新：平台實測改為 CI 矩陣的實況（Windows ＋ Linux，macOS 未驗）、DLL 大小補量測基準（值不變）　`dep: -`
+- [x] T12: 新增 `test/ExampleLoopSpec.hs` 並登記進 `particle-magic.cabal` 的 `test-suite spec` `other-modules`，`cabal test` 全綠（含既有 `ExampleHostSpec`、`FFIContractSpec`、`BindingContractSpec` 無回歸）　`dep: T1..T11`
+- [x] T13（編排者加派，F002 的 A8）: 標頭 `pm_scene_new` 的「Never returns NULL in this generation」改寫為準確敘述；`FFI.hs` 同一句一併改　`dep: -`
 
 ## 1-to-1 測試對照表
 
@@ -284,4 +285,44 @@ related-feature: []
 
 ## 實作備註
 
-（待實作階段填寫）
+實作於 2026-08-21，前七項（F001–F007）全部已合併之後。設計時記的行號因此全部位移，動手前逐項以錨定字串重新查證；下列是與設計文字不同的地方。
+
+**與文檔的偏差（都在實作自主權內，公開契約零偏離）**
+
+1. **T11 的「§8 平台那一列」改寫成一整列新標題**。原文只說改敘述；實作把該列的標題也從「只有 win64 被完整實測」改為「macOS 沒有任何機器驗過」——舊標題本身就是那句過期敘述，留著標題只改內文會讓表格自相矛盾。F004 動過的「同 handle 不保證順序」那一列一個字都沒碰。
+2. **§8 的粒子上限那一列確認不動**（設計 §八已裁定）。委派 prompt 指的「另一列(粒子上限)」與本文件 §八的逐列清點不一致：那一列今天明寫 16384、明寫「請用執行期查詢」，與改寫後的標頭說同一件事，改它只會讓正確的敘述變動。實際過期的是**平台**與**DLL 量測基準**兩列，T11 改的就是那兩列。
+3. **不加 `docs/integration.md` 檔頭的版本沿革行**（A7 原訂由後落地者補 1.4）。委派 prompt 的硬性約束「版本號一律由使用者指定，不要自行在文件檔頭掛版本」優先於 A7。F003／F004／F006 也都沒有加，檔頭仍停在 1.3——**要不要補、補成哪個號碼，留給使用者裁決**。
+4. **T1／T2 的哨兵詞在兩個檔案有標記差異**。標頭是 `more than PM_MAX_PARTICLES`，`FFI.hs` 是 `more than @PM_MAX_PARTICLES@`（haddock 的行內程式碼標記）。兩條斷言各自釘各自的形式。第一版把哨兵斷在跨行的位置而測試轉紅——散文重新斷行後才綠，這正是「哨兵必須是一個連續字串」的實證。
+5. **`main.c` 的註解不得提及 `PM_MAX_PARTICLES`**。T4 的守門是「整份不含該巨集名」，第一版在解釋性註解裡寫了它而轉紅；改成「the header's frozen macro」。守門因此比設計預期更嚴一點，但方向與驗收標準第 2 條一致。
+6. **T9 的守門範圍從「章節」收窄為「章節裡的 fenced code block」**。見下方「假綠驗證」。
+7. **`SpellRenderer.Update` 在規劃器回非 `PM_OK` 時不 early-return**：記一次 `Debug.LogWarning`、不推進、不寫回累加器，但仍照常 `pm_observe` 與繪製。early-return 會讓該幀整幀不畫，那是設計沒有要求的行為改變。
+8. **T13（A8）順手把 `FFI.hs` 的同一句也改了**。標頭與 `FFI.hs:1023` 是同一句已知為假的散文的兩份拷貝；只改一份等於留一份。查證結果：`pm_scene_new` 實際會在三種情況回 NULL——`pm_runtime_ready()` 為假（`cbits/pm_gate.c:383`）、防火牆攔到例外（`FFI.hs` 的 `firewall nullScene`）、註冊表 slot 耗盡（`Registry.hs:204-205`、`registryInsert` 回 NULL word，2³⁰ 個活控制代碼）。新敘述逐條列出這三種並明說實務不可達。
+
+**假綠驗證（逐條變異注入）**
+
+前車之鑑是 F005／F004 各出過一次假綠（取基準時粒子數為零、斷言恆真）。本功能的守門全是文字比對，風險更高，所以對**每一條**新斷言各做一次變異注入：把它宣稱守護的那件事單獨改壞，只跑該條測試，要求它變紅。第一輪 15 條變異中 **T9 是假綠**——「§2.4 含 `pm_plan_steps`」在把程式碼區塊改回手寫累加器之後仍然通過，因為區塊**外面**的散文也提到了規劃器。修法是把斷言收窄到 fenced code block（宿主複製的是程式碼，不是散文），並加上「程式碼區塊內不得出現 `accumulator +=`」。第二輪 18 條變異全部轉紅：
+
+| 變異 | 改壞的東西 | 結果 |
+|---|---|---|
+| T3-sketch | 標頭 sketch 的 `cap, info, 8` 改回 `PM_MAX_PARTICLES, info, 8` | 紅 |
+| T4-macro / T4-leak | `main.c` 容量改回巨集／`free_columns` 少一條 `free` | 紅 |
+| T5-loop | `main.c` 改回 `pm_advance(spell, DT)` | 紅 |
+| T6-scene | `scene.c` 改回 `pm_scene_advance(scene, DT)` | 紅 |
+| T7-ceiling / T7-float | `MaxStepsPerFrame` 改 4／`accumulator` 改回 `float` | 紅 |
+| T8-suffix | `PmSmoke` 的 `SetValue` 改回 `0.1f` | 紅 |
+| T9-c24 / T9-c42 / T9-cs / T9-list | §2.4、§4.2、§5.4 三個程式碼區塊各自改回手寫累加器；§6 第 5 條刪掉規劃器 | 紅 |
+| T10-code | §4.3 的 `PM_ERR_INTERNAL` 改名 | 紅 |
+| T11-os | §8 平台那一列改回「只有 win64」 | 紅 |
+| T12-cabal | cabal 的 `other-modules` 改掉模組名 | 紅 |
+| T1-header / T2-haddock | 標頭與 `FFI.hs` 各自改回 “Today it answers” | 紅 |
+| guide-cap | §2.5 的 `16384` 拿掉 | 紅 |
+
+**其他查證**
+
+- 兩支 C 範例以 `clang -Wall -Wextra -fsyntax-only`（GHC 9.14.1 隨附的 mingw 工具鏈）通過，維持 C89 的區塊頂端宣告風格——`packaging/smoke-msvc.ps1` 會拿 `main.c` 去餵 `cl.exe`。
+- `ExampleHostSpec` S4 是**行程內**重算，不編譯 `main.c`，所以 `main.c` 的改寫本身不會動 golden；「每幀恰一步」另由 `ExampleLoopSpec` 直接執行 `Magic.Step.plan`（把 `1/60 :: Float` 加寬成 `Double` 後餵給規劃器，斷言 `StepPlan 1 0`）證明，這是全 spec 唯一一條真的跑程式碼的斷言。
+- A4 的量測本輪重做：`particle-magic-ffi.dll` ＝ **47,990,272 bytes ＝ 45.8 MiB**（設計時為 47,896,064）。「約 46 MB」仍然正確，依裁定不改數字，只把量測基準寫進該列。
+- A3 維持文字守門：16 份出貨陣最大仍是 1742 粒，本輪不新增 >4096 粒的陣。
+- `FFIContractSpec` 的 35 個宣告、`PM_ABI_VERSION = 1`、`.def` 的 35 個符號、`BindingContractSpec` 的雙向對帳全部未動且仍綠。
+
+**測試**：`cabal test` → **1864 examples, 0 failures**（基線 1851 ＋ 新增 13：`ExampleLoopSpec` 11 條、`FFIContractSpec` 擴充 2 條）。既有測試零回歸。
