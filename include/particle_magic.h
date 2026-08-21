@@ -57,7 +57,9 @@
  *     and no way to move an existing PmSpell* into a scene. Single cast:
  *     pm_cast + pm_free. Several: pm_scene_cast + pm_scene_dismiss.
  *
- * Threading is per handle here too: one scene is owned by one thread.
+ * Threading works the same for a scene as for a spell -- see the Threading
+ * section below; concurrent casts into one scene count the quota once per
+ * spell, not once per thread.
  *
  * Coordinate system: the abstract space is right-handed, OpenGL style --
  * X to the right, Y up, +Z towards the viewer. Lengths are whatever world
@@ -69,8 +71,59 @@
  * `vortex` force field spins the wrong way, because a cross product is
  * genuinely handed.
  *
- * Threading: one handle is owned by one thread. The library itself takes
- * no locks (ADR-0011 D4); different handles on different threads are fine.
+ * Threading (host-runtime F004, ADR-022 D4):
+ *
+ * Three promises first, because they are what you would otherwise have to
+ * discover by experiment.
+ *
+ *   * This library never starts an OS thread of its own. Every line of it
+ *     runs on a thread you called it from.
+ *   * The per-frame path -- advancing, observing, any query -- takes no
+ *     lock at all. Nothing you call once a frame can block on anything
+ *     else this library is doing.
+ *   * An internal failure poisons ONE handle. That handle answers
+ *     PM_ERR_INTERNAL from then on (or its sentinel, for the entry points
+ *     with no error channel); every other handle, and your process, carry
+ *     on untouched.
+ *
+ * Safe to run concurrently -- the library's problem, not yours:
+ *
+ *   * Any operations on different handles, with no restriction.
+ *   * Several advances of the SAME handle: no lost updates. N concurrent
+ *     pm_advance calls move the clock exactly N steps, never N-1.
+ *   * Several pm_scene_cast / pm_scene_cast_many / pm_scene_dismiss calls
+ *     on the same scene: no lost updates either, and the quota is counted
+ *     once per spell. Cast twice into a scene with room for one and you
+ *     get one PM_OK and one PM_ERR_QUOTA, never two of either.
+ *   * An advance concurrent with an observe or a query: the reader sees a
+ *     complete snapshot, from before the step or from after it, never half
+ *     of each.
+ *   * pm_abi_version, pm_max_particles, pm_project, pm_depth_order and
+ *     pm_plan_steps: stateless, any thread, any time.
+ *
+ * Yours to serialise -- the library cannot see enough to do it for you:
+ *
+ *   * pm_free / pm_scene_free against any other call on the SAME handle.
+ *     The handle dies the moment it is freed, so a concurrent call lands
+ *     on either side of that: it either runs or answers PM_ERR_ARGS.
+ *     Neither crashes, but which one you get is not defined.
+ *   * pm_init / pm_init_ex / pm_shutdown against any call at all. Those
+ *     are the runtime's lifecycle, not a handle's.
+ *   * Two observes writing into the SAME host arrays. That memory is
+ *     yours; the library cannot know two calls share it.
+ *   * Handing a handle to another thread. Publish it through a queue, a
+ *     lock or a job dependency, as with any C API -- the handle is only
+ *     visible to a thread that got it through a real synchronisation.
+ *   * An advance and an observe you need PAIRED ("this frame's picture
+ *     must be this frame's step"). Both are safe; their order is not
+ *     promised.
+ *
+ * What is NOT promised, precisely: the ORDER of concurrent operations on
+ * one handle. Only that none of them is dropped. For advancing that is a
+ * distinction without a difference -- each step adds the same dt to
+ * whatever came before, so the end state is the same however they
+ * interleave -- but the ids handed out by concurrent casts arrive in no
+ * particular order.
  *
  * Handle safety: every handle is generation-tagged. It is not a pointer
  * you may dereference -- it is an opaque token whose value encodes which

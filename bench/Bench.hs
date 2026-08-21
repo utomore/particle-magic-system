@@ -23,6 +23,7 @@ module Main (main) where
 import Control.Exception (evaluate)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (sortOn)
 import GHC.Clock (getMonotonicTime)
 import GHC.Conc (getNumCapabilities)
@@ -97,7 +98,7 @@ import Magic.Particle.Buffer (pbPosX, pbPosY, pbPosZ)
 import Magic.Projection (ViewPlane (..), depthOrder, orthographic)
 import Magic.Rune (FaceShape (..), RadiationMode (..), Trajectory (..))
 import Magic.Types (Seconds (..))
-import Test.Tasty.Bench (bench, bgroup, defaultMain, nf, whnf)
+import Test.Tasty.Bench (bench, bgroup, defaultMain, nf, nfIO, whnf)
 
 import App.Render.Quads (QuadBatch (..), buildQuads)
 
@@ -210,6 +211,46 @@ sampleCost spell t =
 -- including (for a spell with fields) every integration step.
 advanceCost :: Int -> ActiveSpell -> Double
 advanceCost n s0 = let Time age = spellAge (ageBy n s0) in age
+
+-- | host-runtime F004's wall-clock control. What @pm_advance@ does to a
+-- handle's cell, both ways: the pre-F004 read-modify-write and the atomic
+-- step that replaced it, over the same real spell and the same @dt@.
+--
+-- The shapes are spelled out here rather than imported because @Magic.FFI@
+-- lives in the foreign library, which this stanza does not (and should
+-- not) depend on. @stepCell@ is a one-line shell over 'atomicModifyIORef''
+-- precisely so that this control measures the same instruction sequence
+-- the shipped shell executes.
+--
+-- The number to read off is the DIFFERENCE per call. The absolute figures
+-- include one 'advanceSpell', which for a field-carrying spell dwarfs both
+-- primitives; the fieldless row is where the synchronisation shows up.
+cellStepLegacy :: IORef ActiveSpell -> Int -> IO Double
+cellStepLegacy ref n = go n
+  where
+    fi = FrameInput (DeltaTime (1 / 60))
+    go k
+      | k <= 0 = do
+          s <- readIORef ref
+          let Time age = spellAge s
+          pure age
+      | otherwise = do
+          s <- readIORef ref
+          writeIORef ref $! advanceSpell fi s
+          go (k - 1)
+
+cellStepAtomic :: IORef ActiveSpell -> Int -> IO Double
+cellStepAtomic ref n = go n
+  where
+    fi = FrameInput (DeltaTime (1 / 60))
+    go k
+      | k <= 0 = do
+          s <- readIORef ref
+          let Time age = spellAge s
+          pure age
+      | otherwise = do
+          atomicModifyIORef' ref (\s -> (advanceSpell fi s, ()))
+          go (k - 1)
 
 depthCost :: ViewPlane -> ParticleBuffer -> Int
 depthCost plane pb = U.sum (depthOrder plane pb)
@@ -487,6 +528,20 @@ main = do
         "advanceSpell (60 fixed steps)"
         [ bench "ring-fire (no fields)" (nf (advanceCost 60) fieldlessSpell)
         , bench "gravity-well (2 fields)" (nf (advanceCost 60) fieldSpell)
+        ]
+    , -- host-runtime F004 T7: the cost of "no lost updates", measured
+      -- rather than argued. 1000 steps per iteration so the per-call
+      -- difference is readable above the timer's own noise.
+      bgroup
+        "handle cell advance (1000 steps)"
+        [ bench "ring-fire (no fields) / pre-F004 read-modify-write" $
+            nfIO (newIORef fieldlessSpell >>= \r -> cellStepLegacy r 1000)
+        , bench "ring-fire (no fields) / F004 atomic step" $
+            nfIO (newIORef fieldlessSpell >>= \r -> cellStepAtomic r 1000)
+        , bench "gravity-well (2 fields) / pre-F004 read-modify-write" $
+            nfIO (newIORef fieldSpell >>= \r -> cellStepLegacy r 1000)
+        , bench "gravity-well (2 fields) / F004 atomic step" $
+            nfIO (newIORef fieldSpell >>= \r -> cellStepAtomic r 1000)
         ]
     , bgroup
         "depthOrder"

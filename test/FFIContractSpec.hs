@@ -64,7 +64,7 @@ import Magic.Interface (BillboardShape (..), BlendMode (..))
 import System.IO (IOMode (ReadMode), hClose, hGetContents, hSetEncoding, openFile, utf8)
 import Test.Hspec
 
-ffiSource, headerFile, cbitsFile, gateFile, cabalFile, defFile, integrationDoc :: FilePath
+ffiSource, headerFile, cbitsFile, gateFile, cabalFile, defFile, integrationDoc, bindingFile :: FilePath
 ffiSource = "src/ffi/Magic/FFI.hs"
 headerFile = "include/particle_magic.h"
 cbitsFile = "cbits/pm_init.c"
@@ -72,6 +72,11 @@ gateFile = "cbits/pm_gate.c"
 cabalFile = "particle-magic.cabal"
 defFile = "particle-magic-ffi.def"
 integrationDoc = "docs/integration.md"
+
+-- | The C# reference binding. "BindingContractSpec" owns the entry-point
+-- and constant reconciliation; host-runtime F004 only needs to know that
+-- its prose did not stay behind when the header's did not.
+bindingFile = "bindings/csharp/ParticleMagic.cs"
 
 -- | The three entry points the header declares that have no Haskell
 -- counterpart at all: starting and stopping the runtime cannot itself be a
@@ -292,6 +297,46 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
     length declared `shouldBe` 35
     defined <- headerDefines
     lookup "PM_ABI_VERSION" defined `shouldBe` Just 1
+
+  -- host-runtime F004 T5. The thread model used to be one sentence --
+  -- "one handle is owned by one thread" -- which told a host neither what
+  -- was allowed nor what a violation would cost. C2.2 replaced it with two
+  -- lists, and this is what keeps them there: sentinel phrases from each
+  -- half, the retired sentence asserted ABSENT, and the frozen surface
+  -- asserted unmoved, because saying all this was meant to cost the C
+  -- contract exactly nothing.
+  it "documents which operations may run concurrently" $ do
+    header <- readUtf8 headerFile
+    mapM_
+      (\needle -> (needle, isInfixOf' needle header) `shouldBe` (needle, True))
+      [ -- The promise itself, and the two lists' anchors.
+        "no lost updates"
+      , "never starts an OS thread"
+      , "different handles"
+      , "pm_free"
+      , "pm_shutdown"
+      ]
+    -- The sentence C2.2 retired must not come back.
+    (["one handle is owned by one thread"], isInfixOf' "one handle is owned by one thread" header)
+      `shouldBe` (["one handle is owned by one thread"], False)
+    -- Prose only: no symbol joined, no constant moved.
+    declared <- headerFunctions
+    length declared `shouldBe` 35
+    defined <- headerDefines
+    lookup "PM_ABI_VERSION" defined `shouldBe` Just 1
+
+  -- host-runtime F004 T6. The header is normative but a C# host reads the
+  -- binding and a Unity host reads the guide, so all three have to say the
+  -- same thing. Sentinels on the way in, the retired claims asserted out.
+  it "keeps the integration guide and the C# binding in step with the header's thread model" $ do
+    doc <- readUtf8 integrationDoc
+    (["不丟更新"], isInfixOf' "不丟更新" doc) `shouldBe` (["不丟更新"], True)
+    mapM_
+      (\needle -> (needle, isInfixOf' needle doc) `shouldBe` (needle, False))
+      ["一個 handle 屬於一個執行緒", "庫內無鎖"]
+    binding <- readUtf8 bindingFile
+    ("one scene per thread", isInfixOf' "one scene per thread" binding)
+      `shouldBe` ("one scene per thread", False)
 
   -- Func-spec 0018 S1. The value is pinned here as a literal rather than
   -- only mirrored, because a host's `switch` on the return code compiles

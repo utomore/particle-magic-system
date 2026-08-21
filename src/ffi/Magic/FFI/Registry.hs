@@ -34,11 +34,29 @@
 --     size to the peak number of live handles rather than to the number of
 --     casts a session ever made.
 --
--- __Concurrency__: 'registryResolve' is read-only — one 'readIORef' and
--- one vector read, no lock, which is what keeps the per-frame path free of
--- synchronisation. Every mutation is confined to 'registryInsert' and
--- 'registryRelease', so the thread-model feature can put a table-level
--- lock around those two without touching a single call site.
+-- __Concurrency__ (host-runtime F004, C2.2): 'registryResolve' is
+-- read-only — one 'readIORef' and one vector read, no lock, which is what
+-- keeps the per-frame path free of synchronisation. Every mutation is
+-- confined to 'registryInsert' and 'registryRelease', and those two hold
+-- the table's own 'MVar' for their duration, so two threads casting or
+-- freeing at once cannot lose a slot, hand the same slot to both, or leave
+-- @tLive@ short. No call site changed to get that: the lock lives inside
+-- the 'Registry' value, one per table, so the spell table and the scene
+-- table never wait on each other.
+--
+-- The lock is deliberately /not/ the top-level 'IORef' turned into an
+-- 'MVar'. Resolution runs on every @pm_advance@ and every @pm_observe@;
+-- making it take and put an 'MVar' would put a lock on the per-frame path
+-- and let a cast block a frame, which is exactly what C2.2 forbids.
+--
+-- Two consequences a host has to know, both documented in the header's
+-- thread-model section. A resolver reading the table without a lock has no
+-- memory barrier, so handing a fresh handle to another thread needs the
+-- host's own synchronisation (a queue, a lock, a job dependency — any real
+-- primitive carries the barrier). And a resolver that read the table just
+-- before an 'ensureRoom' sees the pre-growth vector: correct for every
+-- slot that already existed, and the only slots it cannot see are ones
+-- whose handles it could not legally have yet.
 module Magic.FFI.Registry
   ( -- * The tables
     Registry
@@ -60,6 +78,7 @@ module Magic.FFI.Registry
   , handleGenerationLimit
   ) where
 
+import Control.Concurrent.MVar (MVar, newMVar, withMVar)
 import Data.Bits (finiteBitSize, shiftL, shiftR, (.&.), (.|.))
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import qualified Data.Vector.Mutable as MV
@@ -163,12 +182,17 @@ data Table a = Table
   , tLive :: !Int
   }
 
-data Registry a = Registry !HandleKind !(IORef (Table a))
+-- | A table, plus the write lock that serialises the two functions which
+-- change it. The 'IORef' stays an 'IORef' so that reads need no lock at
+-- all; the 'MVar' holds nothing but the right to write.
+data Registry a = Registry !HandleKind !(MVar ()) !(IORef (Table a))
 
 newRegistry :: HandleKind -> IO (Registry a)
 newRegistry kind = do
   slots <- MV.new 0
-  Registry kind <$> newIORef Table {tSlots = slots, tCount = 0, tFree = [], tLive = 0}
+  lock <- newMVar ()
+  Registry kind lock
+    <$> newIORef Table {tSlots = slots, tCount = 0, tFree = [], tLive = 0}
 
 -- | Register a cell and return its handle word as an opaque pointer.
 --
@@ -182,7 +206,7 @@ newRegistry kind = do
 -- the address space. Aliasing a live handle would be far worse than
 -- reporting failure.
 registryInsert :: Registry a -> a -> IO (Ptr b)
-registryInsert (Registry kind ref) x = do
+registryInsert (Registry kind lock ref) x = withMVar lock $ \_ -> do
   t0 <- readIORef ref
   placed <- case tFree t0 of
     (i : rest) -> do
@@ -209,9 +233,9 @@ registryInsert (Registry kind ref) x = do
 -- free harmless: the second call finds the slot vacant at a newer
 -- generation.
 registryRelease :: Registry a -> Ptr b -> IO ()
-registryRelease (Registry kind ref) p =
+registryRelease (Registry kind lock ref) p =
   case decodeHandle kind (handleWord p) of
-    DecSlot i gen -> do
+    DecSlot i gen -> withMVar lock $ \_ -> do
       t <- readIORef ref
       if i >= tCount t
         then pure ()
@@ -238,7 +262,7 @@ data Resolved a = ResNull | ResInvalid | ResLive a
 -- | Steps 1–6 of the resolution ladder. Read-only and lock-free: at most
 -- one 'readIORef' and one vector read, whatever the table's size.
 registryResolve :: Registry a -> Ptr b -> IO (Resolved a)
-registryResolve (Registry kind ref) p =
+registryResolve (Registry kind _ ref) p =
   case decodeHandle kind (handleWord p) of
     DecNull -> pure ResNull
     DecForged -> pure ResInvalid
@@ -254,7 +278,7 @@ registryResolve (Registry kind ref) p =
 -- | @(live handles, slots ever allocated)@. Not part of any C contract;
 -- the specs use it to show that slots are recycled.
 registryStats :: Registry a -> IO (Int, Int)
-registryStats (Registry _ ref) = do
+registryStats (Registry _ _ ref) = do
   t <- readIORef ref
   pure (tLive t, tCount t)
 

@@ -113,6 +113,8 @@ parent: host-runtime
 | F007 A7（實作期新增） | 工作樹是 CRLF，而 CRLF 的 shell script 在 POSIX shell 是語法錯誤 | 新增**最小範圍**的 `.gitattributes`：只有 `*.sh text eol=lf` 一行，刻意不寫 `* text=auto`，其餘檔案的換行行為完全不變 | 接受：範圍克制且理由寫在檔案註解裡 |
 | F007 A8（實作期新增） | 無 patchelf 時如何縮短 RUNPATH | `pack.sh` 就地縮短字串（chrpath 的作法）；同時處理 `DT_RPATH` 但**只實測過 RUNPATH** | 接受 |
 | F007 A9（實作期新增） | 閉包檔數隨相依解析而變（本輪 68 個） | 清單以 glob `*.so*` 表達 | 接受；若 release-artifacts 要逐檔比對，屆時請 `pack.sh` 另吐實際清單 |
+| F004（實作期發現） | **同一個假綠陷阱又出現一次** | 首版寫成「每執行緒 1000 步」，法術年齡只有 0.12 s、ring-fire 此時沒有粒子，逐位元比對會退化成兩個空 buffer；改為固定總步數 8192（恰好 1.0 s、2049 粒），且每次逐位元比對前先斷言存活粒子 > 0 | 接受：F005 踩過同一個坑，經由 prompt 傳遞後被 F004 自己攔下——這條經驗要留在紀錄裡 |
+| F004（量測更新） | C2.2 括號內的成本數字 | 實作後重測為單執行緒 +6.0 ns、8 執行緒 +8.8 ns（設計期估 +6.5 ns），仍在「個位數奈秒」內 | 接受；**C2.2 與 ADR-022 D4 的數字已更新為兩個實測值** |
 | F005 A1 | **C2.6 與凍結標頭衝突**:推進符號是 `void` | 新增 `pm_advance_ex`/`pm_scene_advance_ex`;符號 31→34 | 接受:新增 C1.12,只加推進的兩個 `_ex`,符號 31→34 |
 | F005 A2 | 規劃器對非有限/負輸入 | NULL 出參、非有限、`max_steps<0`、`acc_in<0` → `PM_ERR_ARGS`;其餘逐位元鏡射 | — |
 | F005 A3 | `_ex` 對 NULL 控制代碼 | 回 `PM_ERR_ARGS` | — |
@@ -153,7 +155,8 @@ parent: host-runtime
 | 2 | F001 exception-firewall | 8/8 | 1804 examples, 0 failures(＋7) | 已重跑,相同結果 | `04ec6ad` |
 | 3 | F003 rts-config-init | 12/12 | Windows 1816 examples 0 failures(＋12);Linux(WSL)1816 examples 0 failures 9 pending | 已直接執行 spec 二進位重跑,38.9 秒,相同結果 | `3dba002` |
 | 4 | F005 step-planner-c-abi | 8/8 | 1831 examples, 0 failures(＋15) | 已重跑,39.9 秒,相同結果 | `80fe58d` |
-| 5 | F007 packaging-content | 8/8 | 1838 examples, 0 failures(＋7) | 已重跑,32.9 秒,相同結果;`dist/` 確認已忽略 | 見下方 commit |
+| 5 | F007 packaging-content | 8/8 | 1838 examples, 0 failures(＋7) | 已重跑,32.9 秒,相同結果;`dist/` 確認已忽略 | `eed790e` |
+| 6 | F004 thread-model | 8/8 | 1846 examples, 0 failures(＋8) | 已重跑,41.2 秒,相同結果 | 見下方 commit |
 
 **F007 的執行中斷**:第一次委派在寫守門測試時被 watchdog 判定停滯(600 秒無串流進展)而中止,**不是判斷或阻塞問題**。編排者盤點後發現:建置已綠、`.gitattributes` 與 `packaging/` 四支腳本都在,唯一的紅是 `test/PackagingSpec.hs` 兩處 lambda 少了反斜線(其餘 13 個正常,孤立手滑),另有 46 MB 的 `dist/` 產物未被忽略、文檔 8 個 Todo 未勾。以 SendMessage 續跑同一個 agent 收尾,未重寫。
 

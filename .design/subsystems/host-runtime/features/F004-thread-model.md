@@ -3,9 +3,9 @@ id: F004
 type: feature
 title: thread-model
 description: 同控制代碼原子推進不丟更新，執行緒模型明文化
-status: open
+status: done
 created: 2026-08-20
-updated: 2026-08-20
+updated: 2026-08-21
 depends-on: [F002]
 related-adr: [ADR-022]
 related-feature: []
@@ -287,14 +287,14 @@ F002 的註冊表是「頂層 `IORef Registry` ＋ 可變 slot 陣列」，配�
 
 ## TodoList
 
-- [ ] T1: `stepCell`／`stepCellWith` 兩個原子 RMW 組合子，自 `Magic.FFI` 的 Internals 區匯出；新測試模組 `FFIThreadSpec` 登記進 `particle-magic.cabal` 的 `test-suite spec` `other-modules`  `dep: -`
-- [ ] T2: 法術推進改走原子步：`pm_advance`（:436-439）；簽名、`withCell` 的 fallback 與檢查順序不動  `dep: T1`
-- [ ] T3: 場景三個站點改走原子步：`pm_scene_advance`（:864-867）、`pm_scene_dismiss`（:854-857）、`admitInto`（:836-843，純決策進原子步、`poke outId`／`castFail` 留在外面，拒收分支寫回原值）；`withCast` 的 NULL 檢查與 `poke outId (-1)` 順序不動  `dep: T1`
-- [ ] T4: 註冊表寫入鎖：F002 的四個生命週期函數（`newSpellHandle`／`freeSpellHandle`／`newSceneHandle`／`freeSceneHandle`）各自包進頂層 `MVar ()`（法術與場景各一把）；`withCell`／`withScene` 的解析路徑維持無鎖  `dep: F002`
-- [ ] T5: 標頭執行緒模型改寫：`include/particle_magic.h:60` 與 :72-73 兩段散文換成「可併發／必須自行序列化」兩張清單加三句承諾，埋入哨兵詞 `no lost updates` 與 `never starts an OS thread`；零符號／常數／結構變動，`PM_ABI_VERSION` 與 `.def` 不動  `dep: T2, T3, T4`
-- [ ] T6: `docs/integration.md` §4.4（:448）與 §8 限制表（:712）改寫，新增執行緒模型小節（含哨兵詞「不丟更新」）；`bindings/csharp/ParticleMagic.cs:142` 的「one scene per thread」註解更正  `dep: T5`
-- [ ] T7: `bench/Bench.hs` 新增「handle cell 推進」對照組：同一個真實 `ActiveSpell`，舊形狀（`readIORef` ＋ `writeIORef $!`）與 `stepCell` 形狀各一條 bench，無力場與有力場各一組；前後數字記進「實作備註」。不動 `particle-magic.cabal`  `dep: T2`
-- [ ] T8: 原子步的失敗語意寫進 `Magic.FFI` 的 haddock 與標頭：內部失敗只毒化該控制代碼，其他控制代碼與宿主進程不受影響（與 F001 合併後表現為之後每次呼叫皆回 `PM_ERR_INTERNAL`）  `dep: T2`
+- [x] T1: `stepCell`／`stepCellWith` 兩個原子 RMW 組合子，自 `Magic.FFI` 的 Internals 區匯出；新測試模組 `FFIThreadSpec` 登記進 `particle-magic.cabal` 的 `test-suite spec` `other-modules`  `dep: -`
+- [x] T2: 法術推進改走原子步：`pm_advance`（:436-439）；簽名、`withCell` 的 fallback 與檢查順序不動  `dep: T1`
+- [x] T3: 場景三個站點改走原子步：`pm_scene_advance`（:864-867）、`pm_scene_dismiss`（:854-857）、`admitInto`（:836-843，純決策進原子步、`poke outId`／`castFail` 留在外面，拒收分支寫回原值）；`withCast` 的 NULL 檢查與 `poke outId (-1)` 順序不動  `dep: T1`
+- [x] T4: 註冊表寫入鎖：F002 的四個生命週期函數（`newSpellHandle`／`freeSpellHandle`／`newSceneHandle`／`freeSceneHandle`）各自包進頂層 `MVar ()`（法術與場景各一把）；`withCell`／`withScene` 的解析路徑維持無鎖  `dep: F002`
+- [x] T5: 標頭執行緒模型改寫：`include/particle_magic.h:60` 與 :72-73 兩段散文換成「可併發／必須自行序列化」兩張清單加三句承諾，埋入哨兵詞 `no lost updates` 與 `never starts an OS thread`；零符號／常數／結構變動，`PM_ABI_VERSION` 與 `.def` 不動  `dep: T2, T3, T4`
+- [x] T6: `docs/integration.md` §4.4（:448）與 §8 限制表（:712）改寫，新增執行緒模型小節（含哨兵詞「不丟更新」）；`bindings/csharp/ParticleMagic.cs:142` 的「one scene per thread」註解更正  `dep: T5`
+- [x] T7: `bench/Bench.hs` 新增「handle cell 推進」對照組：同一個真實 `ActiveSpell`，舊形狀（`readIORef` ＋ `writeIORef $!`）與 `stepCell` 形狀各一條 bench，無力場與有力場各一組；前後數字記進「實作備註」。不動 `particle-magic.cabal`  `dep: T2`
+- [x] T8: 原子步的失敗語意寫進 `Magic.FFI` 的 haddock 與標頭：內部失敗只毒化該控制代碼，其他控制代碼與宿主進程不受影響（與 F001 合併後表現為之後每次呼叫皆回 `PM_ERR_INTERNAL`）  `dep: T2`
 
 ## 1-to-1 測試對照表
 
@@ -320,4 +320,43 @@ F002 的註冊表是「頂層 `IORef Registry` ＋ 可變 slot 陣列」，配�
 
 ## 實作備註
 
-（撰寫時留空）
+實作於 2026-08-21，在 F002／F001／F003／F005／F007 已合併的基底上。測試 **1838 → 1846**（新增 8 條：`FFIThreadSpec` 6 條、`FFIContractSpec` 2 條），全綠、零 pending、既有測試一條未改語意。
+
+### 設計期四項查證的實作後複驗
+
+- **E1 不丟更新**（T1，`FFIThreadSpec`）：8 個 `forkOn` 執行緒各 20000 次遞增。`stepCell` 版得到 **160000／160000**；同一骨架的非原子孿生體（`readIORef` → `yield` → `writeIORef`）在本機**確實丟了更新**，所以牙齒檢查沒有轉 `pendingWith`——綠色是驗過的，不是空轉的。
+- **E2 WHNF 強制深度**：照設計成立，由 T8 的毒化行為反證（`atomicModifyIORef'` 先安裝後強制，所以會拋的新值留在 cell 裡；若沒有強制，例外根本不會在 `stepCell` 內出現）。
+- **E3 純函數只被求值一次**：由 T3(c) 在競爭下反證——配額只容納 M 個法術時，T 個執行緒併發施法**恰好** M 個 `PM_OK`、其餘 `PM_ERR_QUOTA`。若落敗的 CAS 會重複求值並提交，通過數會超過 M。
+- **E4 成本**：見下。
+
+### E4 重新實測（`cabal bench --pattern "handle cell advance"`，GHC 9.14.1、`-O2 -threaded`、Windows x86_64、1000 步／iteration）
+
+| 形狀 | `-N1` | `-N8` |
+|---|---|---|
+| ring-fire（無力場）／舊的讀改寫 | 2.62 ns／步 | 4.60 ns／步 |
+| ring-fire（無力場）／`stepCell` | 8.61 ns／步 | 13.4 ns／步 |
+| gravity-well（2 力場）／舊的讀改寫 | 14.9 µs／步 | 20.6 µs／步 |
+| gravity-well（2 力場）／`stepCell` | 14.6 µs／步 | 17.7 µs／步 |
+
+- 無力場的差額 **+5.99 ns（`-N1`）／+8.8 ns（`-N8`）**，與設計期估的 +6.5 ns 一致，且都在 A1(b) 的 **≤ 20 ns** 門檻內。
+- 有力場的兩列差額**落在雜訊裡**（原子版名目上還快一點）：固定成本在真實工作量旁邊看不見。
+- **配置量**（T7，`getAllocationCounter`）：`pm_advance` 每次呼叫 **248 B**，且在「存活 1 個控制代碼」與「存活 1025 個控制代碼」下**完全相同**（248 = 248）——解析仍是一次查表，不隨表大小變。斷言上限 512 B，兩種規模差額斷言 ≤ 8 B。
+- **A1(a)**：`sample`／`advanceSpell` 兩個既有 bgroup 的數字不必重測即成立——`git diff --stat` 顯示 `src/core/` 與 `src/boundary/` **一個檔案都沒改**。
+
+### 與設計文件的差異（都在實作自主權內，記錄備查）
+
+1. **B 類站點是六個，不是四個**。F005 合併後多了 `pm_advance_ex`（`src/ffi/Magic/FFI.hs:695`）與 `pm_scene_advance_ex`（:1170），兩者同樣是推進、同樣要不丟更新，一併改走 `stepCell`。設計預留的「單一掛點」正好就是為此。
+2. **註冊表寫入鎖放在 `Magic.FFI.Registry` 內，不是 `Magic.FFI` 的四個生命週期函數外**（依閘門裁決）。`MVar ()` 成為 `Registry` 值的一個欄位（`Registry !HandleKind !(MVar ()) !(IORef (Table a))`），由 `newRegistry` 建立，`registryInsert`／`registryRelease` 各自整段包在 `withMVar` 內。效果與 A3 完全相同——法術與場景各一把鎖、解析路徑一個字不改——但保證覆蓋所有變動（包含未來新增的呼叫端），而不只覆蓋今天那四個包裝函數。22 個呼叫端一行未動。
+3. **`Magic.FFI` 的散文不得再出現 `writeIORef` 字面**。T2 的原始碼稽核是逐字比對，而註解裡談「舊形狀」時自然會寫到這個字。四處註解改寫為 “write-back”／“strict write-back”，語意不變、稽核得以是逐字的。
+4. **T8 的毒化用兩段驗證**：(a) 對一個純 `IORef Int` 直接 `stepCell (\_ -> error …)`，證明組合子本身的失敗語意（拋出，且之後每次讀都再拋）；(b) 用 `newSpellHandle (error …)` 造一個控制代碼，`pm_advance_ex` 的原子步在它身上失敗，之後**持續**回 `PM_ERR_INTERNAL`、`pm_age` 持續回 `-6.0`，而鄰居控制代碼的九欄仍逐位元等於參考。兩段合起來就是設計要的「只毒化該一個控制代碼」。
+5. **併發步數改為固定總量而非固定每執行緒量**（防偽陰性）。首版寫成「每執行緒 1000 步」，在 T4／T8 的單控制代碼路徑上只有 0.12 s 的法術年齡，ring-fire 此時**還沒有粒子**，逐位元比對會退化成兩個空 buffer 相等——正是 F005 踩過的那個坑。改為 `raceSteps = 8192` 總步數（`raceDt = 1/8192 s`，即恰好 1.0 s 法術年齡，此時 ring-fire 有 2049 粒），競爭時再除以執行緒數；**每一次逐位元比對前都先斷言 `liveParticles > 0`**。
+6. **壁鐘對照組的兩個形狀在 `bench/Bench.hs` 內就地寫出**，不 import `Magic.FFI`——bench stanza 只相依 `magic-core`／`magic-boundary`，構不到 foreign-library，而 `stepCell` 本來就是 `atomicModifyIORef'` 的一行薄殼，所以量到的是同一串指令。`particle-magic.cabal` 的 bench stanza 一個字沒改（只在 `test-suite spec` 的 `other-modules` 加了 `FFIThreadSpec`）。
+
+### 硬性約束的收尾對帳
+
+| 約束 | 結果 |
+|---|---|
+| `build-depends` 白名單 base／magic-boundary／bytestring／vector | 未動；`stm`／`atomic-primops` 未引入（`MVar`、`atomicModifyIORef'` 都在 `base`）。`FFIContractSpec` 的白名單斷言照舊綠 |
+| C 面零新增符號／常數／結構 | `headerFunctions` 仍是 35、`headerDefines` 不變、`PM_ABI_VERSION` 仍是 1、`particle-magic-ffi.def` 未動 |
+| 三層包裝的守門測試 | `FFIFirewallSpec` 的 32 個 `foreign export` 全在防火牆內、`FFIContractSpec` 的 `foreignExportSymbols ≡ pm_hs_ ＋ (headerFunctions \ 三個 lifecycle)` 皆綠——本功能只改本體，未動任何 `foreign export` 行 |
+| 標頭只改執行緒散文＋埋哨兵 | `no lost updates`、`never starts an OS thread` 已在；`one handle is owned by one thread` 已移除（T5 逐字斷言三者） |

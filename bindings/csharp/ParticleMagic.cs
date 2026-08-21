@@ -178,8 +178,11 @@ namespace ParticleMagic
         // --- Scenes: several casts alive at once (func-spec 0018) ---
         //
         // A PmScene* is an IntPtr like a PmSpell*, and the rules are the
-        // same: one scene per thread, free it exactly once. Two things
-        // differ, and both bite silently if you get them wrong:
+        // same: free it exactly once, and see the header's Threading
+        // section for what may run concurrently (concurrent casts into one
+        // scene are safe and count the quota once per spell; freeing a
+        // handle while another thread uses it is yours to serialise). Two
+        // things differ, and both bite silently if you get them wrong:
         //
         //   * size the six columns from the globalCap you passed to
         //     pm_scene_new, NOT from pm_max_particles(). The query bounds

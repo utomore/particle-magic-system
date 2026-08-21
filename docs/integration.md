@@ -447,7 +447,7 @@ int main(void)
 - `pm_init()` 冪等，可以被多個子系統各叫一次。想指定 RTS 設定就改用 `pm_init_ex()`（見 §4.4.1）；兩者擇一，只需要成功一次。
 - **初始化之前呼叫任何符號都不會殺掉你的 process**。未初始化（以及 `pm_shutdown()` 之後）每個符號都回哨兵值：回計數／錯誤碼的回 `PM_ERR_STATE`（−7），`pm_cast`／`pm_scene_new` 回 `NULL`（前者另把原因寫進 `err_buf`），`pm_age` 回 `-7.0`，`pm_occupancy_mask` 回 `0`，五個 `void` 的安靜返回。
 - 唯一的例外是 **`pm_abi_version()`**：它由 C 層直接回答，**任何狀態下都安全**，所以 startup 的世代比對可以擺在 `pm_init*()` 之前。
-- **一個 handle 屬於一個執行緒**（ADR-0011 D4）。庫內部**沒有鎖**。不同 handle 在不同執行緒是安全的；同一個 handle 跨執行緒不是。初始化與關閉本身是原子的：兩個執行緒同時 `pm_init_ex()` 只有一個生效，另一個回 `PM_ERR_STATE`，不會崩潰。
+- **執行緒模型見 §4.4.2**（ADR-022 D4 修訂 ADR-0011 D4）。摘要：不同 handle 隨便併發；同一個 handle 的多次推進或多次施法**不丟更新**；順序不保證；`pm_free` 與同 handle 的其他呼叫要你自己排。初始化與關閉本身是原子的：兩個執行緒同時 `pm_init_ex()` 只有一個生效，另一個回 `PM_ERR_STATE`，不會崩潰。
 - `pm_free(NULL)` 是 no-op。**重複 free、free 過再用、亂造一個 handle 都不再是 UB**：handle 帶世代標籤,庫認得出來並回 `PM_ERR_ARGS`,不會讀已釋放的記憶體、也不會終止你的 process(ADR-022 D3 修訂 ADR-0011 D4)。七個沒有錯誤碼通道的凍結符號改以中性值兌現同一條保證——`pm_advance`／`pm_free`／`pm_scene_free`／`pm_scene_dismiss`／`pm_scene_advance` 無操作,`pm_age` 回 `0.0`,`pm_occupancy_mask` 回 `0`。唯一抓不到的是「偽造的值恰好等於一個現存的合法 handle」,那是任何 handle 方案的共同上限。
 - handle **不是可以解參考的指標**,是一個不透明的識別字(值恆為奇數,永遠不會是對齊的堆積位址)。只把它原樣傳回庫裡。
 - **`pm_shutdown()` 是單向門**：之後這個 process 不能再使用本庫——`pm_init_ex()` 回 `PM_ERR_STATE`、`pm_init()` 是無操作、其餘符號一律回哨兵。它**不再殺掉你的 process**：以前 `pm_shutdown()` 之後再 `pm_init()`，GHC 的 RTS 會印一行 `reinitializing the RTS after shutdown is not currently supported` 然後直接讓宿主死掉。現在那個拒絕是一個錯誤碼。長駐型宿主（尤其 Unity Editor）**乾脆永遠不要呼叫它**。
@@ -516,6 +516,40 @@ if (rc == PM_ERR_ARGS) { /* 設定超出範圍，什麼都沒啟動 */ }
 輸出與 capability 數無關、逐位元相同（ADR-0017），所以這純粹是成本取捨，不是正確性問題。
 
 **RTS 統計**。統計旗標**無法在初始化之後打開**，所以想要進程層級的 GC 次數與暫停時間，就必須在 `pm_init_ex()` 的 `stats` 欄表態。沒表態時 `getRTSStatsEnabled()` 為假，那些數字會被回報為「**不可用**」而不是零——RTS 自己在統計關閉時回的暫停時間就是 `0`，跟「這一段真的沒有 GC 暫停」長得一模一樣，只有旗標本身是誠實的判準。
+
+### 4.4.2 執行緒模型（host-runtime F004 明文化）
+
+以前這裡只寫「handle 歸單一執行緒所有」一句。那句話對你沒有用：它沒說不同 handle 行不行，也沒說違反了會發生什麼。現在的合約是兩張清單。
+
+先三句承諾：
+
+- 庫**永遠不會自己開 OS 執行緒**。每一行都跑在你呼叫進來的那條執行緒上。
+- **每幀路徑不取任何鎖**（推進、觀測、任何查詢）。你一幀呼叫一次的東西不會被庫內部的任何事情擋住。
+- 內部失敗**只毒化那一個 handle**：它從此每次呼叫都回 `PM_ERR_INTERNAL`（沒有錯誤碼通道的符號回自己的哨兵值），其他 handle 與你的 process 完全不受影響。
+
+**可以直接併發（庫負責）**
+
+| 操作 | 保證 |
+|---|---|
+| 不同 handle 的任何操作 | 無限制 |
+| 同一個 handle 的多次 `pm_advance` | **不丟更新**——N 次併發推進恰好推進 N 步，不會是 N−1 |
+| 同一個場景的多次 `pm_scene_cast`／`pm_scene_cast_many`／`pm_scene_dismiss` | **不丟更新**，且配額**一個法術只算一次**。往只剩一個名額的場景併發施法兩次，結果一定是一個 `PM_OK` 加一個 `PM_ERR_QUOTA` |
+| 推進與觀測／查詢併發 | 讀到的一定是推進**前**或推進**後**的完整快照，不會半新半舊 |
+| `pm_abi_version`／`pm_max_particles`／`pm_project`／`pm_depth_order`／`pm_plan_steps` | 無狀態，任何執行緒任何時候 |
+
+**必須由你自己序列化（庫看不到）**
+
+| 操作 | 為什麼 |
+|---|---|
+| `pm_free`／`pm_scene_free` 與**同一個** handle 的任何其他呼叫 | 釋放的瞬間 handle 就失效；併發者會落在其中一側——要嘛正常執行，要嘛回 `PM_ERR_ARGS`。兩側都不崩潰，但拿到哪一個不保證 |
+| `pm_init`／`pm_init_ex`／`pm_shutdown` 與任何呼叫 | 那是執行期的生命週期，不是某個 handle 的 |
+| 兩次寫進**同一組**宿主陣列的觀測 | 那是你的記憶體，庫不知道兩次呼叫共用它 |
+| 把 handle 交給另一條執行緒 | 要透過佇列、鎖或 job 相依邊發布——跟任何 C API 一樣。真正的同步原語才帶記憶體屏障 |
+| 需要**成對**的推進與觀測（「這一幀的畫面要對應這一幀的推進」） | 兩個呼叫各自安全，但相對順序不保證 |
+
+**不保證的到底是什麼**：同一個 handle 上併發操作的**順序**，僅此而已，沒有任何一個會被丟掉。對推進來說這個區別沒有可觀測後果——每一步都是「在前一個值上加同一個 `dt`」，最終狀態與交錯順序無關；對施法來說，併發拿到的 `SpellId` 誰先誰後不保證。
+
+成本：原子讀改寫的固定成本是個位數奈秒（實測每次推進 +6.5 ns，約 60 fps 幀預算的 4×10⁻⁵ %）。這是**不付鎖的成本**，不是不付成本。
 
 ### 4.5 2D 宿主：投影與深度排序（0011 新增）
 
@@ -825,7 +859,7 @@ void Update()
 | **不進場景的合成只在 Haskell 面** | 場景層已於 func-spec 0018 上 C ABI（§4.6，ADR-0012 D8 的延後已解除）。仍只在 Haskell 面的是 `castSpells`——把幾張陣合成一個**獨立** `ActiveSpell`。C 宿主要合成,開一個 `global_cap` 夠大的場景用 `pm_scene_cast_many` 即可,差別只在多了一個場景 handle |
 | **場景不報批次歸屬** | `pm_scene_observe`（與 `observeScene`）都不告訴你某個 batch 屬於哪一張陣;要按法術分別上色／分別剔除的宿主目前得自己開多個場景。做法已知且為純加法，記在 func-spec 0018 §8-1 |
 | **合成後只有一個 blend mode** | 合成法術渲染成一個 batch，混合模式取第一張陣的（ADR-0012 D5）。把火（additive）與水（alpha）疊起來，整體以第一張的模式繪製 |
-| **單執行緒 handle** | 庫內無鎖 |
+| **同 handle 不保證順序** | 同一個 handle 的併發操作保證**不丟更新**（N 次併發推進恰好 N 步），但**順序**不保證；`pm_free` 與同 handle 的其他呼叫、以及推進／觀測的配對，要宿主自己序列化（§4.4.2） |
 | **RTS 不可重啟** | `pm_shutdown()` 之後不能再 `pm_init()`；一個 process 一份 GHC RTS |
 | **DLL 約 46 MB** | `standalone` 內嵌整個 GHC RTS 的代價；換來的是宿主端零 Haskell 依賴 |
 | **只有 win64 被完整實測** | `.so` / `.dylib` 由 cabal stanza 天然涵蓋，但沒有列入驗收 |

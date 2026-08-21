@@ -21,8 +21,10 @@
 --     reads-computes-writes back. The handle is no longer a live
 --     'StablePtr': it is a word encoding kind, slot and generation, which
 --     "Magic.FFI.Registry" resolves — so a freed, double-freed or forged
---     handle is an error code rather than undefined behaviour. One handle
---     is owned by one thread; there is no internal lock in v1.
+--     handle is an error code rather than undefined behaviour. The
+--     read-compute-write is a single atomic step ('stepCell'), so
+--     concurrent advances of one handle lose no update (host-runtime F004,
+--     C2.2); the per-frame path still takes no lock.
 --   * __copy-out, never borrow__ (ADR-0011 D3). 'Data.Vector.Unboxed' has
 --     no pointer interface, so @pm_observe@ pokes element by element into
 --     host-owned arrays.
@@ -106,6 +108,11 @@ module Magic.FFI
   , isNullScene
   , writeErr
 
+    -- * The atomic step (host-runtime F004; not part of the C contract,
+    -- exposed so the specs can race it directly)
+  , stepCell
+  , stepCellWith
+
     -- * The exception firewall (host-runtime F001; not part of the C
     -- contract, exposed so the specs can hand it an action that throws)
   , firewall
@@ -124,7 +131,7 @@ module Magic.FFI
 import Control.Exception (SomeException, displayException, evaluate, try)
 import Control.Monad (foldM, when)
 import qualified Data.ByteString as BS
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import qualified Data.Vector.Unboxed as U
 import Data.Word (Word32, Word64, Word8)
 import Foreign.C.String (CString)
@@ -431,6 +438,59 @@ withScene h onNull onInvalid k =
     ResInvalid -> pure onInvalid
     ResLive (SceneCell ref) -> k ref
 
+-- The atomic step (host-runtime F004, ADR-022 D4) ----------------------------
+--
+-- Every entry point that moves a handle's state forward used to do it as
+-- read, compute, write back — three steps a second thread can
+-- interleave with, so two concurrent advances landed one step instead of
+-- two. The lost update is silent: no error code, no crash, just a spell
+-- whose clock is behind. C2.2 promises the opposite, so all six
+-- read-modify-write sites go through one combinator, and a source audit in
+-- @test\/FFIThreadSpec.hs@ asserts by name that the non-atomic write-back
+-- has left this module for good, so it cannot creep back in.
+--
+-- Why 'atomicModifyIORef'' and not a lock: the shell's dependency
+-- whitelist is @base@ \/ @magic-boundary@ \/ @bytestring@ \/ @vector@, so
+-- @stm@ and @atomic-primops@ are out; and of what is left, a lock is the
+-- wrong instrument anyway. Measured at GHC 9.14.1, @-O2 -threaded@: the
+-- old shape 2.84 ns per call, 'atomicModifyIORef'' 9.31 ns at @-N1@ and
+-- 11.15 ns at @-N8@, @modifyMVar_@ 9.87 ns and 17.37 ns. Six nanoseconds
+-- once a frame is 4e-5 % of a 60 fps budget; blocking is not.
+--
+-- __Failure poisons the cell__ (F004 §6, assumption A2). 'atomicModifyIORef''
+-- installs the new value and /then/ forces it, so a step that throws
+-- leaves a throwing thunk behind and that handle answers
+-- 'pmErrInternal' from then on — forever, and only that handle. The old
+-- strict write-back forced first and so kept the previous value. The
+-- difference is accepted deliberately: the pure transitions here are total
+-- (ADR-0007), the blast radius is one handle out of the whole process
+-- (P-1), and avoiding it costs either a second forcing pass or a
+-- hand-rolled CAS loop over a raw primop.
+
+-- | Read, compute and write a cell back as one atomic step, answering
+-- something about the transition.
+--
+-- The new value is forced to WHNF before the call returns, which is
+-- exactly the depth the strict write-back forced to — 'ActiveSpell' and
+-- 'Magic.Scene.Scene' have strict fields throughout, so WHNF already
+-- pins the clock and the field state and no thunk accumulates over a
+-- session's worth of frames.
+--
+-- Under contention the transition function is applied more than once but
+-- only /forced/ once: the losing attempt's thunk is dropped unevaluated
+-- when the compare-and-swap fails. That is what lets 'admitInto' put a
+-- whole @castManyInto@ — circle compilation included — inside the step
+-- without paying for it twice.
+stepCellWith :: IORef a -> (a -> (a, b)) -> IO b
+stepCellWith = atomicModifyIORef'
+{-# INLINE stepCellWith #-}
+
+-- | 'stepCellWith' for the transitions with nothing to report: the four
+-- advances and the dismissal.
+stepCell :: IORef a -> (a -> a) -> IO ()
+stepCell ref f = stepCellWith ref (\x -> (f x, ()))
+{-# INLINE stepCell #-}
+
 -- The exception firewall (host-runtime F001, ADR-022 D2) ---------------------
 --
 -- A Haskell exception crossing a @foreign export@ boundary is not an error
@@ -676,9 +736,8 @@ pm_advance h dt =
   firewall () $
     if not (legalDt dt)
       then pure ()
-      else withCell h () () $ \ref -> do
-        spell <- readIORef ref
-        writeIORef ref $! advanceSpell (FrameInput (DeltaTime (cfloatToDouble dt))) spell
+      else withCell h () () $ \ref ->
+        stepCell ref (advanceSpell (FrameInput (DeltaTime (cfloatToDouble dt))))
 
 foreign export ccall "pm_hs_advance_ex" pm_advance_ex
   :: StablePtr SpellCell -> CFloat -> IO CInt
@@ -698,8 +757,7 @@ pm_advance_ex h dt =
     if not (legalDt dt)
       then pure pmErrArgs
       else withCell h pmErrArgs pmErrArgs $ \ref -> do
-        spell <- readIORef ref
-        writeIORef ref $! advanceSpell (FrameInput (DeltaTime (cfloatToDouble dt))) spell
+        stepCell ref (advanceSpell (FrameInput (DeltaTime (cfloatToDouble dt))))
         pure pmOk
 
 foreign export ccall "pm_hs_is_finished" pm_is_finished :: StablePtr SpellCell -> IO CInt
@@ -1113,6 +1171,18 @@ withCast h posPtr facingPtr sd errBuf errLen outId k
           k ref CastContext {casterPos = pos, casterFacing = facing, seed = Seed sd}
 
 -- | Commit an admission decision to the cell, or report the refusal.
+--
+-- The decision is taken /inside/ the atomic step (host-runtime F004), so
+-- two threads casting into the same scene at the same time each see the
+-- other's admission: the quota is counted once per spell rather than once
+-- per thread, and two casts that only fit one get one 'pmOk' and one
+-- 'pmErrQuota'. A refusal writes the scene back unchanged — same value,
+-- so semantically the no-op it always was, but kept as one exchange so
+-- there is no window between deciding and committing.
+--
+-- Everything with an effect stays outside the step: 'poke' and the error
+-- buffer would otherwise be run twice by a losing compare-and-swap
+-- attempt.
 admitInto
   :: IORef Scene
   -> Ptr CInt
@@ -1121,11 +1191,12 @@ admitInto
   -> (Scene -> Either CastRefusal (SpellId, Scene))
   -> IO CInt
 admitInto ref outId errBuf errLen admit = do
-  scene <- readIORef ref
-  case admit scene of
+  outcome <- stepCellWith ref $ \scene -> case admit scene of
+    Left refusal -> (scene, Left refusal)
+    Right (sid, scene') -> (scene', Right sid)
+  case outcome of
     Left refusal -> castFail errBuf errLen (refusalCode refusal) (refusalMessage refusal)
-    Right (SpellId sid, scene') -> do
-      writeIORef ref $! scene'
+    Right (SpellId sid) -> do
       poke outId (fromIntegral sid)
       pure pmOk
 
@@ -1140,9 +1211,8 @@ foreign export ccall "pm_hs_scene_dismiss" pm_scene_dismiss :: StablePtr SceneCe
 pm_scene_dismiss :: StablePtr SceneCell -> CInt -> IO ()
 pm_scene_dismiss h sid =
   firewall () $
-    withScene h () () $ \ref -> do
-      scene <- readIORef ref
-      writeIORef ref $! dismiss (SpellId (fromIntegral sid)) scene
+    withScene h () () $ \ref ->
+      stepCell ref (dismiss (SpellId (fromIntegral sid)))
 
 foreign export ccall "pm_hs_scene_advance" pm_scene_advance :: StablePtr SceneCell -> CFloat -> IO ()
 
@@ -1157,9 +1227,8 @@ pm_scene_advance h dt =
   firewall () $
     if not (legalDt dt)
       then pure ()
-      else withScene h () () $ \ref -> do
-        scene <- readIORef ref
-        writeIORef ref $! advanceScene (FrameInput (DeltaTime (cfloatToDouble dt))) scene
+      else withScene h () () $ \ref ->
+        stepCell ref (advanceScene (FrameInput (DeltaTime (cfloatToDouble dt))))
 
 foreign export ccall "pm_hs_scene_advance_ex" pm_scene_advance_ex
   :: StablePtr SceneCell -> CFloat -> IO CInt
@@ -1173,8 +1242,7 @@ pm_scene_advance_ex h dt =
     if not (legalDt dt)
       then pure pmErrArgs
       else withScene h pmErrArgs pmErrArgs $ \ref -> do
-        scene <- readIORef ref
-        writeIORef ref $! advanceScene (FrameInput (DeltaTime (cfloatToDouble dt))) scene
+        stepCell ref (advanceScene (FrameInput (DeltaTime (cfloatToDouble dt))))
         pure pmOk
 
 foreign export ccall "pm_hs_scene_observe" pm_scene_observe
