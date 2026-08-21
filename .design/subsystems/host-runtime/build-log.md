@@ -170,6 +170,30 @@ parent: host-runtime
 
 **階段一實作全數完成**:8 個 feature、75＋ Todo、測試自基線 1788 增至 **1864 examples, 0 failures**,每一步都由編排者獨立重跑驗證。`PM_ABI_VERSION` 全程未動,符號自 31 增至 35(全部加法)。
 
+### 階段一閘門:`/arch-audit subsys host-runtime`
+
+**狀態掃描**:零架構／子系統不一致,8 個 feature 全 done,契約卡 17/17,進度 8/17(47%)。
+
+**五個風險點逐一查證為真**:`PM_ABI_VERSION` 未動且 31 個凍結宣告**零修改**(集合 diff 對 host-runtime 前最後一個 commit,差集純為 4 個新增);防火牆覆蓋全部 32 個匯出(原始碼稽核逐定義區塊比對,閘門覆蓋率是**計算**而非寫死);註冊表解析路徑確實無鎖;毒化 flib 有**四層防護**(flag `default: False` ＋ `manual: True` ＋ `buildable: False` ＋ 檔名不同),`.def` 差集雙向驗證恰為單一符號;`docs/integration.md` 的 53 處 `§` 引用與 10 個錨點全部可解析。
+
+**邊界外洩:無。** `src/ffi` 零 `magic-core` import,白名單斷言仍然有效,內部型別只在 `other-modules` 的 Internals 區。**I1–I6 全數遵守,簽名無漂移**;C# 綁定 35 個 `extern` ≡ 標頭 35 個宣告。
+
+**發現(依嚴重度)**:
+
+| # | 嚴重度 | 內容 | 去向 |
+|---|---|---|---|
+| 1 | **高** | `docs/integration.md` 三處仍在教已被本輪推翻的契約(`:647`／`:866` 的「一個 handle／scene 一個執行緒、庫內無鎖」、`:902` 的「shutdown 之後不能再 init」);**而且守門測試是假綠**——兩條 reject 比對字面字串,`:866` 少了「屬於」、`:647` 多了「仍然」,雙雙漏網。F008 文檔自己寫明 `:902` 那列歸 F003 改,結果沒改到 | `/bugfix` |
+| 2 | **高** | `cbits/pm_init.c:292` 降級路徑對 `capabilities == 0` **靜默丟棄**:標頭把 0 定義為「依硬體」且那正是歸零結構的預設值,但該請求既不套用也不計入 `PM_ERR_STATE`,違反 C2.4「不靜默忽略任何無法生效的設定」 | `/bugfix` |
+| 3 | 中 | 契約卡 `thread-model` 的驗收標準仍寫「壁鐘對照」,與閘門修訂後的 C2.2 矛盾(實際交付的 T7 量的是配置量)——**下一次委派會照著錯的驗收標準做** | `/subsys-design` 更新 |
+| 4 | 中 | `Magic/FFI.hs` 1825 行,M3 三分之二的職責(防火牆、原子步)住在 M2 的檔案裡,M3 在檔案系統上並不完整存在 | `/enhance-design` |
+| 5 | 中 | 資料流管線圖**完全沒有 I3 的 RTS 就緒閘門**(它其實是每個符號的第一段),且把驗證畫在防火牆之前而程式碼是相反的巢狀——**該改的是文檔,程式碼的排法較好** | `/subsys-design` 更新 |
+| 6 | 中 | C1 要求的「標頭決定論註記改寫為跨平台逐位元」**沒有任何 feature 擁有**,且在 `particle-simulation/deterministic-trig`(P7)落地前寫進去就是謊話 → 契約懸空 | `/subsys-design` 更新 |
+| 7–13 | 低 | 標題層級不一致(§4.4.1／§4.4.2 用 `###`)、檔頭 frontmatter 的 `updated`／`related-*` 未補、`pm_scene_cast*` 閘門路徑不寫 `*out_id`(與 Haskell 路徑不一致)、cabal 註解宣稱「恰三處差異」不實、白名單守門未覆蓋毒化 stanza、兩處交叉引用失效(**原生問題非本輪造成**) | `/bugfix`／`/enhance-design` |
+
+**抽象邊界(檢查 5)**:C2.2／C2.4／C2.5／C4 裡的實測敘事括號屬 Level 2 越界——那些是 build-log 與 ADR 的內容,建議清掉。**這是編排者在閘門修訂契約時寫進去的**。
+
+**尚未處理的開放項**:F005 A5 的 `Magic.Step.plan` bugfix 未開;F003 A10 的 Windows 那一半待 F011;F008 A7 的版本號待使用者;OOP smoke 與毒化建置未進 CI(屬 authoring-engineering 的 ci-load-smoke-step)。
+
 **F007 的執行中斷**:第一次委派在寫守門測試時被 watchdog 判定停滯(600 秒無串流進展)而中止,**不是判斷或阻塞問題**。編排者盤點後發現:建置已綠、`.gitattributes` 與 `packaging/` 四支腳本都在,唯一的紅是 `test/PackagingSpec.hs` 兩處 lambda 少了反斜線(其餘 13 個正常,孤立手滑),另有 46 MB 的 `dist/` 產物未被忽略、文檔 8 個 Todo 未勾。以 SendMessage 續跑同一個 agent 收尾,未重寫。
 
 **F002 的接縫實況**(供後續實作者):註冊表是兩張頂層 `IORef (Table a)`(**非 `MVar`**),解析路徑無鎖;所有變動集中在 `Magic.FFI.Registry` 的 `registryInsert`／`registryRelease`,F004 的表級寫入鎖加在那裡即可,22 個呼叫端不動。`withCell`／`withScene` 現在是四參數(`onNull`／`onInvalid`／續體)。F001 的毒化控制代碼改用 `Magic.FFI` 匯出的 `newSpellHandle`／`newSceneHandle`——`newStablePtr . SpellCell` 已不存在,且那個值現在會被判偽造。
