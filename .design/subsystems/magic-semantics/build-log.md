@@ -17,7 +17,7 @@ parent: magic-semantics
 
 | 階段 | 波次 | features | 狀態 |
 |---|---|---|---|
-| 階段四 | W1 | volumetric-sigil, spell-cost-model | pending |
+| 階段四 | W1 | volumetric-sigil, spell-cost-model | 設計完成，實作未開始 |
 
 **排除在本次之外的項目與理由**：
 
@@ -52,19 +52,48 @@ fan out 前預先分配，平行執行不得自行配號。委派模型固定 `s
 
 | feature | id | 檔名 | 設計模型 | 實作模型 | 狀態 |
 |---|---|---|---|---|---|
-| volumetric-sigil | F002 | F002-volumetric-sigil.md | sonnet | sonnet | pending |
-| spell-cost-model | F003 | F003-spell-cost-model.md | sonnet | sonnet | pending |
+| volumetric-sigil | F002 | F002-volumetric-sigil.md | sonnet | sonnet | design-done |
+| spell-cost-model | F003 | F003-spell-cost-model.md | sonnet | sonnet | design-done |
 
 實作順序（階段內序列）：F002 → F003。兩者的檔案交集小（F002 動 M2／M5／`emitterBounds`，F003 動 M4 的預算段與 C ABI），但同一子系統仍照序列跑。
 
 ## 待確認假設彙總
 
+各 feature 文檔「待確認假設」段落的彙總。閘門裁決欄在階段閘門由開發者填。
+
 | 來源 | 假設 | 採取的判斷 | 閘門裁決 |
 |---|---|---|---|
-| （尚未開始） | | | |
+| F002 A1 | `SigilVolume` 要不要現在就留可調欄位（層距、層數上限） | 這一輪做成零欄位純開關；日後要加欄位不必動 `Circle` 的形狀或 JSON 鍵 | 待裁決 |
+| F002 A2 | 四個節點裝飾點與中心點要不要一起堆疊 | 不堆疊——它們是 func-0006 §4.4 的裝飾點而非陣的筆畫；要改需重新裁決它們固定的 12／16 粒配額怎麼跨層分攤 | 待裁決 |
+| F002 A3 | 層數公式 `min 5 (max 2 (1 + occCount))` 與 `layerGap = 0.12` | 屬 Level 3 實作細節，手動 smoke 覺得太密／太疏可在實作階段直接調，不需重新委派 | 待裁決 |
+| F002 A4 | 堆疊時粒子總量該不該跟著層數放大 | 選「總量不變、密度攤薄」，不新增 `sigilBudget`／`budgetCap`、不新增 `CompileError`。要等比放大得重新裁決預算條款 | 待裁決 |
+| F003 A1 | 法力權重表的具體常數 | 依既有 fold 的顆粒度給出有區分度的小整數表；日後調平衡只改 `manaCost` 內部常數與 `ManaWeightSpec` 的期望值，不動任何簽名 | 待裁決 |
+| F003 A2 | `refusalCode`／`pm_cast_ex` 的錯誤碼分類本輪不分辨兩類 | 本輪不開 boundary/FFI 入口，現有入口永遠產生不出 `ManaExceeded`，改了沒有可測的觀察點。未來接上 FFI 時要一併補 | 待裁決 |
+
+## 委派品質觀察
+
+編排者在收件時發現、已機械性修正、不影響設計內容的問題：
+
+| 波次 | 觀察 | 處理 |
+|---|---|---|
+| W1 設計 | F002、F003 兩份文檔都混入簡體字（`对`／`应`／`总`／`层`／`维` 等），違反專案的繁體中文慣例 | 編排者以字元對照表機械轉換並重新正規化為 CRLF；未改動任何設計內容 |
+| W1 設計 | 兩份文檔產出時的行尾不一致 | 統一正規化為 CRLF |
+
+編排者另行查證的宣稱：F003 宣稱 `PM_ERR_MANA = -8` 是下一個未用的錯誤碼——打開 `include/particle_magic.h` 與 `bindings/csharp/ParticleMagic.cs` 確認 −1..−7 已用、−8 未用，宣稱成立。
 
 ## 階段結果
 
 ### 階段四
 
-（進行中）
+**W1 設計（完成，commit 待補）**
+
+| feature | id | 狀態 | 產出 |
+|---|---|---|---|
+| volumetric-sigil | F002 | design-done | 7 個 Todo、7 份 1-to-1 測試、`depends-on: [F001]`（執行者查證介面表後自行修正，F001 已 done 不阻塞） |
+| spell-cost-model | F003 | design-done | 5 個 Todo、5 份 1-to-1 測試、`depends-on: []` |
+
+兩份都回報無阻塞項、皆未動任何 `src/`／`test/`／`tools/` 檔案、皆回報不需要新 ADR、也不需要修改 Level 2 契約本身。
+
+**帶到閘門的上層變更建議**（來自 F003）：`design.md` 資料流管線「驗證」段目前寫「執行期只檢查一件事：粒子總量是否超過護欄」，F003 **實作完成後**這句話需要改成「粒子總量，以及（給了上限時）法力代價」。設計階段不動，實作完成後由編排者在閘門一併處理。
+
+**W1 實作**：尚未開始。順序 F002 → F003。

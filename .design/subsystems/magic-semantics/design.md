@@ -276,8 +276,8 @@ related-adr: [adr-0002, adr-0003, adr-0014, adr-0015, adr-0020, ADR-023]
 | 2 | node-orbit | 節點群公轉；應與多發動點合流後做 | M5 | - | - |
 | 3 | time-varying-modulation | 第四種時間掛載點：算式驅動的時變場參數與非等速自轉 | M3, M4, M5 | - | - |
 | 4 | glyph-semantics | 符文文字表義——現行筆畫只產生線段，不表義 | M5 | - | - |
-| 5 | volumetric-sigil | 3D 立體陣：多層平面沿法線堆疊 | M5, M4 | - | - |
-| 6 | spell-cost-model | 魔法代價閘門，用遊戲層詞彙約束符文組合爆炸 | M4 | - | - |
+| 5 | volumetric-sigil | 3D 立體陣：多層平面沿法線堆疊 | M5, M4 | - | F002 |
+| 6 | spell-cost-model | 魔法代價閘門，用遊戲層詞彙約束符文組合爆炸 | M4 | - | F003 |
 
 ### 階段五：遊戲整合（P8）
 
