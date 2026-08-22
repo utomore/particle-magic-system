@@ -140,7 +140,10 @@ genMaybe g = oneof [pure Nothing, Just <$> g]
 -- sigil's time axis is left at 'Nothing' for the opposite reason
 -- (func-spec 0026): every consumer of this generator asserts a law about
 -- the /geometry/, and a generated @linger@ or @hold@ would vary the
--- timing underneath them without varying anything they measure.
+-- timing underneath them without varying anything they measure. The
+-- volumetric stack (magic-semantics F002) is left at 'Nothing' too, for
+-- the same reason as the timing axis: it varies how many copies of the
+-- geometry exist, not the geometry itself.
 genAnyCircle :: Gen Circle
 genAnyCircle =
   Circle
@@ -150,6 +153,7 @@ genAnyCircle =
     <*> (Core <$> genMaybe (EssenceRune <$> elements [Neutral, Fire, Water, Lightning] <*> choose (0.05, 10)) <*> genNodes)
     <*> genMaybe (PhaseConfig <$> (Seconds <$> choose (0.1, 3)) <*> (Seconds <$> choose (0, 2)))
     <*> (resize 3 (listOf genField))
+    <*> pure Nothing
     <*> pure Nothing
     <*> pure Nothing
   where

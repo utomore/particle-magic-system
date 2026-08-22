@@ -181,6 +181,7 @@ definitions =
   , ("anchorArray", anchorArrayDef)
   , ("anchor", anchorDef)
   , ("sigil", sigilDef)
+  , ("volume", volumeDef)
   , ("vec3", vec3Def)
   , ("formula", formulaDef)
   ]
@@ -199,6 +200,7 @@ circleDef =
         , ("fields", nullable (ref "fieldArray"))
         , ("anchors", nullable (ref "anchorArray"))
         , ("sigil", nullable (ref "sigil"))
+        , ("volume", nullable (ref "volume"))
         ])
     ]
 
@@ -423,6 +425,13 @@ sigilDef =
             , ("type", JStr "boolean")
             ])
         ])
+    ]
+
+volumeDef :: J
+volumeDef =
+  JObj
+    [ ("description", JStr "Opt-in 3D stacking: presence turns it on, the object's contents are ignored. The actual number of layers is derived from which of the circle's five ring/interlayer slots are filled, not from anything written here.")
+    , ("type", JStr "object")
     ]
 
 vec3Def :: J

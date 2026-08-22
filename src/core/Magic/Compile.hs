@@ -83,11 +83,19 @@ module Magic.Compile
   ) where
 
 import Data.Bits ((.&.))
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
 import Data.Word (Word32)
-import Magic.Circle (Circle (..), Core (..), Nodes (..), PhaseConfig (..), SigilTiming (..), TwoOf (..))
+import Magic.Circle
+  ( Circle (..)
+  , Core (..)
+  , Nodes (..)
+  , PhaseConfig (..)
+  , SigilTiming (..)
+  , SigilVolume (..)
+  , TwoOf (..)
+  )
 import Magic.Expr
   ( BinOp (..)
   , Expr (..)
@@ -858,6 +866,66 @@ foldSlot f slot z = maybe z (f z) slot
 
 -- Fold step 5 — formation geometry emitters (spec 0006 §4.4) -----------------
 
+-- | How many parallel planes the sigil is drawn on (magic-semantics F002).
+--
+-- 'Nothing' (every pre-F002 circle, and every circle that simply never
+-- opts in) is the compatibility base case: exactly one plane, which is
+-- what makes 'formationEmittersFor'\'s zero-ripple law hold by
+-- construction rather than by a special case in the caller.
+--
+-- @Just SigilVolume@ derives the depth from the same five slots
+-- 'Magic.Sigil.sigilPlan' counts occupancy over (ADR-0014 D2: "structure
+-- sets the skeleton") — but as an independent count, not a shared one:
+-- this reads 'Circle' fields directly and never calls 'hashCircle', so a
+-- change here cannot, even by accident, affect the frozen digest. The
+-- bounds are Level 3 constants (a fully vacant circle still visibly
+-- thickens at the floor of 2; five occupied slots caps out at 5).
+stackDepth :: Circle -> Int
+stackDepth c = case circleVolume c of
+  Nothing -> 1
+  Just SigilVolume -> min 5 (max 2 (1 + occCount))
+  where
+    occCount =
+      length
+        ( filter
+            id
+            [ isJust (ringB (outerRings c))
+            , isJust (ringA (outerRings c))
+            , isJust (interLayer c)
+            , isJust (ringB (innerRings c))
+            , isJust (ringA (innerRings c))
+            ]
+        )
+
+-- | Spacing between adjacent stacked layers, in face coordinates (the same
+-- units 'Magic.Sigil.sigilPlan'\'s @radii@ band lives in).
+layerGap :: Float
+layerGap = 0.12
+
+-- | The @k@-th of @depth@ layers, spread symmetrically along the normal
+-- about the face origin. @layerAnchor 1 0 == originAnchor@ exactly — the
+-- single-layer case lands back on the pre-F002 anchor, not merely close to
+-- it — which is the identity 'formationEmittersFor'\'s zero-ripple law
+-- rests on.
+layerAnchor :: Int -> Int -> Anchor
+layerAnchor depth k =
+  originAnchor {anchorOffset = V3 0 0 (layerGap * (fromIntegral k - 0.5 * (fromIntegral depth - 1)))}
+
+-- | Split a stroke's (or shape preview's) particle count evenly over
+-- @depth@ layers, rounding each layer's share down to a multiple of
+-- @arms@ so every arm still gets the same number of points (the same
+-- reason 'Magic.Sigil.sigilPlan' clips its own budget overrun that way).
+-- The cross-layer sum is therefore never more than @total@ — the leftover
+-- from each division is dropped, never redistributed — so opting into the
+-- stack can only thin out an existing particle count, never inflate it.
+--
+-- @perLayerCount total 1 arms == total@ whenever @total@ is already a
+-- multiple of @arms@, which every stroke and shape 'Magic.Sigil.sigilPlan'
+-- produces is: the other half of the zero-ripple identity.
+perLayerCount :: Int -> Int -> Int -> Int
+perLayerCount total depth arms =
+  ((total `div` max 1 depth) `div` max 1 arms) * max 1 arms
+
 -- | Circle geometry → the formation-drawing emitters. Only called when
 -- 'circlePhases' is 'Just'.
 --
@@ -882,11 +950,29 @@ foldSlot f slot z = maybe z (f z) slot
 -- Func-spec 0026 makes that third argument the /sigil's/ end rather than
 -- the spell's: they are the same value unless the circle names a
 -- @linger@, and the signature does not move.
+--
+-- Magic-semantics F002 adds the stroke/shape stack: when 'stackDepth'
+-- exceeds 1 each stroke and each shape preview produces one emitter /per
+-- layer/, spread symmetrically along the normal by 'layerAnchor' and
+-- sharing the stroke's original particle count by 'perLayerCount'. Node
+-- and center emitters are untouched — they are the drawing stage's
+-- decorations (spec 0006 §4.4), not the sigil's own strokes, so F002's
+-- contract card leaves them out (see the feature doc's assumption A2).
+-- At @stackDepth circle == 1@ (the only value @circleVolume == Nothing@
+-- can produce) 'layeredEmitters' degenerates to exactly one emitter per
+-- stroke/shape with 'originAnchor' and the untouched count — bit for bit
+-- what this function produced before F002.
 formationEmittersFor :: Circle -> Seconds -> Seconds -> Element -> [EmitterSpec]
 formationEmittersFor circle castStart sigilEnd element =
   concat
-    [ [ringSlotEmitter (skCount sk) (SpawnOnStroke sk) | sk <- V.toList (spStrokes plan)]
-    , [ringSlotEmitter cnt (SpawnOnShape shape) | (shape, cnt) <- V.toList (spShapes plan)]
+    [ concat
+        [ layeredEmitters (SpawnOnStroke sk) (skCount sk) (max 1 (skSymmetry sk))
+        | sk <- V.toList (spStrokes plan)
+        ]
+    , concat
+        [ layeredEmitters (SpawnOnShape shape) cnt 1
+        | (shape, cnt) <- V.toList (spShapes plan)
+        ]
     , nodeSlotEmitter 12 (V3 0 0.35 0) (north (coreNodes (core circle)))
     , nodeSlotEmitter 12 (V3 0 (-0.35) 0) (south (coreNodes (core circle)))
     , nodeSlotEmitter 12 (V3 0.35 0 0) (east (coreNodes (core circle)))
@@ -897,17 +983,21 @@ formationEmittersFor circle castStart sigilEnd element =
     plan = sigilPlan circle
     formEnv = formEnvFor castStart sigilEnd
     appearance = formationAppearance (maybe False stHold (circleSigil circle)) element
+    depth = stackDepth circle
 
-    ringSlotEmitter cnt spawn =
-      EmitterSpec
-        { emAnchor = originAnchor
-        , emCount = cnt
-        , emSpawn = formEnv
-        , emMotion = formationMotion spawn
-        , emAppearance = appearance
-        , emPhase = Drawing
-        , emCode = noEmitterCode
-        }
+    layeredEmitters :: SpawnPattern -> Int -> Int -> [EmitterSpec]
+    layeredEmitters spawn total arms =
+      [ EmitterSpec
+          { emAnchor = layerAnchor depth k
+          , emCount = perLayerCount total depth arms
+          , emSpawn = formEnv
+          , emMotion = formationMotion spawn
+          , emAppearance = appearance
+          , emPhase = Drawing
+          , emCode = noEmitterCode
+          }
+      | k <- [0 .. depth - 1]
+      ]
 
     nodeSlotEmitter :: Int -> V3 -> Maybe NodeRune -> [EmitterSpec]
     nodeSlotEmitter cnt offset mRune = case mRune of

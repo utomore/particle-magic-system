@@ -102,6 +102,16 @@
               "$ref": "#/definitions/sigil"
             }
           ]
+        },
+        "volume": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/volume"
+            }
+          ]
         }
       }
     },
@@ -797,6 +807,10 @@
           "type": "boolean"
         }
       }
+    },
+    "volume": {
+      "description": "Opt-in 3D stacking: presence turns it on, the object's contents are ignored. The actual number of layers is derived from which of the circle's five ring/interlayer slots are filled, not from anything written here.",
+      "type": "object"
     },
     "vec3": {
       "description": "Three numbers, [x, y, z], in the caster's frame: x = right, y = up, z = straight ahead.",

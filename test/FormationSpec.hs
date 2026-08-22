@@ -74,6 +74,7 @@ fullCircle element power =
     , circleFields = []
     , circleAnchors = Nothing
     , circleSigil = Nothing
+    , circleVolume = Nothing
     }
 
 bareCircle :: Circle

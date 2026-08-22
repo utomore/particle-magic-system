@@ -283,7 +283,7 @@ related-spec: [func-0014]
 
 ---
 
-## 8. 選配：`phases`、`fields`、`anchors` 與 `sigil`
+## 8. 選配：`phases`、`fields`、`anchors`、`sigil` 與 `volume`
 
 ### 8.1 `phases`：生命週期分段（畫陣 → 收束 → 施放 → 消散）
 
@@ -370,6 +370,22 @@ related-spec: [func-0014]
 
 `lingering-seal.json` 兩個都用上：水元素的陣畫完就凍住，法術收了之後還留 2.5 秒。
 
+### 8.5 `volume`：陣的立體堆疊
+
+```json
+"volume": {}
+```
+
+不寫 `volume`（或寫 `null`）＝ 陣維持單一平面，一個位元都不變。寫了——不管物件裡放什麼，甚至放空物件——就是「開」：陣沿法線堆疊成好幾層互相錯開的平行面。
+
+三件要記得的事：
+
+1. **存在即開關，內容被忽略**。`"volume": {}` 與 `"volume": {"anything": 1}` 效果完全相同——這個鍵目前沒有任何可調參數。
+2. **層數由結構導出，不是你寫的數字**。實際堆幾層看外圈、夾層、內圈這五個槽位填了幾個：全空也會有下限 2 層，五槽全滿封頂在 5 層。
+3. **只加粒子密度上的稀釋，不加預算**。堆疊只是把陣形原本的粒子數攤到更多層，總量不會超過沒開堆疊時的量，因此不會多算一次 `magic-validate` 的預算超支。
+
+`stacked-sigil.json` 是外圈、夾層、內圈五槽全填 + `phases` + `"volume": {}` 的例子：陣疊到層數的上限。
+
 ---
 
 ## 9. 檢查工具 `magic-validate`
@@ -455,6 +471,7 @@ OK assets/spells/grand-sigil.json
 | `gravity-well.json` | `fields` 三種力場同時作用在施放階段的粒子上。 |
 | `twin-lance.json` | `anchors` 兩個發動點：同一道法術從身體兩側平行射出，粒子平分不加倍。 |
 | `lingering-seal.json` | `sigil` 陣自己的時間軸：`hold` 讓陣畫完就凍住，`linger` 讓它在法術收場後再留 2.5 秒。 |
+| `stacked-sigil.json` | `volume` 立體堆疊：外圈、夾層、內圈五槽全填，陣沿法線疊成好幾層互相錯開的平行面。 |
 
 **新語彙**
 

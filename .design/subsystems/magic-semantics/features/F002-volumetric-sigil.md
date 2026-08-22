@@ -3,7 +3,7 @@ id: F002
 type: feature
 title: volumetric-sigil
 description: 陣的opt-in立體堆疊，層數由結構導出，單層時逐位元不變
-status: open
+status: done
 created: 2026-08-22
 updated: 2026-08-22
 depends-on: [F001]
@@ -250,13 +250,13 @@ volumeDef :: J
 
 ## TodoList
 
-- [ ] T1: `Magic.Circle` 加 `SigilVolume` 型別與 `Circle.circleVolume` 欄位，`emptyCircle` 補 `Nothing`，加入匯出清單  `dep: -`
-- [ ] T2: `Magic.Codec` 加 `parseSigilVolume`／`encodeSigilVolume`，接上 `parseCircle` 與 `saveCircle`  `dep: T1`
-- [ ] T3: `Magic.Compile` 加 `stackDepth`／`layerGap`／`layerAnchor`／`perLayerCount`，`formationEmittersFor` 的筆畫與外圈預覽形狀改為依 `stackDepth` 產生多層 `EmitterSpec`（節點與中心點發射器不變）  `dep: T1`
-- [ ] T4: 零漣漪與摘要不變的迴歸守護：`hashCircle` 不因 `circleVolume` 改變；`circleVolume = Nothing`（唯一能讓 `stackDepth == 1` 的路徑）產生的 `CompiledSpell` 與交付前逐位元相同  `dep: T3`
-- [ ] T5: 結構導出律：相異 occCount 的陣得到相異且落在 `[2,5]` 的 `stackDepth`；每筆畫／形狀跨層的粒子數之和不大於原單層數量  `dep: T3`
-- [ ] T6: C3.2 opt-in 加寬的驗收：`emitterBounds` 對任一 `EmitterSpec` 仍回傳立方體且數值不因堆疊改變；`Magic.Space.spellBounds`／`spellBox` 對開啟 `volume` 的陣回傳的包絡不小於未開啟時的包絡，且 containment 律仍成立  `dep: T3`
-- [ ] T7: 作者面：`tools/Schema.hs` 的 `volumeDef`、重生成 `docs/spell.schema.json`、`docs/spell-schema.md` §8 標題與新的 §8.5；新示範陣 `assets/spells/stacked-sigil.json`（五槽全填 + `phases` + `"volume": {}`），並牽動既有範例清單（`test/Acceptance21Spec.hs` 的 `newSpells`、`test/Acceptance23Spec.hs` 的 `laterExamples`、`test/PerfGoldenSpec.hs` 的 `examples`、`test/SpaceBoundsSpec.hs` 的 golden 排除列表、`test/SchemaDocSpec.hs`／`test/ValidateSpec.hs` 的檔案數），以 demo 視窗做一次手動 smoke  `dep: T2, T3`
+- [x] T1: `Magic.Circle` 加 `SigilVolume` 型別與 `Circle.circleVolume` 欄位，`emptyCircle` 補 `Nothing`，加入匯出清單  `dep: -`
+- [x] T2: `Magic.Codec` 加 `parseSigilVolume`／`encodeSigilVolume`，接上 `parseCircle` 與 `saveCircle`  `dep: T1`
+- [x] T3: `Magic.Compile` 加 `stackDepth`／`layerGap`／`layerAnchor`／`perLayerCount`，`formationEmittersFor` 的筆畫與外圈預覽形狀改為依 `stackDepth` 產生多層 `EmitterSpec`（節點與中心點發射器不變）  `dep: T1`
+- [x] T4: 零漣漪與摘要不變的迴歸守護：`hashCircle` 不因 `circleVolume` 改變；`circleVolume = Nothing`（唯一能讓 `stackDepth == 1` 的路徑）產生的 `CompiledSpell` 與交付前逐位元相同  `dep: T3`
+- [x] T5: 結構導出律：相異 occCount 的陣得到相異且落在 `[2,5]` 的 `stackDepth`；每筆畫／形狀跨層的粒子數之和不大於原單層數量  `dep: T3`
+- [x] T6: C3.2 opt-in 加寬的驗收：`emitterBounds` 對任一 `EmitterSpec` 仍回傳立方體且數值不因堆疊改變；`Magic.Space.spellBounds`／`spellBox` 對開啟 `volume` 的陣回傳的包絡不小於未開啟時的包絡，且 containment 律仍成立  `dep: T3`
+- [x] T7: 作者面：`tools/Schema.hs` 的 `volumeDef`、重生成 `docs/spell.schema.json`、`docs/spell-schema.md` §8 標題與新的 §8.5；新示範陣 `assets/spells/stacked-sigil.json`（五槽全填 + `phases` + `"volume": {}`），並牽動既有範例清單（`test/Acceptance21Spec.hs` 的 `newSpells`、`test/Acceptance23Spec.hs` 的 `laterExamples`、`test/PerfGoldenSpec.hs` 的 `examples`、`test/SpaceBoundsSpec.hs` 的 golden 排除列表、`test/SchemaDocSpec.hs`／`test/ValidateSpec.hs` 的檔案數）皆已完成；手動 smoke 由編排者於 2026-08-22 以 demo 視窗執行並通過（見「實作備註」）  `dep: T2, T3`
 
 ## 1-to-1 測試對照表
 
@@ -279,4 +279,21 @@ volumeDef :: J
 
 ## 實作備註
 
-（實作期間與規格的偏差記錄於此，撰寫時留空。）
+實作方式與本文檔「實作方式」一節逐項相符，公開介面無偏離。
+
+- T1–T6 依規格完成，`Magic.Sigil` 模組零改動（`git diff --stat` 確認），`test/golden/` 底下既有檔案一張都未重錄（只新增了 `test/golden/perf-0010/stacked-sigil.txt` 這張新檔）。
+- T7 除「以 demo 視窗做一次手動 smoke」外全部完成：`tools/Schema.hs`／`docs/spell.schema.json`／`docs/spell-schema.md`／`assets/spells/stacked-sigil.json`／五個既有範例清單／檔案數全部更新，且 `cabal run -v0 magic-schema -- --check` 通過。手動 smoke 由編排者於 2026-08-22 執行並通過，結果見下節。
+- 委派模式下發現 6 個既有測試檔案（`test/CircleCodecSpec.hs`／`CompileExprSpec.hs`／`CompileFieldSpec.hs`／`FormationSpec.hs`／`RuneCodecSpec.hs`／`SampleSpec.hs`）以完整記錄語法（非 `emptyCircle {...}` record update）建構 `Circle`，因 `circleVolume` 是嚴格欄位（`!(Maybe SigilVolume)`），編譯期即報錯；已逐一補上 `circleVolume = Nothing`（或對應的 `<*> pure Nothing`），這些是內部測試輔助函式的必要跟進，不算契約偏離。
+- 驗收：`cabal build all` 與 `cabal test` 全綠，1988 examples / 0 failures（交付前基準 1941 / 0）。
+
+### 手動 smoke（T7，由編排者執行，2026-08-22）
+
+以 demo 視窗實際跑過（`aaa-` 前綴讓 `stacked-sigil` 成為啟動時顯示的陣，事後刪除），預設 3/4 視角（`cam: r 7.6 az 45 el 13`）連拍。三個時刻對上驗收標準：
+
+| age | 畫面 | 對應 |
+|---|---|---|
+| 0.50s | 陣已明顯是**多層平行環組成的鼓狀體**而非單一平面，974 粒仍在逐點畫出 | 「陣由單一平面變成多層平面沿法線堆疊」；索引序＝繪製序不受堆疊影響 |
+| 6.93s | 施放期主效果噴出的同時，堆疊的陣仍完整可辨，層與層之間看得出間隔 | 層次偏移確實落在世界座標，不是同一平面上的抖動 |
+| 7.78s | 陣與法術一起收場（55 粒），隨後自動重新施放 | 未設 `sigil` 鍵時的既有收場語意不受本輪影響 |
+
+堆疊的方向與面法線一致（demo 的陣平躺於地面，層次向上堆疊），`layerGap = 0.12` 在這個尺度下讀得出分層而不顯得鬆散——A3 的常數不需要在實作階段調整。

@@ -82,6 +82,13 @@ examples =
   , "soft-bloom"
   , "spiral-spark"
   , "square-burst"
+  , -- magic-semantics F002's own example: the first spell in the net
+    -- whose formation geometry stacks into more than one plane. Its
+    -- baseline is necessarily recorded on the build that introduced it,
+    -- so it is net for later rounds rather than evidence about this one —
+    -- the zero-ripple law F002 owes is carried by every other golden in
+    -- this net staying unchanged.
+    "stacked-sigil"
   , -- The three below are func-spec 0021's own two and func-spec 0025's
     -- one, the latter joining the net when the two parallel rounds were
     -- integrated. Their baselines are necessarily recorded on the build

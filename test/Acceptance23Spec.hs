@@ -72,9 +72,10 @@ spellDir :: FilePath
 spellDir = "assets/spells"
 
 -- | Examples that postdate this round, and so cannot witness anything
--- about it: lingering-seal joined in func-spec 0026.
+-- about it: lingering-seal joined in func-spec 0026, stacked-sigil in
+-- magic-semantics F002.
 laterExamples :: [String]
-laterExamples = ["lingering-seal"]
+laterExamples = ["lingering-seal", "stacked-sigil"]
 
 -- | Every example that existed before this round.
 priorExamples :: IO [String]

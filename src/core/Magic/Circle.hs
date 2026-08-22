@@ -13,6 +13,7 @@ module Magic.Circle
   , Nodes (..)
   , PhaseConfig (..)
   , SigilTiming (..)
+  , SigilVolume (..)
   , emptyCircle
   ) where
 
@@ -66,6 +67,11 @@ data Circle = Circle
   -- 'emptyCircle' value) takes the func-spec 0017 path — the sigil ends
   -- with the spell and keeps redrawing itself every @formLife@ while it
   -- waits.
+  , circleVolume :: !(Maybe SigilVolume)
+  -- ^ The circle's opt-in 3D stacking (magic-semantics F002). The fifth
+  -- circle-level property, following the same convention: not a rune, in
+  -- no slot, opt-in, and 'Nothing' (the 'emptyCircle' value) keeps the
+  -- circle a single plane — the pre-volumetric-sigil path.
   }
   deriving (Eq, Show)
 
@@ -110,6 +116,24 @@ data SigilTiming = SigilTiming
   }
   deriving (Eq, Show)
 
+-- | The circle's opt-in 3D stacking (magic-semantics F002). The fifth
+-- circle-level property, and it follows the convention the four before it
+-- set exactly: not a rune, in no slot, opt-in, and 'Nothing' (the
+-- 'emptyCircle' value) keeps the circle a single plane — the
+-- pre-volumetric-sigil path.
+--
+-- Currently a pure switch: it carries no tunable value of its own. The
+-- key's presence (and non-null-ness) is the whole of "on"; the actual
+-- stack depth is derived from the circle's own slot occupancy by
+-- 'Magic.Compile.stackDepth', not from anything this type stores.
+--
+-- Deliberately /not/ folded into 'Magic.Sigil.hashCircle': this property
+-- changes how much space the circle occupies, not what it looks like as a
+-- flat figure (ADR-0014 D3, the same reasoning 'SigilTiming' and
+-- 'circleFields' follow).
+data SigilVolume = SigilVolume
+  deriving (Eq, Show)
+
 data Core = Core
   { coreCenter :: Maybe EssenceRune
   -- ^ The very center; empty = Neutral plain discharge.
@@ -140,4 +164,5 @@ emptyCircle =
     , circleFields = []
     , circleAnchors = Nothing
     , circleSigil = Nothing
+    , circleVolume = Nothing
     }

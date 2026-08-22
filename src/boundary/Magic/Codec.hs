@@ -70,6 +70,7 @@ import Magic.Circle
   , Nodes (..)
   , PhaseConfig (..)
   , SigilTiming (..)
+  , SigilVolume (..)
   , TwoOf (..)
   , emptyCircle
   )
@@ -175,6 +176,7 @@ parseCircle = withObject "circle" $ \o -> do
   fields <- parseFields o
   anchors <- parseAnchors o
   sigil <- parseSlot "sigil" parseSigilTiming o
+  volume <- parseSlot "volume" parseSigilVolume o
   pure
     Circle
       { outerRings = outer
@@ -185,6 +187,7 @@ parseCircle = withObject "circle" $ \o -> do
       , circleFields = fields
       , circleAnchors = anchors
       , circleSigil = sigil
+      , circleVolume = volume
       }
 
 emptyCore :: Core
@@ -599,6 +602,18 @@ boundedLinger name x
 maxLinger :: Double
 maxLinger = 60
 
+-- | The circle's opt-in 3D stacking (magic-semantics F002 §6): the fifth
+-- opt-in circle-level key, by the same rules as @phases@, @fields@,
+-- @anchors@ and @sigil@ — a missing key and @null@ both mean "no key".
+--
+-- Unlike 'parseSigilTiming', there is nothing to read inside the object:
+-- the key's presence is the entire signal, so any object at all — @{}@ or
+-- one with unrecognised properties — decodes to the same 'SigilVolume'
+-- value. That is deliberate, not a shortcut: the type has no field to be
+-- wrong about.
+parseSigilVolume :: Value -> Parser SigilVolume
+parseSigilVolume = withObject "volume" $ \_o -> pure SigilVolume
+
 parseEssence :: Value -> Parser EssenceRune
 parseEssence = withObject "core center" $ \o -> do
   element <- o .: "element" >>= parseElement
@@ -705,6 +720,11 @@ saveCircle circle =
               -- @Just (SigilTiming 0 False)@ — behaviourally identical,
               -- but not the value that was written.
               "sigil" .= maybe Null encodeSigilTiming (circleSigil circle)
+            , -- Null rather than {} for the absent case, for the reason
+              -- 'sigil' uses it: an empty object would still decode back
+              -- to 'Just SigilVolume', so writing one would not spell
+              -- "absent" the way this field means it.
+              "volume" .= maybe Null encodeSigilVolume (circleVolume circle)
             ]
       ]
 
@@ -849,6 +869,11 @@ encodePhaseConfig (PhaseConfig (Seconds d) (Seconds c)) =
 encodeSigilTiming :: SigilTiming -> Value
 encodeSigilTiming (SigilTiming (Seconds linger) hold) =
   object ["linger" .= linger, "hold" .= hold]
+
+-- | The whole value carries no data, so the encoding is the smallest
+-- object that decodes back to it.
+encodeSigilVolume :: SigilVolume -> Value
+encodeSigilVolume SigilVolume = object []
 
 encodeForceField :: ForceField -> Value
 encodeForceField field = case field of
