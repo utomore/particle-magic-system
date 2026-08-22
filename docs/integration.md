@@ -12,7 +12,8 @@ related-spec: [func-0009, func-0011, func-0018, func-0025]
 
 # 宿主整合指南
 
-> 版本：1.4（2026-08-21，host-runtime 子系統階段一交付後：**執行期契約從口頭變成明文**——§4.3 的錯誤表補上 `PM_ERR_INTERNAL`（−6）與 `PM_ERR_STATE`（−7）兩列；§4.4 的關閉語意改寫成**單向門**（`pm_shutdown()` 之後 `pm_init_ex()` 回 `PM_ERR_STATE`、其餘符號回哨兵，**不再殺掉宿主 process**，Windows 與 Linux 一致）；新增 **§4.4.1「執行期設定 `pm_init_ex()`」**（`PmConfig` 與逐平台生效表）與 **§4.4.2「執行緒模型」**（可直接併發與必須自行序列化的兩張清單，取代舊的那句話歸屬規則，並隨之對齊 §4.6、§6、§8 的三份副本）；時步規劃器上 C 面（`pm_plan_steps` 與帶錯誤碼的 `pm_advance_ex`／`pm_scene_advance_ex`），§2.4、§4.2、§5.4、§6 的主迴圈範例全部改用它而不再手寫 `while`；新增 §4.8「MSVC 連結」與 §4.9「macOS `@rpath` 與雙架構」。合約零移除：`PM_ABI_VERSION` 仍為 **1**，全部是加法）
+> 版本：1.5（2026-08-22，G-B001：**把指南釘回凍結標頭**——§0 的決定論段落改寫成「同一台機器逐位元／跨平台只保證結構＋至多一兩個 ulp」，與 `include/particle_magic.h` 檔頭、`docs/release.md` 與 [ADR-0016](adr/adr-0016-release-compatibility-policy.md) D4 對齊（舊敘述承諾「不同平台也逐位元」，是錯的）；新增 **§2.6「選配的速度欄與 trail 批次」**——`pm_observe_ex()`、三條可為 NULL 的速度指標、速度的定義與幀率無關性、`PM_SHAPE_TRAIL` 的畫法，以及 Haskell 面的 `hasVelocity` 與 `Magic.Columns.fromColumnsWithVelocity`（六→九欄的加寬 [ADR-0018](adr/adr-0018-custom-shader-and-columns.md) 交付後一直沒進指南）；§2.2 的形狀表補 `PM_SHAPE_TRAIL`(4)，§8 的形狀列由四種更正為五種。合約零變動：本次只改敘述，標頭與任何執行期行為一個位元都沒動。新增 `test/IntegrationContractSpec.hs` 守著這件事——標頭的每個 `pm_*` 進入點與每個 `PM_SHAPE_*`／`PM_BLEND_*` 都必須出現在指南裡，且任何同時談「逐位元」與「跨平台」的段落都必須帶上界線）
+> 1.4（2026-08-21，host-runtime 子系統階段一交付後：**執行期契約從口頭變成明文**——§4.3 的錯誤表補上 `PM_ERR_INTERNAL`（−6）與 `PM_ERR_STATE`（−7）兩列；§4.4 的關閉語意改寫成**單向門**（`pm_shutdown()` 之後 `pm_init_ex()` 回 `PM_ERR_STATE`、其餘符號回哨兵，**不再殺掉宿主 process**，Windows 與 Linux 一致）；新增 **§4.4.1「執行期設定 `pm_init_ex()`」**（`PmConfig` 與逐平台生效表）與 **§4.4.2「執行緒模型」**（可直接併發與必須自行序列化的兩張清單，取代舊的那句話歸屬規則，並隨之對齊 §4.6、§6、§8 的三份副本）；時步規劃器上 C 面（`pm_plan_steps` 與帶錯誤碼的 `pm_advance_ex`／`pm_scene_advance_ex`），§2.4、§4.2、§5.4、§6 的主迴圈範例全部改用它而不再手寫 `while`；新增 §4.8「MSVC 連結」與 §4.9「macOS `@rpath` 與雙架構」。合約零移除：`PM_ABI_VERSION` 仍為 **1**，全部是加法）
 > 1.3（2026-08-16，enhance-0001 落地後：**母語路線補上可跑的範例**——§1 的路線表加一欄「可跑的範例」、§3 開頭補齊 `bytestring`／`vector` 兩個容易漏的依賴並指向 [`examples/haskell/`](../examples/haskell/)、新增 **§3.3「2D／像素風宿主食譜」**（五步，不分語言，§4.5 交叉指路）、§8 新增一列誠實記帳「像素風只有食譜，沒有像素風的參考實作」。合約零變更：沒有新語意、沒有動 JSON schema、ABI version 仍為 1）
 > 1.2（2026-08-16，spec 0018 交付後：場景層整個上 C ABI——新增 §4.6、`PM_ERR_QUOTA` 進 §4.3 的錯誤表、§3.2 與 §8 的「只在 Haskell 面」收窄為「不進場景的合成只在 Haskell 面」。ABI version 仍為 1——全部是加法。1.1 為 spec 0011 交付後：投影三件套上 C ABI、C# 參考綁定與 Unity 範例成為真檔案）
 > 對象：想把這套粒子魔法系統接進自己遊戲的人——Unity、Godot、C/C++ 引擎、Haskell 專案，或完全自製的前端。
@@ -24,11 +25,15 @@ related-spec: [func-0009, func-0011, func-0018, func-0025]
 
 > **JSON 進，六條陣列出。這個庫一行畫圖的程式碼都沒有，也永遠不會有。**
 
-你給它一張魔法陣（JSON 文字）、施法者的位置與面向、一個亂數種子，然後每幀給它一個 `dt`；它回你一批粒子的 **SoA（Structure of Arrays）**——六條等長陣列（x、y、z、size、life、color），外加「哪一段屬於哪個批次、該用什麼混合模式」的描述。
+你給它一張魔法陣（JSON 文字）、施法者的位置與面向、一個亂數種子，然後每幀給它一個 `dt`；它回你一批粒子的 **SoA（Structure of Arrays）**——六條等長陣列（x、y、z、size、life、color），外加「哪一段屬於哪個批次、該用什麼混合模式、該畫成什麼形狀」的描述。想畫拖尾的話另有選配的三條速度欄，見 [§2.6](#26-選配的速度欄與-trail-批次)。
 
 把那六條陣列餵進你自己的頂點緩衝、用你自己的材質畫出來——那部分是你的引擎的工作，不是這個庫的。這不是偷懶，是[架構決策](adr/adr-0008-dimension-agnostic-3d-first.md)：庫的輸出不含任何渲染後端的假設，所以換引擎、換維度、換語言都不需要改核心。
 
-**確定性保證**：同一組 `(JSON, 位置, 面向, seed, dt 序列)` 永遠產生逐位元相同的輸出——同一台機器、不同平台、Haskell 路徑或 C ABI 路徑都一樣。這讓法術可回放、可存檔（只要存那五樣東西）、可用純函數測試。
+**確定性保證（同一台機器）**：同一組 `(JSON, 位置, 面向, seed, dt 序列)` 永遠產生逐位元相同的輸出，Haskell 路徑與 C ABI 路徑也彼此逐位元相同。這讓法術可回放、可存檔（只要存那五樣東西）、可用純函數測試。
+
+**跨平台的界線**：換一台不同平台的機器，保證就只剩**結構**——相同的粒子、相同的順序、相同的每幀數量——位置欄可能差最後一兩個 ulp（實測 windows/x86_64 對 linux/x86_64，`pos_x`／`pos_z` 最大差 1.79e-07，`size`／`life`／`color` 逐位元相同）。原因不在本庫的算術：IEEE-754 保證 `sqrt` 正確捨入，卻**不保證** `sin`／`cos`，而兩份 libm 在最後一位可以合法地各說各話。
+
+**一句話**：在錄製它的那台機器上重播是精確的；跨機器比對請用容差——容差就是上面那一兩個 ulp，不要用 `memcmp`。跨平台逐位元是往後的目標，**今天還不成立**——所以 lockstep 連線、跨機器的 golden 比對這類用途，現階段請把參與者釘在同一個平台上。完整量測與裁決見 [ADR-0016 D4](adr/adr-0016-release-compatibility-policy.md) 與 [`release.md`](release.md)；`include/particle_magic.h` 的檔頭寫的是同一件事。
 
 ---
 
@@ -80,7 +85,7 @@ uint8_t a =  c        & 0xFF;
 | `batch_info[4*i + 0]` | 第 i 批的第一顆粒子在六條陣列裡的位移（offset） |
 | `batch_info[4*i + 1]` | 第 i 批的粒子數 |
 | `batch_info[4*i + 2]` | 混合模式：`PM_BLEND_ALPHA`(0) / `PM_BLEND_ADDITIVE`(1) |
-| `batch_info[4*i + 3]` | billboard 形狀：`PM_SHAPE_SQUARE`(0) / `PM_SHAPE_SOFT_DOT`(1) / `PM_SHAPE_RING`(2) / `PM_SHAPE_SPARK`(3)。不認得的碼照 `PM_SHAPE_SQUARE` 畫即可（func-spec 0015 起，形狀由魔法陣的 `style` 符文指定） |
+| `batch_info[4*i + 3]` | billboard 形狀：`PM_SHAPE_SQUARE`(0) / `PM_SHAPE_SOFT_DOT`(1) / `PM_SHAPE_RING`(2) / `PM_SHAPE_SPARK`(3) / `PM_SHAPE_TRAIL`(4)。不認得的碼照 `PM_SHAPE_SQUARE` 畫即可（func-spec 0015 起，形狀由魔法陣的 `style` 符文指定） |
 
 一批＝一次 draw call（設好混合狀態，畫這一段）。目前每個法術的批次數很少（個位數），`max_batches = 8` 足夠；不夠時 `pm_observe` 回 `PM_ERR_CAPACITY` 而**不寫入任何東西**——你不會拿到畫到一半的幀。
 
@@ -138,6 +143,38 @@ float* px = malloc(cap * sizeof(float));   /* ... 六條 */
 
 Haskell 宿主無此問題（`observeSpell` 回的 buffer 自己帶長度）。
 
+### 2.6 選配的速度欄與 trail 批次
+
+六條欄之外還有三條 **`vel_x` / `vel_y` / `vel_z`**（[ADR-0018](adr/adr-0018-custom-shader-and-columns.md)）。它們是**選配**的：不呼叫就完全不存在，六欄路徑的輸出一個位元都不變。只有想畫拖尾的宿主需要。
+
+**C 面走 `pm_observe_ex()`**——參數與 `pm_observe()` 完全相同，只在 `color` 之後多三個速度指標：
+
+```c
+int n = pm_observe_ex(spell, px, py, pz, size, life, color,
+                      vx, vy, vz,          /* 三條各自獨立，不要的傳 NULL */
+                      cap, batch_info, 8);
+```
+
+- 三個速度指標**各自獨立、可為 NULL**，不想要哪一條就不傳。
+- 陣裡沒有 `trail` 樣式的法術不算速度，這時非 NULL 的欄位**填 0 而不是回錯誤**——某張陣要不要拖尾是那張陣的事，宿主的呼叫不該因為玩家載入了另一張陣就得改形狀。
+- 容量規則、`batch_info` 佈局、全有或全無的錯誤路徑，全部與 `pm_observe()` 相同（見 [§2.2](#22-批次描述-batch_info)、[§2.5](#25-六條陣列要開多大)）。
+
+**速度是什麼**：粒子算繪位置在固定 1/240 秒步長上的**後向差分**，加上力場層自己積出來的速度。所以它是決定性的、與幀率無關——同一張陣在 30 fps 與 240 fps 拖出一模一樣的尾。粒子還不滿 1/240 秒時從出生點做單邊差分，年齡恰為 0 的回 0。
+
+**怎麼畫 `PM_SHAPE_TRAIL` 批次**：沿速度方向拉伸每顆粒子的 quad，長度隨 `|v|` 增加——並且**一定要 clamp**，否則一顆快粒子會把整個畫面劃掉。不想支援的宿主照 `PM_SHAPE_SQUARE` 畫即可，那就是加寬之前的畫面。
+
+**Haskell 面**：`observeSpell` 回的 `ParticleBuffer` 本來就帶 `pbVelX`／`pbVelY`／`pbVelZ`，但同樣是選配——沒要求拖尾時它們是空的。讀之前先問 `hasVelocity`：
+
+```haskell
+import Magic.Interface (hasVelocity, pbVelX, pbVelY, pbVelZ)
+
+renderBuffer buf
+  | hasVelocity buf = drawTrails buf      -- 三條速度欄有值，長度＝pbCount
+  | otherwise       = drawBillboards buf  -- 三條是空的，別去索引它們
+```
+
+`hasVelocity` 是消費者在讀那三欄之前**唯一**要問的問題。手上已經持有九條裸欄的工具（自製匯入器之類）用 `Magic.Columns.fromColumnsWithVelocity` 把它們驗證後組回 `ParticleBuffer`；六欄的 `fromColumns` 原封不動，組出來的 buffer 速度欄為空。
+
 ---
 
 ## 3. 路線 A：Haskell 宿主
@@ -170,10 +207,10 @@ import Magic.Codec      (loadCircle, renderLoadError)
 import Magic.Interface  -- castSpell / advanceSpell / observeSpell / isFinished / spellAge
                         -- ＋ maxSpellParticles / budgetPlanOf / emitterBounds（見 §3.1）
 import Magic.Projection (ViewPlane (..), orthographic, depthOrder)   -- 只有 2D 宿主需要
-import Magic.Columns    (fromColumns)   -- 只有「手上已經是六條裸欄」的工具需要（0011）
+import Magic.Columns    (fromColumns)   -- 只有「手上已經是裸欄」的工具需要（0011；九欄版見 §2.6）
 ```
 
-`Magic.Columns.fromColumns` 是給已經持有六條欄位的消費者（例如自己的匯入工具）把它們**驗證後**變回 `ParticleBuffer` 的窄門——六欄不等長就回 `Left (LengthMismatch …)`，不會造出壞掉的 buffer。一般宿主用不到：`observeSpell` 給你的本來就是 buffer。
+`Magic.Columns.fromColumns` 是給已經持有六條欄位的消費者（例如自己的匯入工具）把它們**驗證後**變回 `ParticleBuffer` 的窄門——六欄不等長就回 `Left (LengthMismatch …)`，不會造出壞掉的 buffer。一般宿主用不到：`observeSpell` 給你的本來就是 buffer。九條裸欄（含速度）走 `fromColumnsWithVelocity`，見 [§2.6](#26-選配的速度欄與-trail-批次)。
 
 ```haskell
 runSpell :: BS.ByteString -> IO ()
@@ -904,7 +941,7 @@ void Update()
 | **關閉是單向門** | 一個 process 一份 GHC RTS，所以 `pm_shutdown()` 之後這個 process 就不能再使用本庫。但它**不再殺掉宿主 process**：`pm_init_ex()` 回 `PM_ERR_STATE`、`pm_init()` 是無操作、其餘符號一律回自己的哨兵值，Windows 與 Linux 語意完全一致（§4.4）。長駐型宿主（尤其 Unity Editor）乾脆永遠不要呼叫它 |
 | **DLL 約 46 MB** | `standalone` 內嵌整個 GHC RTS 的代價；換來的是宿主端零 Haskell 依賴。（量測基準：GHC 9.14.1、Windows x86_64、`standalone` 建置的 `particle-magic-ffi.dll`，2026-08-21 實測 47,990,272 bytes ＝ 45.8 MiB） |
 | **macOS 沒有任何機器驗過** | CI 矩陣是 `windows-latest` 與 `ubuntu-latest`（`.github/workflows/ci.yml`），兩個平台**每次都跑完整的 hspec 套件**，Windows 與 Linux 因此都是實測過的。macOS 的 `.dylib` 只有 cabal 的建置設定與封裝腳本（`@rpath`、`lipo`），沒有一台機器建過或跑過——`packaging/artifacts.json` 把兩個 macOS 目標記為 `verified: false`，見 §4.9 |
-| **billboard 形狀是無參數列舉** | func-spec 0015 起有四種形狀碼（square／soft-dot／ring／spark），但形狀**永遠不帶參數**（拉伸、旋轉需另開查詢，ADR-0013）；怎麼畫每種形狀由宿主自行決定（demo 用 64×64 程序生成 alpha 貼圖，RGB 全白、顏色仍來自頂點色） |
+| **billboard 形狀是無參數列舉** | func-spec 0015 起有五種形狀碼（square／soft-dot／ring／spark／trail），但形狀**永遠不帶參數**（拉伸、旋轉需另開查詢，ADR-0013）；怎麼畫每種形狀由宿主自行決定（demo 用 64×64 程序生成 alpha 貼圖，RGB 全白、顏色仍來自頂點色） |
 | **只有 Unity 被實測過** | C# 綁定在 Unity 6000.5.7f1 batchmode 實測通過（[0011 §9.3](spec/func-0011-host-integration-surface.md)，可用 `examples/unity/PmSmoke.cs` 一鍵複驗）；Godot／Unreal／其他 .NET 宿主只有合約保證，沒有實測 |
 | **空間摘要交資訊，不交判定** | func-spec 0025 給的是包絡與佔用格網（§3.1.1／§4.7），**不是**碰撞判定：「粒子撞到牆會怎樣」是遊戲層的規則。真要做碰撞回饋（粒子反彈）需要把結果送回模擬，那會是輸出第一次影響輸入，屬於另一輪。視錐剔除同理——核心沒有相機概念（ADR-0008） |
 | **發動點是編譯期常數** | `"anchors"` 的位置與法線在施法時定下，**不隨時間移動**（跟隨施法者的發動點做不到）。與 0007 的時變場參數是同一筆記帳，應一起做，記在 func-spec 0025 §7-8 |
