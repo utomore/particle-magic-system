@@ -61,9 +61,18 @@ import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Lazy as BL
 import Data.Foldable (toList)
 import Data.List (isInfixOf, isPrefixOf, tails)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Magic.Circle (Circle (..), Core (..), Nodes (..), PhaseConfig (..), TwoOf (..), emptyCircle)
+import Magic.Circle
+  ( Circle (..)
+  , Core (..)
+  , Nodes (..)
+  , PhaseConfig (..)
+  , SigilTiming (..)
+  , TwoOf (..)
+  , emptyCircle
+  )
 import Magic.Expr (Expr, ExprV3 (..))
 import Magic.Expr.Parse (parseExpr, renderExpr, renderExprParseError)
 import Magic.Rune
@@ -165,6 +174,7 @@ parseCircle = withObject "circle" $ \o -> do
   phases <- parseSlot "phases" parsePhaseConfig o
   fields <- parseFields o
   anchors <- parseAnchors o
+  sigil <- parseSlot "sigil" parseSigilTiming o
   pure
     Circle
       { outerRings = outer
@@ -174,6 +184,7 @@ parseCircle = withObject "circle" $ \o -> do
       , circlePhases = phases
       , circleFields = fields
       , circleAnchors = anchors
+      , circleSigil = sigil
       }
 
 emptyCore :: Core
@@ -542,6 +553,52 @@ parsePhaseConfig = withObject "phases" $ \o -> do
   converge <- o .: "converge" >>= nonNegative "converge"
   pure (PhaseConfig (Seconds draw) (Seconds converge))
 
+-- | The sigil's own time axis (func-spec 0026 §5): the fourth opt-in
+-- circle-level key, by the same rules as @phases@, @fields@ and
+-- @anchors@ — a missing key and @null@ both mean "no key".
+--
+-- Both members are optional too, so @"sigil": {}@ is legal and does
+-- nothing. That is deliberately /not/ the asymmetry 'parseAnchors' makes
+-- over @[]@: there, @Just []@ would have carried a second, different
+-- meaning that collides with absence, whereas @Just (SigilTiming 0
+-- False)@ behaves exactly as 'Nothing' does. There is no collision to
+-- refuse, so refusing would only be one more exception to remember.
+parseSigilTiming :: Value -> Parser SigilTiming
+parseSigilTiming = withObject "sigil" $ \o -> do
+  mLinger <- o .:? "linger"
+  linger <- maybe (pure 0) (\x -> boundedLinger "linger" x <?> Key "linger") mLinger
+  hold <- o .:? "hold"
+  pure (SigilTiming (Seconds linger) (fromMaybe False hold))
+
+-- | @linger@ is the one number in this codec that may be negative, so
+-- 'nonNegative' cannot carry it — but it still needs a ceiling. Without
+-- one, a wild value pushes the closing landmark so far out that
+-- 'Magic.Interface.isFinished' never practically turns true and the host
+-- waits forever on a spell that has visibly ended. The floor on the other
+-- side is 'Magic.Compile.compile''s ("the sigil is drawn to completion"),
+-- so this is a range check and not a lifetime check: value domain here,
+-- lower bound there.
+--
+-- NaN fails the comparison and is refused with the same message, which is
+-- the wanted answer for a duration.
+boundedLinger :: String -> Double -> Parser Double
+boundedLinger name x
+  | abs x <= maxLinger = pure x
+  | otherwise =
+      fail $
+        name
+          ++ " must be between "
+          ++ show (negate maxLinger)
+          ++ " and "
+          ++ show maxLinger
+          ++ " seconds, got "
+          ++ show x
+
+-- | How far a sigil's end may be shifted from the spell's, in seconds.
+-- A gate in front of the lifecycle, shaped after 'maxAnchors'.
+maxLinger :: Double
+maxLinger = 60
+
 parseEssence :: Value -> Parser EssenceRune
 parseEssence = withObject "core center" $ \o -> do
   element <- o .: "element" >>= parseElement
@@ -642,6 +699,12 @@ saveCircle circle =
               -- a load error (see 'parseAnchors'), so encoding one would
               -- write a file this codec refuses to read back.
               "anchors" .= maybe Null (toJSON . map encodeAnchor) (circleAnchors circle)
+            , -- Null rather than {} for the absent case, for the reason
+              -- 'phases' uses it: null and "no key" are the same thing to
+              -- 'slotValue', and an empty object would read back as
+              -- @Just (SigilTiming 0 False)@ — behaviourally identical,
+              -- but not the value that was written.
+              "sigil" .= maybe Null encodeSigilTiming (circleSigil circle)
             ]
       ]
 
@@ -780,6 +843,12 @@ encodeElement e = case e of
 encodePhaseConfig :: PhaseConfig -> Value
 encodePhaseConfig (PhaseConfig (Seconds d) (Seconds c)) =
   object ["draw" .= d, "converge" .= c]
+
+-- | Both members are written out even at their defaults: the file then
+-- says what it means, and reads back to the same value either way.
+encodeSigilTiming :: SigilTiming -> Value
+encodeSigilTiming (SigilTiming (Seconds linger) hold) =
+  object ["linger" .= linger, "hold" .= hold]
 
 encodeForceField :: ForceField -> Value
 encodeForceField field = case field of

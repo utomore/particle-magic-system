@@ -3,9 +3,9 @@ id: F001
 type: feature
 title: sigil-time-axis
 description: 陣的獨立時間軸：駐留位移與畫完即凍結
-status: open
+status: done
 created: 2026-08-19
-updated: 2026-08-19
+updated: 2026-08-22
 depends-on: []
 related-adr: [adr-0014, adr-0015, adr-0020]
 related-feature: []
@@ -238,13 +238,13 @@ sigilDef :: J
 
 ## TodoList
 
-- [ ] T1: `Magic.Circle` 加 `SigilTiming` 型別與 `Circle.circleSigil` 欄位，`emptyCircle` 補 `Nothing`，加入匯出清單  `dep: -`
-- [ ] T2: `Magic.Codec` 加 `parseSigilTiming`／`encodeSigilTiming`／`boundedLinger`／`maxLinger`，接上 `parseCircle` 與 `encodeCircle`  `dep: T1`
-- [ ] T3: `Magic.Compile` 算 `sigilEnd`（含 `phDraw` 下界與無 `phases` 惰性），傳給 `formationEmittersFor`，`ppEnd` 改為 `max spellEnd sigilEnd`  `dep: T1`
-- [ ] T4: `formationAppearance` 加 `hold` 參數，`formationEmittersFor` 由 `circleSigil` 取值傳入  `dep: T1`
-- [ ] T5: 零漣漪與摘要不變的迴歸守護：`hashCircle` 不因 `circleSigil` 改變，7 張帶 `phases` 的出貨陣逐位元不變  `dep: T3, T4`
-- [ ] T6: 作者面：`tools/Schema.hs` 的 `sigilDef`、重生成 `docs/spell.schema.json`、`docs/spell-schema.md` §8 標題與新的 §8.4  `dep: T2`
-- [ ] T7: 新示範陣 `assets/spells/lingering-seal.json`（同時用 `linger` 與 `hold`），並以 demo 視窗做一次手動 smoke  `dep: T3, T4, T6`
+- [x] T1: `Magic.Circle` 加 `SigilTiming` 型別與 `Circle.circleSigil` 欄位，`emptyCircle` 補 `Nothing`，加入匯出清單  `dep: -`
+- [x] T2: `Magic.Codec` 加 `parseSigilTiming`／`encodeSigilTiming`／`boundedLinger`／`maxLinger`，接上 `parseCircle` 與 `encodeCircle`  `dep: T1`
+- [x] T3: `Magic.Compile` 算 `sigilEnd`（含 `phDraw` 下界與無 `phases` 惰性），傳給 `formationEmittersFor`，`ppEnd` 改為 `max spellEnd sigilEnd`  `dep: T1`
+- [x] T4: `formationAppearance` 加 `hold` 參數，`formationEmittersFor` 由 `circleSigil` 取值傳入  `dep: T1`
+- [x] T5: 零漣漪與摘要不變的迴歸守護：`hashCircle` 不因 `circleSigil` 改變，7 張帶 `phases` 的出貨陣逐位元不變  `dep: T3, T4`
+- [x] T6: 作者面：`tools/Schema.hs` 的 `sigilDef`、重生成 `docs/spell.schema.json`、`docs/spell-schema.md` §8 標題與新的 §8.4  `dep: T2`
+- [x] T7: 新示範陣 `assets/spells/lingering-seal.json`（同時用 `linger` 與 `hold`），並以 demo 視窗做一次手動 smoke  `dep: T3, T4, T6`
 
 ## 1-to-1 測試對照表
 
@@ -261,3 +261,34 @@ sigilDef :: J
 ## 實作備註
 
 （實作期間與規格的偏差記錄於此。）
+
+**交付日期**：2026-08-22。全部 7 個 Todo 完成，`cabal test` 1940 examples / 0 failures。
+
+### 與規格一致的部分
+
+§4 的 `sigilEnd` 算式、§5 的 codec 形狀、§3 的 `formationAppearance hold` 分支、`maxLinger = 60` 與 `max drawEndD` 下界，全部照規格落地，沒有改動任何公開介面以外的東西。`Magic.Sigil` 一行未改（驗收 2 的實作依據仍然是「不做事」）。
+
+### 偏差與追加
+
+1. **出貨陣的數量是 8 張不是 7 張**。規格寫「7 張帶 `phases` 的出貨陣」，成文時漏了 `twin-lance.json`（func-spec 0025 的產物，它也有 `phases`）。`test/SigilTimingInvariantSpec.hs` 不寫死名單，改為**由 `assets/spells/` 掃出所有帶 `phases` 的陣**，所以涵蓋 8 張，且以後再加也自動涵蓋。
+
+2. **零漣漪律改以差分陳述，不重錄 golden**。規格 T5 寫「7 張出貨陣在交付前後 240 幀輸出逐位元相同」，但「交付前」的建置在測試裡拿不到。改為兩條在同一次執行內成立的差分：`Just (SigilTiming 0 False)` 與 `Nothing` 的 `CompiledSpell` 相等、240 幀逐位元相等（出貨陣與 `genAnyCircle` 兩種來源都測）。既有 16 張 golden **一張都沒重錄**，那才是「交付前後相同」的真正見證。這也順著 ADR-0020 D3 的裁決：陣形 golden 不再逐位元重錄。
+
+3. **`magic-inspect` 沒有加 `sigil` 摘要行**。原本加了，但 `test/InspectSpec.hs` 把 summary 的欄位清單釘成凍結契約（func-spec 0024 §9「the layout is the contract」），加一欄就紅。依 CLAUDE.md「delivered spec 說凍結就是凍結，要改得走 ADR」，**已回退**。作者仍看得到效果：`timeline` 的 `over` 這一列反映延長後的 `ppEnd`，`InspectSpec` 新增的一條測試把它釘住（`lingering-seal` 的 `over` = 7.800s，拿掉 `sigil` 鍵則是 5.300s，前三個界標兩態相同）。要讓 `sigil` 進 summary 是獨立的一輪，需要一份 ADR 或 func-spec 0024 的後續。記帳於此。
+
+4. **`assets/spells/lingering-seal.json` 牽動了既有的範例名單**。新增出貨陣一定會動到「本輪之前的範例」這類清單：`PerfGoldenSpec.examples`（新增並錄了 golden）、`Acceptance21Spec.newSpells` 與 `Acceptance23Spec` 新增的 `laterExamples`（把它排除在那兩輪的相容律母體外，照 0023／0025 加入時的既有作法），以及 `SpaceBoundsSpec` 的 pre-0025 凍結列（同 `twin-lance`／`comet-trail` 的理由：0026 之前不存在的陣沒有 pre-0025 值可凍）。`SchemaDocSpec` 與 `ValidateSpec` 的檔案數 16 → 17。
+
+5. **`docs/spell-schema.md` 比規格多改一處**（規格只要求 §8 標題與新的 §8.4）：§11 範例導覽加了 `lingering-seal.json` 一列——`SchemaDocSpec` 的「每個出貨範例都要在文件裡被點名」是硬性的，不加就紅。
+
+### 手動 smoke（T7）
+
+以 demo 視窗實際跑過（`aaa-` 前綴讓 `lingering-seal` 成為啟動時顯示的陣，事後刪除），俯視面（`el 89`）連拍 46 張。四個時刻對上四條驗收：
+
+| age | 畫面 | 對應 |
+|---|---|---|
+| 0.52s | 陣正在被畫出來，外環上緣尚未接合 | 驗收 5 前半：索引序＝繪製序不受 `hold` 影響 |
+| 2.78s | 陣完整、亮度均勻（沒有呼吸的明暗波）、相對前一刻已轉過一個角度 | 驗收 5 後半：外觀恆定但仍自轉 |
+| 6.03s | 法術本體已於 5.3s 結束，畫面只剩陣，868 粒 | 驗收 3：`linger` 讓陣活過法術 |
+| 7.47s | 陣正沿當初畫上去的順序被擦掉（左半已消失、右半還在） | §3 記的 `hold` 收場語意，零程式碼那條 |
+
+7.8s 後自動重新施放，與 `ppEnd = 5.3 + 2.5` 吻合。

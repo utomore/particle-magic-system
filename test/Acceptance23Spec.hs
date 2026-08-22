@@ -71,6 +71,11 @@ frames = 240
 spellDir :: FilePath
 spellDir = "assets/spells"
 
+-- | Examples that postdate this round, and so cannot witness anything
+-- about it: lingering-seal joined in func-spec 0026.
+laterExamples :: [String]
+laterExamples = ["lingering-seal"]
+
 -- | Every example that existed before this round.
 priorExamples :: IO [String]
 priorExamples = do
@@ -80,7 +85,7 @@ priorExamples = do
         [ take (length e - 5) e
         | e <- entries
         , ".json" `isSuffixOf` e
-        , take (length e - 5) e /= newExample
+        , take (length e - 5) e `notElem` (newExample : laterExamples)
         ]
     )
 

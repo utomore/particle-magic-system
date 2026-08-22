@@ -83,6 +83,7 @@ instance Arbitrary ExprCircle where
         , circlePhases = Nothing
         , circleFields = []
         , circleAnchors = Nothing
+        , circleSigil = Nothing
         }
     where
       genMaybe g = oneof [pure Nothing, Just <$> g]

@@ -74,6 +74,7 @@ busyCircle =
     , circlePhases = Nothing
     , circleFields = []
     , circleAnchors = Nothing
+    , circleSigil = Nothing
     }
 
 spec :: Spec

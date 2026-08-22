@@ -87,7 +87,7 @@ import Data.Maybe (fromMaybe)
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
 import Data.Word (Word32)
-import Magic.Circle (Circle (..), Core (..), Nodes (..), PhaseConfig (..), TwoOf (..))
+import Magic.Circle (Circle (..), Core (..), Nodes (..), PhaseConfig (..), SigilTiming (..), TwoOf (..))
 import Magic.Expr
   ( BinOp (..)
   , Expr (..)
@@ -576,6 +576,23 @@ compile circle = do
       -- particle dies. Func-spec 0017 hands it to step 5 so the sigil
       -- lives exactly as long as the spell does.
       spellEnd = Seconds (delay + duration + lifetime)
+      Seconds spellEndD = spellEnd
+      -- The sigil's own end (func-spec 0026 §4). Without a @sigil@ key,
+      -- and with @phases@ absent, this is @spellEnd@ to the bit — which
+      -- is what makes the zero-ripple law hold by construction rather
+      -- than by a test that happens to pass: the whole expression below
+      -- degenerates to the pre-0026 one.
+      --
+      -- @max drawEnd@ is the floor: however negative the shift, the
+      -- sigil is drawn to completion. The codec caps the magnitude; this
+      -- is the other end of the same gate.
+      sigilEnd = case (mPhases, circleSigil circle) of
+        (Just pc, Just st) ->
+          let Seconds lingerD = stLinger st
+              Seconds drawEndD = phDraw pc
+           in Seconds (max drawEndD (spellEndD + lingerD))
+        _ -> spellEnd
+      Seconds sigilEndD = sigilEnd
       castingEmitterAt anchor n =
         EmitterSpec
           { emAnchor = anchor
@@ -595,7 +612,7 @@ compile circle = do
         Just anchors -> zipWith castingEmitterAt anchors (shareCount count (length anchors))
       formationEmitters = case mPhases of
         Nothing -> []
-        Just _ -> formationEmittersFor circle castStart spellEnd element
+        Just _ -> formationEmittersFor circle castStart sigilEnd element
       element = essenceElementOf (core circle)
       allEmitters = map compileEmitterExprs (castingEmitters ++ formationEmitters)
       totalCount = sum (map emCount allEmitters)
@@ -608,7 +625,10 @@ compile circle = do
           { ppDrawEnd = maybe (Seconds 0) phDraw mPhases
           , ppConvergeEnd = castStart
           , ppCastingEnd = Seconds (delay + duration)
-          , ppEnd = spellEnd
+          , -- Whichever outlives the other. The three landmarks above
+            -- belong to the spell body and do not move: a lingering
+            -- sigil does not delay the cast, it only outstays it.
+            ppEnd = Seconds (max spellEndD sigilEndD)
           }
   if totalCount > budgetCap
     then Left (BudgetExceeded totalCount budgetCap)
@@ -859,8 +879,11 @@ foldSlot f slot z = maybe z (f z) slot
 -- in (@spellEnd@ = 'ppEnd') instead of dying at @castStart@, and drops the
 -- synthesized convergence curve: the spell is now fired /out of/ a sigil
 -- that is still there, rather than consuming it.
+-- Func-spec 0026 makes that third argument the /sigil's/ end rather than
+-- the spell's: they are the same value unless the circle names a
+-- @linger@, and the signature does not move.
 formationEmittersFor :: Circle -> Seconds -> Seconds -> Element -> [EmitterSpec]
-formationEmittersFor circle castStart spellEnd element =
+formationEmittersFor circle castStart sigilEnd element =
   concat
     [ [ringSlotEmitter (skCount sk) (SpawnOnStroke sk) | sk <- V.toList (spStrokes plan)]
     , [ringSlotEmitter cnt (SpawnOnShape shape) | (shape, cnt) <- V.toList (spShapes plan)]
@@ -872,8 +895,8 @@ formationEmittersFor circle castStart spellEnd element =
     ]
   where
     plan = sigilPlan circle
-    formEnv = formEnvFor castStart spellEnd
-    appearance = formationAppearance element
+    formEnv = formEnvFor castStart sigilEnd
+    appearance = formationAppearance (maybe False stHold (circleSigil circle)) element
 
     ringSlotEmitter cnt spawn =
       EmitterSpec
@@ -936,7 +959,7 @@ formationMotion spawn =
     }
 
 -- | The formation particles' envelope. @castStart@ sets the /pace/ the
--- sigil is drawn at, @spellEnd@ ('ppEnd') sets how long it stays.
+-- sigil is drawn at, the second argument sets how long it stays.
 --
 -- Derivation (func-spec 0017 §2, re-proving spec 0006 §4.3's chain with
 -- the new endpoint):
@@ -952,12 +975,19 @@ formationMotion spawn =
 --    holding the sigil for the whole cast costs nothing in the Drawing
 --    window and why it keeps pulsing (redrawing itself every @formLife@)
 --    rather than freezing.
+--
+-- Func-spec 0026 hands it the /sigil's/ end instead, which is the same
+-- number unless the circle names a @linger@; step 2 above then reads
+-- "the sigil ends where it was told to". Nothing in the body changes,
+-- for the reason step 3 gives: only 'envDuration' depends on this
+-- argument, and only the far end of the sigil's life depends on
+-- 'envDuration'.
 formEnvFor :: Seconds -> Seconds -> Envelope
-formEnvFor (Seconds castStartD) (Seconds spellEndD) =
+formEnvFor (Seconds castStartD) (Seconds sigilEndD) =
   let formLife = min 0.6 (castStartD / 2)
    in Envelope
         { envDelay = Seconds 0
-        , envDuration = Seconds (max 0 (spellEndD - formLife))
+        , envDuration = Seconds (max 0 (sigilEndD - formLife))
         , envLifetime = Seconds formLife
         }
 
@@ -1193,9 +1223,28 @@ evalInterval expr env = go expr
 -- Always 'BillboardSquare', 'StyleRune' or not: a drawn line wants hard
 -- dots to stay sharp (spec 0015 §2), and this is what keeps the shape
 -- vocabulary opt-in for every pre-0015 circle.
-formationAppearance :: Element -> Appearance
-formationAppearance element =
+--
+-- Func-spec 0026 adds the @hold@ branch, and it is the whole of "freeze
+-- once drawn". Every other term of a formation particle's position is
+-- age-free — the spin runs off the cast clock (ADR-0020), the trajectory
+-- is @Forward 0@, spread and drift are zero, and there is neither a
+-- range curve nor a convergence one — so the only observable the
+-- @formLife@ rebirth cycle drives is this ramp. Flatten it and the cycle
+-- becomes unobservable: the particles still die and are reborn, they
+-- just look the same on both sides of the boundary.
+--
+-- 'Magic.Particle.Analytic.firstBirth' is untouched, so the first
+-- @formLife@ still lays the sigil down one index at a time — spec 0016's
+-- "index order is drawing order" survives verbatim, which is what makes
+-- this the literal reading of /draw, then freeze/. At the far end the
+-- spawn window closes and each particle vanishes on its own cycle
+-- boundary, in index order: with the fade gone that reads as the sigil
+-- being erased in the order it was drawn, which is the symmetric ending
+-- and costs no code.
+formationAppearance :: Bool -> Element -> Appearance
+formationAppearance hold element =
   let Appearance (ColorRamp start _) _ blend _ _ = elementAppearance element
-   in Appearance (ColorRamp start (clearAlpha start)) 0.03 blend Nothing BillboardSquare
+      end = if hold then start else clearAlpha start
+   in Appearance (ColorRamp start end) 0.03 blend Nothing BillboardSquare
   where
     clearAlpha c = c .&. 0xFFFFFF00

@@ -70,6 +70,12 @@ examples =
   , "grand-sigil"
   , "gravity-well"
   , "lattice-seal"
+  , -- func-spec 0026's example, and the first in the net whose sigil has
+    -- a time axis of its own: its baseline is necessarily recorded on the
+    -- build that introduced it, so it is net for later rounds rather than
+    -- evidence about this one. The zero-ripple law this round owes is
+    -- carried by the fifteen goldens around it being unchanged.
+    "lingering-seal"
   , "lissajous"
   , "pulse-ring"
   , "ring-fire"

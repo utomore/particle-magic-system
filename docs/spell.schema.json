@@ -92,6 +92,16 @@
               "$ref": "#/definitions/anchorArray"
             }
           ]
+        },
+        "sigil": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/sigil"
+            }
+          ]
         }
       }
     },
@@ -769,6 +779,22 @@
         },
         "normal": {
           "$ref": "#/definitions/vec3"
+        }
+      }
+    },
+    "sigil": {
+      "description": "The drawn circle's own clock. Both keys are optional and '\"sigil\": {}' does nothing. Omitting the key is the default: the circle ends with the spell and keeps redrawing itself while it waits.",
+      "type": "object",
+      "properties": {
+        "linger": {
+          "description": "Seconds to shift the circle's end by, relative to the spell's. Positive = it outstays the spell; negative = it goes first, but it is always drawn to completion whatever the value.",
+          "type": "number",
+          "minimum": -60,
+          "maximum": 60
+        },
+        "hold": {
+          "description": "Freeze once drawn: the circle is still laid down one point at a time, and after that its look no longer changes. It keeps turning either way.",
+          "type": "boolean"
         }
       }
     },

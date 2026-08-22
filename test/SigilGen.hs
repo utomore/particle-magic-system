@@ -136,7 +136,11 @@ genMaybe g = oneof [pure Nothing, Just <$> g]
 --
 -- Activation points are deliberately left at 'Nothing': the sigil is
 -- drawn once however many places the spell fires from (func-spec 0025
--- §2.6), so they are not part of what a sigil generator varies.
+-- §2.6), so they are not part of what a sigil generator varies. The
+-- sigil's time axis is left at 'Nothing' for the opposite reason
+-- (func-spec 0026): every consumer of this generator asserts a law about
+-- the /geometry/, and a generated @linger@ or @hold@ would vary the
+-- timing underneath them without varying anything they measure.
 genAnyCircle :: Gen Circle
 genAnyCircle =
   Circle
@@ -146,6 +150,7 @@ genAnyCircle =
     <*> (Core <$> genMaybe (EssenceRune <$> elements [Neutral, Fire, Water, Lightning] <*> choose (0.05, 10)) <*> genNodes)
     <*> genMaybe (PhaseConfig <$> (Seconds <$> choose (0.1, 3)) <*> (Seconds <$> choose (0, 2)))
     <*> (resize 3 (listOf genField))
+    <*> pure Nothing
     <*> pure Nothing
   where
     genNodes =
