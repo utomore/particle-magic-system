@@ -379,6 +379,14 @@ data StrokeKind
 -- | Particle budget of one sigil plan (strokes + shape previews). The
 -- node and center emitters keep func-spec 0006's structural constants and
 -- are counted outside this cap (at most 64 particles all told).
+--
+-- This is the budget of /one layer/, not of one sigil (magic-semantics
+-- E001). A flat circle has exactly one layer, so nothing about the value
+-- or about 'sigilPlan' changed when that was settled; a stacked circle
+-- pays it once per layer, and 'Magic.Compile.stackDepth'\'s ceiling of 5
+-- bounds the whole sigil at @(sigilBudget + 64) * 5@. That total is
+-- settled by 'Magic.Compile.budgetCap' alongside the casting particles,
+-- like any other emitter's demand — the stack has no gate of its own.
 sigilBudget :: Int
 sigilBudget = 1536
 

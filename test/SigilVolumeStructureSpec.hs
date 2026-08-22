@@ -11,10 +11,12 @@
 --   * three circles at three different slot-occupancy counts (0, some,
 --     all five) produce depths of 2, something in between, and 5 —
 --     monotone non-decreasing in how many slots are filled;
---   * whatever the depth, every stroke's and every shape's particle count
---     summed across its layers never exceeds what 'Magic.Sigil.sigilPlan'
---     handed that stroke/shape for a single, unstacked layer — stacking
---     can only thin an existing count out, never inflate it;
+--   * whatever the depth, every stroke's particle count summed across its
+--     layers is exactly what 'Magic.Sigil.sigilPlan' handed that stroke
+--     times the depth — magic-semantics E001 reads @sigilBudget@ as one
+--     layer's budget, so each layer carries a full count and stacking
+--     makes the sigil denser rather than spreading the same particles
+--     thinner (this reverses F002's own reading, assumption A4);
 --   * the depth is always in @[1, 5]@ — 1 only when @circleVolume@ is
 --     off, never above the feature's own ceiling.
 module SigilVolumeStructureSpec (spec) where
@@ -123,17 +125,18 @@ spec = describe "structure derives the depth (magic-semantics F002 T5)" $ do
       depthOf (withVolume occ2) `shouldSatisfy` (>= 2)
       depthOf (withVolume occ5) `shouldSatisfy` (>= 2)
 
-  describe "stacking only thins, never inflates, a stroke's particle count" $
-    it "every stroke's cross-layer sum stays at or under the plan's single-layer count" $
+  describe "stacking multiplies a stroke's particle count by the depth" $
+    it "every stroke's cross-layer sum is exactly the plan's count times the depth" $
       mapM_
         ( \c -> do
             let stacked = withVolume c
                 plan = sigilPlan stacked
                 spell = compiledOf stacked
+                depth = depthOf stacked
             mapM_
               ( \sk -> do
                   let total = sum (map emCount (strokeGroup spell sk))
-                  total `shouldSatisfy` (<= skCount sk)
+                  total `shouldBe` skCount sk * depth
               )
               (V.toList (spStrokes plan))
         )
