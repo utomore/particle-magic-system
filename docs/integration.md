@@ -472,6 +472,7 @@ int main(void)
 | **呼叫順序錯了** | `PM_ERR_STATE`（−7）：`pm_init()` 之前就呼叫、`pm_shutdown()` 之後再初始化、重複帶設定初始化、或設定在當前平台無法生效。是**你的**呼叫順序問題，不是法術的問題（見 §4.4） |
 | **庫內部出錯** | `PM_ERR_INTERNAL`（−6）：例外防火牆攔到了庫自己的失敗（記憶體耗盡、缺陷、沒人寫到的情況）。永遠不是你這次呼叫的錯，**不必重試**，你的 process 也不受影響——但值得回報一個 bug。良好行為的呼叫永遠不會看到它 |
 | `pm_scene_cast` / `pm_scene_cast_many` 失敗 | 同樣四碼加一：`PM_ERR_JSON` / `PM_ERR_BUDGET`（單張陣自己就編不出來）/ **`PM_ERR_QUOTA`**（編得出來，但場景放不下——見 §4.6）/ `PM_ERR_ARGS`（`NULL` 場景、`NULL out_id`、負 count）。四種都寫人類可讀原因進 `err_buf`，且**場景完全未變** |
+| **保留碼：`PM_ERR_MANA`（−8）** | magic-semantics F003 為法力代價閘門保留的錯誤碼（ADR-0011 D7，只加不改）。**本節上面列出的每個入口今天都不會回傳它**：`pm_cast`／`pm_cast_ex`／`pm_scene_cast`／`pm_scene_cast_many` 呼叫的是不帶法力上限的編譯路徑。核心已提供 `Magic.Compile.compileWithManaCap`／`compileManyWithManaCap`，但尚未接上任何 C ABI 入口——這個碼先佔位，等那個入口存在時才會被實際回傳 |
 
 錯誤訊息與 demo HUD 上顯示的是同一句（共用 `Magic.Codec.renderLoadError`），含 JSON 路徑，例如
 `spell JSON error: Error in $.circle.bridge: unknown rune tag "bogus"`。

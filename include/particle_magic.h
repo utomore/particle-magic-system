@@ -248,6 +248,13 @@ extern "C" {
    initialising again after pm_shutdown. */
 #define PM_ERR_STATE (-7)
 
+/* Mana cost exceeded (magic-semantics F003, ADR-0011 D7 -- add only). No
+   entry point in this header returns it today: pm_cast, pm_cast_ex,
+   pm_scene_cast and pm_scene_cast_many all call the uncapped compile path,
+   which never checks mana. This code is reserved for a future entry point
+   that lets a host pass a mana cap. */
+#define PM_ERR_MANA (-8)
+
 /* Grid dimension whose cell count fits one uint32_t: 3*3*3 = 27 <= 32,
    which is what lets pm_occupancy_mask answer without an array
    (func-spec 0025). 27 is this system's own nine-grid -- up/down/left/

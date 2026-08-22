@@ -3,7 +3,7 @@ id: F003
 type: feature
 title: spell-cost-model
 description: 法力代價維度與可選上限的編譯閘門,粒子與法力超支可分辨
-status: open
+status: done
 created: 2026-08-22
 updated: 2026-08-22
 depends-on: []
@@ -222,11 +222,11 @@ pmErrMana :: CInt
 
 ## TodoList
 
-- [ ] T1: `Magic.Compile` 新增 `ManaExceeded` 建構子與 `manaCost :: Circle -> Int`（內部五個窮盡權重查表，覆蓋 `OuterRune`/`BridgeRune`/`InnerRune`/`EssenceRune`/`NodeRune` 每個建構子），加入模組匯出清單  `dep: -`
-- [ ] T2: `Magic.Compile` 新增 `compileWithManaCap`／`compileManyWithManaCap`：`Nothing` 與現行 `compile`/`compileMany` 逐位元一致；粒子預算優先於法力檢查；合成先加總 `manaCost` 再對同一上限檢查一次  `dep: T1`
-- [ ] T3: C ABI 純增補：`include/particle_magic.h` 新增 `PM_ERR_MANA (-8)`；`Magic.FFI` 新增並匯出 `pmErrMana`；`bindings/csharp/ParticleMagic.cs` 新增 `ErrMana`；`test/FFIContractSpec.hs` 的「every error code」對照表與「完整 #define 清單」兩處同步收錄 `PM_ERR_MANA`  `dep: T1`
-- [ ] T4: `tools/Validate.hs` 的 `renderCompileError` 與 `tools/Inspect.hs` 的 `renderCompileErrorForInspect` 補上 `ManaExceeded` 分支，恢復窮盡  `dep: T1`
-- [ ] T5: 迴歸守護：`compileWithManaCap Nothing`／`compileManyWithManaCap Nothing` 與 `compile`／`compileMany` 在同一次執行內對出貨陣與隨機產生的陣（`SigilGen.genAnyCircle`）逐位元相同（`CompiledSpell` 的 `Eq` 比較），不重錄任何 golden  `dep: T2`
+- [x] T1: `Magic.Compile` 新增 `ManaExceeded` 建構子與 `manaCost :: Circle -> Int`（內部五個窮盡權重查表，覆蓋 `OuterRune`/`BridgeRune`/`InnerRune`/`EssenceRune`/`NodeRune` 每個建構子），加入模組匯出清單  `dep: -`
+- [x] T2: `Magic.Compile` 新增 `compileWithManaCap`／`compileManyWithManaCap`：`Nothing` 與現行 `compile`/`compileMany` 逐位元一致；粒子預算優先於法力檢查；合成先加總 `manaCost` 再對同一上限檢查一次  `dep: T1`
+- [x] T3: C ABI 純增補：`include/particle_magic.h` 新增 `PM_ERR_MANA (-8)`；`Magic.FFI` 新增並匯出 `pmErrMana`；`bindings/csharp/ParticleMagic.cs` 新增 `ErrMana`；`test/FFIContractSpec.hs` 的「every error code」對照表與「完整 #define 清單」兩處同步收錄 `PM_ERR_MANA`  `dep: T1`
+- [x] T4: `tools/Validate.hs` 的 `renderCompileError` 與 `tools/Inspect.hs` 的 `renderCompileErrorForInspect` 補上 `ManaExceeded` 分支，恢復窮盡  `dep: T1`
+- [x] T5: 迴歸守護：`compileWithManaCap Nothing`／`compileManyWithManaCap Nothing` 與 `compile`／`compileMany` 在同一次執行內對出貨陣與隨機產生的陣（`SigilGen.genAnyCircle`）逐位元相同（`CompiledSpell` 的 `Eq` 比較），不重錄任何 golden  `dep: T2`
 
 ## 1-to-1 測試對照表
 
@@ -245,4 +245,8 @@ pmErrMana :: CInt
 
 ## 實作備註
 
-（實作期間與規格的偏差記錄於此，撰寫時留空。）
+- 動工前重新打開介面表列出的每個檔案核對真實簽名：`Circle` 已多出第五個欄位 `circleVolume`（F002 交付），但本卡的每個建構位置（`ManaWeightSpec`／`ManaCapSpec`）一律用 `emptyCircle` 加 record update，沒有任何完整記錄語法的建構式，因此不受這個新欄位影響；`manaCost` 只讀 `outerRings`／`interLayer`／`innerRings`／`core` 四個既有欄位，不碰 `circleVolume`。
+- T3 落地時發現 `test/FFIContractSpec.hs` 的「完整 `#define` 清單」在本卡動工前已是 **28** 項（不是契約卡文檔寫的「目前 28 個」以外的別的數字），加入 `PM_ERR_MANA` 後變 **29** 項——與契約卡「T3」欄位的描述一致，已按實際檔案內容核對後同步。
+- T4 落地時發現 `tools/Validate.hs` 的 `renderCompileError` 原本**未列在模組匯出清單**（`renderCompileErrorForInspect` 已匯出，兩者不對稱）。為了讓 1-to-1 測試能像契約卡寫的那樣直接呼叫 `renderCompileError`，把它加進 `Validate` 模組的匯出清單——純粹是把既有的頂層函式變成公開匯出，不改變它的簽名、行為或 `magic-validate` 的凍結 CLI 契約（§9 凍結的是命令列與 `renderReport` 的行內格式，不含這個函式是否匯出）。
+- 跑 `cabal test` 時發現既有的 `test/ExampleLoopSpec.hs`（host-runtime 子系統的文件守門測試）斷言 `docs/integration.md` §4.3 錯誤處理表要含 header 定義的**每一個** `PM_ERR_*` 名稱；新增 `PM_ERR_MANA` 後它變紅。這不在本卡的 TodoList 內（`docs/integration.md` 屬 authoring-engineering／host-runtime 的既有守門測試涵蓋範圍），但屬於本卡新增錯誤碼的必然連動，修法是在該表加一列，明文寫「保留碼、今天沒有入口會回傳它」，呼應 `include/particle_magic.h`／`Magic.FFI` 裡同樣的用語。
+- `manaCost` 的四個 outer/inner 環讀取用 `ringA`／`ringB`（`TwoOf` 的既有欄位名），對應「一環兩層」的既有慣例；沒有為法力這一輪新增任何 `Circle`／`Magic.Rune` 型別或欄位。

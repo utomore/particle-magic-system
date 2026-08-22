@@ -91,6 +91,7 @@ module Magic.FFI
   , pmErrQuota
   , pmErrInternal
   , pmErrState
+  , pmErrMana
   , pmOccupancyDimDefault
   , pmPlaneSideXY
   , pmPlaneTopXZ
@@ -270,6 +271,16 @@ pmErrInternal = -6
 -- here so the header, the Haskell mirror and the C# binding are reconciled
 -- once instead of twice.
 pmErrState = -7
+
+-- | Mana cost exceeded (magic-semantics F003, ADR-0011 D7 — add only).
+-- Reserved: no entry point in this module returns it, since 'pm_cast',
+-- 'pm_cast_ex', 'pm_scene_cast' and 'pm_scene_cast_many' all call the
+-- uncapped 'Magic.Compile.compile' / 'Magic.Compile.compileMany', which
+-- never produce 'Magic.Compile.ManaExceeded'. This constant exists so the
+-- header, the Haskell mirror and the C# binding are reconciled once, ahead
+-- of the FFI entry point that will actually surface it.
+pmErrMana :: CInt
+pmErrMana = -8
 
 -- | 'CastRefusal' → C code. A pure function, so the classification is
 -- testable without a handle in sight, and so the /only/ decision the

@@ -56,6 +56,11 @@ module Magic.Compile
   , CompileError (..)
   , budgetCap
 
+    -- * Mana cost (magic-semantics F003)
+  , manaCost
+  , compileWithManaCap
+  , compileManyWithManaCap
+
     -- * Particle budget and spatial extent (func-spec 0010 S7)
   , ParticleBudget (..)
   , emitterBounds
@@ -443,9 +448,16 @@ data ParticleBudget = ParticleBudget
 
 -- | Compilation failure. Extensible sum; first real constructor this
 -- round (the 0001 placeholder was never constructed and is replaced).
+--
+-- 'ManaExceeded' is the second constructor (magic-semantics F003, ADR-0011
+-- D7's purely-additive rule): a distinct constructor from 'BudgetExceeded'
+-- so a host's 'case' can tell which cost dimension refused the cast —
+-- particle count or mana.
 data CompileError
   = -- | Requested particle count, cap.
     BudgetExceeded !Int !Int
+  | -- | Requested mana cost, cap.
+    ManaExceeded !Int !Int
   deriving (Eq, Show)
 
 -- | Hard particle cap: the most particles one compiled spell — a single
@@ -677,6 +689,91 @@ compileMany circles = do
   if total > budgetCap
     then Left (BudgetExceeded total budgetCap)
     else Right composed
+
+-- Mana cost (magic-semantics F003) -------------------------------------------
+
+-- | A circle's mana cost: the second cost dimension alongside the particle
+-- budget. Purely a function of which runes occupy which slots — not of
+-- particle counts, not of 'essPower' (already the particle budget's own
+-- input, via 'interpretCore'), and not of anything a sampler produces. Each
+-- of the five rune slots is looked up in its own constant weight table and
+-- the totals summed; an empty slot contributes 0, so the all-empty circle
+-- costs 0 mana no matter how low a cap is set.
+manaCost :: Circle -> Int
+manaCost c =
+  maybe 0 outerRuneCost (ringA (outerRings c))
+    + maybe 0 outerRuneCost (ringB (outerRings c))
+    + maybe 0 bridgeRuneCost (interLayer c)
+    + maybe 0 innerRuneCost (ringA (innerRings c))
+    + maybe 0 innerRuneCost (ringB (innerRings c))
+    + maybe 0 (essenceRuneCost . essElement) (coreCenter (core c))
+    + maybe 0 (const 1) (north (coreNodes (core c)))
+    + maybe 0 (const 1) (south (coreNodes (core c)))
+    + maybe 0 (const 1) (east (coreNodes (core c)))
+    + maybe 0 (const 1) (west (coreNodes (core c)))
+
+-- | Outer-ring (presentation) weight table.
+outerRuneCost :: OuterRune -> Int
+outerRuneCost rune = case rune of
+  ShapeRune _ -> 2
+  RadiateRune _ -> 1
+  RangeRune _ -> 3
+  StyleRune _ -> 1
+
+-- | Interlayer (modulation) weight table.
+bridgeRuneCost :: BridgeRune -> Int
+bridgeRuneCost rune = case rune of
+  PhaseRune _ -> 1
+  ConvergeRune _ -> 3
+  AmplifyRune _ -> 3
+
+-- | Inner-ring (behavior) weight table.
+innerRuneCost :: InnerRune -> Int
+innerRuneCost rune = case rune of
+  TrajectoryRune _ -> 2
+  TimingRune _ -> 1
+  FormulaRune _ -> 4
+
+-- | Core-center (essence) weight table, keyed on 'Element' alone.
+essenceRuneCost :: Element -> Int
+essenceRuneCost element = case element of
+  Neutral -> 0
+  Fire -> 2
+  Water -> 2
+  Metal -> 2
+  Wood -> 2
+  Earth -> 2
+  Lightning -> 3
+  Yin -> 3
+  Yang -> 3
+
+-- | 'compile' with an optional mana cap. 'Nothing' is bit-for-bit 'compile'
+-- — the zero-ripple law holds by construction, since that branch runs no
+-- arithmetic 'compile' did not already run. Particle budget is checked
+-- first (inside 'compile' itself); mana is only checked once that
+-- succeeds, so a circle that already fails the particle cap always reports
+-- 'BudgetExceeded', never 'ManaExceeded'.
+compileWithManaCap :: Maybe Int -> Circle -> Either CompileError CompiledSpell
+compileWithManaCap mCap circle = do
+  spell <- compile circle
+  case mCap of
+    Nothing -> Right spell
+    Just cap ->
+      let total = manaCost circle
+       in if total > cap then Left (ManaExceeded total cap) else Right spell
+
+-- | 'compileMany' with an optional mana cap: the composed total mana is
+-- Σ 'manaCost' over every circle, checked once against the same cap — the
+-- mana counterpart of the particle budget's "summed after composing,
+-- checked once" rule.
+compileManyWithManaCap :: Maybe Int -> [Circle] -> Either CompileError CompiledSpell
+compileManyWithManaCap mCap circles = do
+  spell <- compileMany circles
+  case mCap of
+    Nothing -> Right spell
+    Just cap ->
+      let total = sum (map manaCost circles)
+       in if total > cap then Left (ManaExceeded total cap) else Right spell
 
 -- | Run architecture §8.2's whole acceleration ladder over every formula an
 -- emitter carries: fold the constants (func-spec 0010 S6), then share and
