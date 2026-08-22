@@ -554,6 +554,7 @@ test-suite spec
                     , SigilVolumeInvariantSpec
                     , SigilVolumeStructureSpec
                     , SigilVolumeBoundsSpec
+                    , SigilVolumeAmplifySpec
                     , ManaWeightSpec
                     , ManaCapSpec
                     , ManaErrorRenderSpec

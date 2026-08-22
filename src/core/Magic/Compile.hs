@@ -1008,21 +1008,6 @@ layerAnchor :: Int -> Int -> Anchor
 layerAnchor depth k =
   originAnchor {anchorOffset = V3 0 0 (layerGap * (fromIntegral k - 0.5 * (fromIntegral depth - 1)))}
 
--- | Split a stroke's (or shape preview's) particle count evenly over
--- @depth@ layers, rounding each layer's share down to a multiple of
--- @arms@ so every arm still gets the same number of points (the same
--- reason 'Magic.Sigil.sigilPlan' clips its own budget overrun that way).
--- The cross-layer sum is therefore never more than @total@ — the leftover
--- from each division is dropped, never redistributed — so opting into the
--- stack can only thin out an existing particle count, never inflate it.
---
--- @perLayerCount total 1 arms == total@ whenever @total@ is already a
--- multiple of @arms@, which every stroke and shape 'Magic.Sigil.sigilPlan'
--- produces is: the other half of the zero-ripple identity.
-perLayerCount :: Int -> Int -> Int -> Int
-perLayerCount total depth arms =
-  ((total `div` max 1 depth) `div` max 1 arms) * max 1 arms
-
 -- | Circle geometry → the formation-drawing emitters. Only called when
 -- 'circlePhases' is 'Just'.
 --
@@ -1048,26 +1033,37 @@ perLayerCount total depth arms =
 -- the spell's: they are the same value unless the circle names a
 -- @linger@, and the signature does not move.
 --
--- Magic-semantics F002 adds the stroke/shape stack: when 'stackDepth'
--- exceeds 1 each stroke and each shape preview produces one emitter /per
--- layer/, spread symmetrically along the normal by 'layerAnchor' and
--- sharing the stroke's original particle count by 'perLayerCount'. Node
--- and center emitters are untouched — they are the drawing stage's
--- decorations (spec 0006 §4.4), not the sigil's own strokes, so F002's
--- contract card leaves them out (see the feature doc's assumption A2).
+-- Magic-semantics F002 adds the stack: when 'stackDepth' exceeds 1 every
+-- one of these emitters is produced once /per layer/, spread symmetrically
+-- along the normal by 'layerAnchor'.
+--
+-- Magic-semantics E001 settles what a layer costs and who joins in. Each
+-- layer carries the plan's /own/ count untouched rather than a share of
+-- it — 'Magic.Sigil.sigilBudget' is the budget of one layer, so a stacked
+-- sigil is genuinely denser than a flat one instead of the same particles
+-- spread thinner (F002's assumption A4). And the four node points and the
+-- center point stack alongside the strokes, at the same depth and the
+-- same layer offsets, each layer keeping spec 0006 §4.4's structural
+-- constants of 12 and 16 in full (F002's assumption A2): the sigil reads
+-- as one solid object rather than a stack of rings with two flat
+-- decorations wedged in the middle. Nothing else moves — no new error, no
+-- new cap; the extra particles are settled by the existing 'budgetCap'
+-- gate like any others.
+--
 -- At @stackDepth circle == 1@ (the only value @circleVolume == Nothing@
--- can produce) 'layeredEmitters' degenerates to exactly one emitter per
--- stroke/shape with 'originAnchor' and the untouched count — bit for bit
--- what this function produced before F002.
+-- can produce) every layered group degenerates to exactly one emitter at
+-- its own pre-F002 anchor with its own untouched count — bit for bit what
+-- this function produced before F002, and now by construction rather than
+-- by an identity that needed @total@ to be a multiple of the arm count.
 formationEmittersFor :: Circle -> Seconds -> Seconds -> Element -> [EmitterSpec]
 formationEmittersFor circle castStart sigilEnd element =
   concat
     [ concat
-        [ layeredEmitters (SpawnOnStroke sk) (skCount sk) (max 1 (skSymmetry sk))
+        [ layeredEmitters (SpawnOnStroke sk) (skCount sk)
         | sk <- V.toList (spStrokes plan)
         ]
     , concat
-        [ layeredEmitters (SpawnOnShape shape) cnt 1
+        [ layeredEmitters (SpawnOnShape shape) cnt
         | (shape, cnt) <- V.toList (spShapes plan)
         ]
     , nodeSlotEmitter 12 (V3 0 0.35 0) (north (coreNodes (core circle)))
@@ -1082,11 +1078,24 @@ formationEmittersFor circle castStart sigilEnd element =
     appearance = formationAppearance (maybe False stHold (circleSigil circle)) element
     depth = stackDepth circle
 
-    layeredEmitters :: SpawnPattern -> Int -> Int -> [EmitterSpec]
-    layeredEmitters spawn total arms =
+    -- One emitter per layer for a group drawn at the face origin: the
+    -- strokes, the shape previews and the center point.
+    layeredEmitters :: SpawnPattern -> Int -> [EmitterSpec]
+    layeredEmitters = layeredColumn (V3 0 0 0)
+
+    -- One emitter per layer for a group parked at @offset@ in the face.
+    -- The layer's displacement along the normal is /added/ to the group's
+    -- own in-face position, so a node point becomes a column of node
+    -- points instead of drifting off its face direction. At
+    -- @offset == 0@ the sum is exactly 'layerAnchor'\'s own offset, to the
+    -- bit, and at @depth == 1@ that offset is exactly zero — which is the
+    -- whole of the zero-ripple identity, with nothing left to prove about
+    -- particle counts.
+    layeredColumn :: V3 -> SpawnPattern -> Int -> [EmitterSpec]
+    layeredColumn offset spawn count =
       [ EmitterSpec
-          { emAnchor = layerAnchor depth k
-          , emCount = perLayerCount total depth arms
+          { emAnchor = let a = layerAnchor depth k in a {anchorOffset = offset + anchorOffset a}
+          , emCount = count
           , emSpawn = formEnv
           , emMotion = formationMotion spawn
           , emAppearance = appearance
@@ -1099,32 +1108,12 @@ formationEmittersFor circle castStart sigilEnd element =
     nodeSlotEmitter :: Int -> V3 -> Maybe NodeRune -> [EmitterSpec]
     nodeSlotEmitter cnt offset mRune = case mRune of
       Nothing -> []
-      Just _ ->
-        [ EmitterSpec
-            { emAnchor = Anchor {anchorOffset = offset, anchorNormal = V3 0 0 1}
-            , emCount = cnt
-            , emSpawn = formEnv
-            , emMotion = formationMotion (SpawnAtAnchor 0)
-            , emAppearance = appearance
-            , emPhase = Drawing
-            , emCode = noEmitterCode
-            }
-        ]
+      Just _ -> layeredColumn offset (SpawnAtAnchor 0) cnt
 
     centerSlotEmitter :: Int -> Maybe EssenceRune -> [EmitterSpec]
     centerSlotEmitter cnt mRune = case mRune of
       Nothing -> []
-      Just _ ->
-        [ EmitterSpec
-            { emAnchor = originAnchor
-            , emCount = cnt
-            , emSpawn = formEnv
-            , emMotion = formationMotion (SpawnAtAnchor 0)
-            , emAppearance = appearance
-            , emPhase = Drawing
-            , emCode = noEmitterCode
-            }
-        ]
+      Just _ -> layeredEmitters (SpawnAtAnchor 0) cnt
 
 -- | Formation particles hold the position they were drawn at.
 --
