@@ -92,6 +92,26 @@
               "$ref": "#/definitions/anchorArray"
             }
           ]
+        },
+        "sigil": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/sigil"
+            }
+          ]
+        },
+        "volume": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/volume"
+            }
+          ]
         }
       }
     },
@@ -771,6 +791,26 @@
           "$ref": "#/definitions/vec3"
         }
       }
+    },
+    "sigil": {
+      "description": "The drawn circle's own clock. Both keys are optional and '\"sigil\": {}' does nothing. Omitting the key is the default: the circle ends with the spell and keeps redrawing itself while it waits.",
+      "type": "object",
+      "properties": {
+        "linger": {
+          "description": "Seconds to shift the circle's end by, relative to the spell's. Positive = it outstays the spell; negative = it goes first, but it is always drawn to completion whatever the value.",
+          "type": "number",
+          "minimum": -60,
+          "maximum": 60
+        },
+        "hold": {
+          "description": "Freeze once drawn: the circle is still laid down one point at a time, and after that its look no longer changes. It keeps turning either way.",
+          "type": "boolean"
+        }
+      }
+    },
+    "volume": {
+      "description": "Opt-in 3D stacking: presence turns it on, the object's contents are ignored. The actual number of layers is derived from which of the circle's five ring/interlayer slots are filled, not from anything written here.",
+      "type": "object"
     },
     "vec3": {
       "description": "Three numbers, [x, y, z], in the caster's frame: x = right, y = up, z = straight ahead.",

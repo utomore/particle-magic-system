@@ -15,11 +15,11 @@ import qualified Data.ByteString as BS
 import Data.Char (isDigit, isSpace)
 import Data.List (isPrefixOf, isSuffixOf, sort)
 import Inspect (inspectReport, sectionHeaders)
+import Magic.Circle (Circle (..))
 import Magic.Codec (loadCircle)
 import Magic.Interface
   ( ActiveSpell
   , CastRequest (..)
-  , Circle
   , CompileError (BudgetExceeded)
   , ParticleBudget (budgetTotal)
   , budgetPlanOf
@@ -145,6 +145,29 @@ spec = describe "magic-inspect's report (func-spec 0024 S2)" $ do
     ls <- reportOf <$> grandSigil
     concatMap (drop 1 . words) (sectionBody "timeline" ls)
       `shouldBe` ["draw", "converge", "casting", "over"]
+
+  -- Func-spec 0026 T7. A lingering sigil moves the closing landmark and
+  -- nothing else, so the tool that reports the landmarks has to show it:
+  -- the "over" row is the spell body's end plus the linger, while the
+  -- three rows above it are where they would be without a sigil key. The
+  -- summary block is untouched by that round (its field list, frozen
+  -- above, still reads budget…style), so this is where an author sees it.
+  it "shows a lingering sigil in the closing landmark, and only there" $ do
+    lingering <- loadExample (spellDir ++ "/lingering-seal.json")
+    let ls = reportOf lingering
+        without = reportOf lingering {circleSigil = Nothing}
+        stages = sectionBody "timeline" ls
+        landmark what rows =
+          case [l | l <- rows, drop 1 (words l) == [what]] of
+            (l : _) -> Just (takeWhile (/= 's') (firstWord l))
+            [] -> Nothing
+    concatMap (drop 1 . words) stages `shouldBe` ["draw", "converge", "casting", "over"]
+    -- The spell body ends at 5.300s; the file asks for 2.5 more.
+    landmark "over" without `shouldBe` Just "5.300"
+    landmark "over" stages `shouldBe` Just "7.800"
+    mapM_
+      (\what -> landmark what stages `shouldBe` landmark what (sectionBody "timeline" without))
+      ["draw", "converge", "casting"]
 
 -- Reading the report back ------------------------------------------------------
 

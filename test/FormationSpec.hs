@@ -73,6 +73,8 @@ fullCircle element power =
     , circlePhases = Just (PhaseConfig (Seconds 1.2) (Seconds 0.6))
     , circleFields = []
     , circleAnchors = Nothing
+    , circleSigil = Nothing
+    , circleVolume = Nothing
     }
 
 bareCircle :: Circle

@@ -171,6 +171,14 @@ badFiles =
     , "{\"version\":1,\"circle\":{\"core\":{\"center\":{\"element\":\"fire\",\"power\":\"1.5\"}}}}"
     , "expected number, got string"
     )
+  , ( "a linger past the cap"
+    , "{\"version\":1,\"circle\":{\"phases\":{\"draw\":1,\"converge\":0},\"sigil\":{\"linger\":600}}}"
+    , "$.circle.sigil.linger"
+    )
+  , ( "hold written as a string"
+    , "{\"version\":1,\"circle\":{\"sigil\":{\"hold\":\"yes\"}}}"
+    , "expected boolean, got string"
+    )
   , ( "power at zero"
     , "{\"version\":1,\"circle\":{\"core\":{\"center\":{\"element\":\"fire\",\"power\":0}}}}"
     , "expected > 0"

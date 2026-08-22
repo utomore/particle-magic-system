@@ -56,6 +56,11 @@ module Magic.Compile
   , CompileError (..)
   , budgetCap
 
+    -- * Mana cost (magic-semantics F003)
+  , manaCost
+  , compileWithManaCap
+  , compileManyWithManaCap
+
     -- * Particle budget and spatial extent (func-spec 0010 S7)
   , ParticleBudget (..)
   , emitterBounds
@@ -83,11 +88,19 @@ module Magic.Compile
   ) where
 
 import Data.Bits ((.&.))
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
 import Data.Word (Word32)
-import Magic.Circle (Circle (..), Core (..), Nodes (..), PhaseConfig (..), TwoOf (..))
+import Magic.Circle
+  ( Circle (..)
+  , Core (..)
+  , Nodes (..)
+  , PhaseConfig (..)
+  , SigilTiming (..)
+  , SigilVolume (..)
+  , TwoOf (..)
+  )
 import Magic.Expr
   ( BinOp (..)
   , Expr (..)
@@ -435,9 +448,16 @@ data ParticleBudget = ParticleBudget
 
 -- | Compilation failure. Extensible sum; first real constructor this
 -- round (the 0001 placeholder was never constructed and is replaced).
+--
+-- 'ManaExceeded' is the second constructor (magic-semantics F003, ADR-0011
+-- D7's purely-additive rule): a distinct constructor from 'BudgetExceeded'
+-- so a host's 'case' can tell which cost dimension refused the cast —
+-- particle count or mana.
 data CompileError
   = -- | Requested particle count, cap.
     BudgetExceeded !Int !Int
+  | -- | Requested mana cost, cap.
+    ManaExceeded !Int !Int
   deriving (Eq, Show)
 
 -- | Hard particle cap: the most particles one compiled spell — a single
@@ -576,6 +596,23 @@ compile circle = do
       -- particle dies. Func-spec 0017 hands it to step 5 so the sigil
       -- lives exactly as long as the spell does.
       spellEnd = Seconds (delay + duration + lifetime)
+      Seconds spellEndD = spellEnd
+      -- The sigil's own end (func-spec 0026 §4). Without a @sigil@ key,
+      -- and with @phases@ absent, this is @spellEnd@ to the bit — which
+      -- is what makes the zero-ripple law hold by construction rather
+      -- than by a test that happens to pass: the whole expression below
+      -- degenerates to the pre-0026 one.
+      --
+      -- @max drawEnd@ is the floor: however negative the shift, the
+      -- sigil is drawn to completion. The codec caps the magnitude; this
+      -- is the other end of the same gate.
+      sigilEnd = case (mPhases, circleSigil circle) of
+        (Just pc, Just st) ->
+          let Seconds lingerD = stLinger st
+              Seconds drawEndD = phDraw pc
+           in Seconds (max drawEndD (spellEndD + lingerD))
+        _ -> spellEnd
+      Seconds sigilEndD = sigilEnd
       castingEmitterAt anchor n =
         EmitterSpec
           { emAnchor = anchor
@@ -595,7 +632,7 @@ compile circle = do
         Just anchors -> zipWith castingEmitterAt anchors (shareCount count (length anchors))
       formationEmitters = case mPhases of
         Nothing -> []
-        Just _ -> formationEmittersFor circle castStart spellEnd element
+        Just _ -> formationEmittersFor circle castStart sigilEnd element
       element = essenceElementOf (core circle)
       allEmitters = map compileEmitterExprs (castingEmitters ++ formationEmitters)
       totalCount = sum (map emCount allEmitters)
@@ -608,7 +645,10 @@ compile circle = do
           { ppDrawEnd = maybe (Seconds 0) phDraw mPhases
           , ppConvergeEnd = castStart
           , ppCastingEnd = Seconds (delay + duration)
-          , ppEnd = spellEnd
+          , -- Whichever outlives the other. The three landmarks above
+            -- belong to the spell body and do not move: a lingering
+            -- sigil does not delay the cast, it only outstays it.
+            ppEnd = Seconds (max spellEndD sigilEndD)
           }
   if totalCount > budgetCap
     then Left (BudgetExceeded totalCount budgetCap)
@@ -649,6 +689,91 @@ compileMany circles = do
   if total > budgetCap
     then Left (BudgetExceeded total budgetCap)
     else Right composed
+
+-- Mana cost (magic-semantics F003) -------------------------------------------
+
+-- | A circle's mana cost: the second cost dimension alongside the particle
+-- budget. Purely a function of which runes occupy which slots — not of
+-- particle counts, not of 'essPower' (already the particle budget's own
+-- input, via 'interpretCore'), and not of anything a sampler produces. Each
+-- of the five rune slots is looked up in its own constant weight table and
+-- the totals summed; an empty slot contributes 0, so the all-empty circle
+-- costs 0 mana no matter how low a cap is set.
+manaCost :: Circle -> Int
+manaCost c =
+  maybe 0 outerRuneCost (ringA (outerRings c))
+    + maybe 0 outerRuneCost (ringB (outerRings c))
+    + maybe 0 bridgeRuneCost (interLayer c)
+    + maybe 0 innerRuneCost (ringA (innerRings c))
+    + maybe 0 innerRuneCost (ringB (innerRings c))
+    + maybe 0 (essenceRuneCost . essElement) (coreCenter (core c))
+    + maybe 0 (const 1) (north (coreNodes (core c)))
+    + maybe 0 (const 1) (south (coreNodes (core c)))
+    + maybe 0 (const 1) (east (coreNodes (core c)))
+    + maybe 0 (const 1) (west (coreNodes (core c)))
+
+-- | Outer-ring (presentation) weight table.
+outerRuneCost :: OuterRune -> Int
+outerRuneCost rune = case rune of
+  ShapeRune _ -> 2
+  RadiateRune _ -> 1
+  RangeRune _ -> 3
+  StyleRune _ -> 1
+
+-- | Interlayer (modulation) weight table.
+bridgeRuneCost :: BridgeRune -> Int
+bridgeRuneCost rune = case rune of
+  PhaseRune _ -> 1
+  ConvergeRune _ -> 3
+  AmplifyRune _ -> 3
+
+-- | Inner-ring (behavior) weight table.
+innerRuneCost :: InnerRune -> Int
+innerRuneCost rune = case rune of
+  TrajectoryRune _ -> 2
+  TimingRune _ -> 1
+  FormulaRune _ -> 4
+
+-- | Core-center (essence) weight table, keyed on 'Element' alone.
+essenceRuneCost :: Element -> Int
+essenceRuneCost element = case element of
+  Neutral -> 0
+  Fire -> 2
+  Water -> 2
+  Metal -> 2
+  Wood -> 2
+  Earth -> 2
+  Lightning -> 3
+  Yin -> 3
+  Yang -> 3
+
+-- | 'compile' with an optional mana cap. 'Nothing' is bit-for-bit 'compile'
+-- — the zero-ripple law holds by construction, since that branch runs no
+-- arithmetic 'compile' did not already run. Particle budget is checked
+-- first (inside 'compile' itself); mana is only checked once that
+-- succeeds, so a circle that already fails the particle cap always reports
+-- 'BudgetExceeded', never 'ManaExceeded'.
+compileWithManaCap :: Maybe Int -> Circle -> Either CompileError CompiledSpell
+compileWithManaCap mCap circle = do
+  spell <- compile circle
+  case mCap of
+    Nothing -> Right spell
+    Just cap ->
+      let total = manaCost circle
+       in if total > cap then Left (ManaExceeded total cap) else Right spell
+
+-- | 'compileMany' with an optional mana cap: the composed total mana is
+-- Σ 'manaCost' over every circle, checked once against the same cap — the
+-- mana counterpart of the particle budget's "summed after composing,
+-- checked once" rule.
+compileManyWithManaCap :: Maybe Int -> [Circle] -> Either CompileError CompiledSpell
+compileManyWithManaCap mCap circles = do
+  spell <- compileMany circles
+  case mCap of
+    Nothing -> Right spell
+    Just cap ->
+      let total = sum (map manaCost circles)
+       in if total > cap then Left (ManaExceeded total cap) else Right spell
 
 -- | Run architecture §8.2's whole acceleration ladder over every formula an
 -- emitter carries: fold the constants (func-spec 0010 S6), then share and
@@ -838,6 +963,66 @@ foldSlot f slot z = maybe z (f z) slot
 
 -- Fold step 5 — formation geometry emitters (spec 0006 §4.4) -----------------
 
+-- | How many parallel planes the sigil is drawn on (magic-semantics F002).
+--
+-- 'Nothing' (every pre-F002 circle, and every circle that simply never
+-- opts in) is the compatibility base case: exactly one plane, which is
+-- what makes 'formationEmittersFor'\'s zero-ripple law hold by
+-- construction rather than by a special case in the caller.
+--
+-- @Just SigilVolume@ derives the depth from the same five slots
+-- 'Magic.Sigil.sigilPlan' counts occupancy over (ADR-0014 D2: "structure
+-- sets the skeleton") — but as an independent count, not a shared one:
+-- this reads 'Circle' fields directly and never calls 'hashCircle', so a
+-- change here cannot, even by accident, affect the frozen digest. The
+-- bounds are Level 3 constants (a fully vacant circle still visibly
+-- thickens at the floor of 2; five occupied slots caps out at 5).
+stackDepth :: Circle -> Int
+stackDepth c = case circleVolume c of
+  Nothing -> 1
+  Just SigilVolume -> min 5 (max 2 (1 + occCount))
+  where
+    occCount =
+      length
+        ( filter
+            id
+            [ isJust (ringB (outerRings c))
+            , isJust (ringA (outerRings c))
+            , isJust (interLayer c)
+            , isJust (ringB (innerRings c))
+            , isJust (ringA (innerRings c))
+            ]
+        )
+
+-- | Spacing between adjacent stacked layers, in face coordinates (the same
+-- units 'Magic.Sigil.sigilPlan'\'s @radii@ band lives in).
+layerGap :: Float
+layerGap = 0.12
+
+-- | The @k@-th of @depth@ layers, spread symmetrically along the normal
+-- about the face origin. @layerAnchor 1 0 == originAnchor@ exactly — the
+-- single-layer case lands back on the pre-F002 anchor, not merely close to
+-- it — which is the identity 'formationEmittersFor'\'s zero-ripple law
+-- rests on.
+layerAnchor :: Int -> Int -> Anchor
+layerAnchor depth k =
+  originAnchor {anchorOffset = V3 0 0 (layerGap * (fromIntegral k - 0.5 * (fromIntegral depth - 1)))}
+
+-- | Split a stroke's (or shape preview's) particle count evenly over
+-- @depth@ layers, rounding each layer's share down to a multiple of
+-- @arms@ so every arm still gets the same number of points (the same
+-- reason 'Magic.Sigil.sigilPlan' clips its own budget overrun that way).
+-- The cross-layer sum is therefore never more than @total@ — the leftover
+-- from each division is dropped, never redistributed — so opting into the
+-- stack can only thin out an existing particle count, never inflate it.
+--
+-- @perLayerCount total 1 arms == total@ whenever @total@ is already a
+-- multiple of @arms@, which every stroke and shape 'Magic.Sigil.sigilPlan'
+-- produces is: the other half of the zero-ripple identity.
+perLayerCount :: Int -> Int -> Int -> Int
+perLayerCount total depth arms =
+  ((total `div` max 1 depth) `div` max 1 arms) * max 1 arms
+
 -- | Circle geometry → the formation-drawing emitters. Only called when
 -- 'circlePhases' is 'Just'.
 --
@@ -859,11 +1044,32 @@ foldSlot f slot z = maybe z (f z) slot
 -- in (@spellEnd@ = 'ppEnd') instead of dying at @castStart@, and drops the
 -- synthesized convergence curve: the spell is now fired /out of/ a sigil
 -- that is still there, rather than consuming it.
+-- Func-spec 0026 makes that third argument the /sigil's/ end rather than
+-- the spell's: they are the same value unless the circle names a
+-- @linger@, and the signature does not move.
+--
+-- Magic-semantics F002 adds the stroke/shape stack: when 'stackDepth'
+-- exceeds 1 each stroke and each shape preview produces one emitter /per
+-- layer/, spread symmetrically along the normal by 'layerAnchor' and
+-- sharing the stroke's original particle count by 'perLayerCount'. Node
+-- and center emitters are untouched — they are the drawing stage's
+-- decorations (spec 0006 §4.4), not the sigil's own strokes, so F002's
+-- contract card leaves them out (see the feature doc's assumption A2).
+-- At @stackDepth circle == 1@ (the only value @circleVolume == Nothing@
+-- can produce) 'layeredEmitters' degenerates to exactly one emitter per
+-- stroke/shape with 'originAnchor' and the untouched count — bit for bit
+-- what this function produced before F002.
 formationEmittersFor :: Circle -> Seconds -> Seconds -> Element -> [EmitterSpec]
-formationEmittersFor circle castStart spellEnd element =
+formationEmittersFor circle castStart sigilEnd element =
   concat
-    [ [ringSlotEmitter (skCount sk) (SpawnOnStroke sk) | sk <- V.toList (spStrokes plan)]
-    , [ringSlotEmitter cnt (SpawnOnShape shape) | (shape, cnt) <- V.toList (spShapes plan)]
+    [ concat
+        [ layeredEmitters (SpawnOnStroke sk) (skCount sk) (max 1 (skSymmetry sk))
+        | sk <- V.toList (spStrokes plan)
+        ]
+    , concat
+        [ layeredEmitters (SpawnOnShape shape) cnt 1
+        | (shape, cnt) <- V.toList (spShapes plan)
+        ]
     , nodeSlotEmitter 12 (V3 0 0.35 0) (north (coreNodes (core circle)))
     , nodeSlotEmitter 12 (V3 0 (-0.35) 0) (south (coreNodes (core circle)))
     , nodeSlotEmitter 12 (V3 0.35 0 0) (east (coreNodes (core circle)))
@@ -872,19 +1078,23 @@ formationEmittersFor circle castStart spellEnd element =
     ]
   where
     plan = sigilPlan circle
-    formEnv = formEnvFor castStart spellEnd
-    appearance = formationAppearance element
+    formEnv = formEnvFor castStart sigilEnd
+    appearance = formationAppearance (maybe False stHold (circleSigil circle)) element
+    depth = stackDepth circle
 
-    ringSlotEmitter cnt spawn =
-      EmitterSpec
-        { emAnchor = originAnchor
-        , emCount = cnt
-        , emSpawn = formEnv
-        , emMotion = formationMotion spawn
-        , emAppearance = appearance
-        , emPhase = Drawing
-        , emCode = noEmitterCode
-        }
+    layeredEmitters :: SpawnPattern -> Int -> Int -> [EmitterSpec]
+    layeredEmitters spawn total arms =
+      [ EmitterSpec
+          { emAnchor = layerAnchor depth k
+          , emCount = perLayerCount total depth arms
+          , emSpawn = formEnv
+          , emMotion = formationMotion spawn
+          , emAppearance = appearance
+          , emPhase = Drawing
+          , emCode = noEmitterCode
+          }
+      | k <- [0 .. depth - 1]
+      ]
 
     nodeSlotEmitter :: Int -> V3 -> Maybe NodeRune -> [EmitterSpec]
     nodeSlotEmitter cnt offset mRune = case mRune of
@@ -936,7 +1146,7 @@ formationMotion spawn =
     }
 
 -- | The formation particles' envelope. @castStart@ sets the /pace/ the
--- sigil is drawn at, @spellEnd@ ('ppEnd') sets how long it stays.
+-- sigil is drawn at, the second argument sets how long it stays.
 --
 -- Derivation (func-spec 0017 §2, re-proving spec 0006 §4.3's chain with
 -- the new endpoint):
@@ -952,12 +1162,19 @@ formationMotion spawn =
 --    holding the sigil for the whole cast costs nothing in the Drawing
 --    window and why it keeps pulsing (redrawing itself every @formLife@)
 --    rather than freezing.
+--
+-- Func-spec 0026 hands it the /sigil's/ end instead, which is the same
+-- number unless the circle names a @linger@; step 2 above then reads
+-- "the sigil ends where it was told to". Nothing in the body changes,
+-- for the reason step 3 gives: only 'envDuration' depends on this
+-- argument, and only the far end of the sigil's life depends on
+-- 'envDuration'.
 formEnvFor :: Seconds -> Seconds -> Envelope
-formEnvFor (Seconds castStartD) (Seconds spellEndD) =
+formEnvFor (Seconds castStartD) (Seconds sigilEndD) =
   let formLife = min 0.6 (castStartD / 2)
    in Envelope
         { envDelay = Seconds 0
-        , envDuration = Seconds (max 0 (spellEndD - formLife))
+        , envDuration = Seconds (max 0 (sigilEndD - formLife))
         , envLifetime = Seconds formLife
         }
 
@@ -1193,9 +1410,28 @@ evalInterval expr env = go expr
 -- Always 'BillboardSquare', 'StyleRune' or not: a drawn line wants hard
 -- dots to stay sharp (spec 0015 §2), and this is what keeps the shape
 -- vocabulary opt-in for every pre-0015 circle.
-formationAppearance :: Element -> Appearance
-formationAppearance element =
+--
+-- Func-spec 0026 adds the @hold@ branch, and it is the whole of "freeze
+-- once drawn". Every other term of a formation particle's position is
+-- age-free — the spin runs off the cast clock (ADR-0020), the trajectory
+-- is @Forward 0@, spread and drift are zero, and there is neither a
+-- range curve nor a convergence one — so the only observable the
+-- @formLife@ rebirth cycle drives is this ramp. Flatten it and the cycle
+-- becomes unobservable: the particles still die and are reborn, they
+-- just look the same on both sides of the boundary.
+--
+-- 'Magic.Particle.Analytic.firstBirth' is untouched, so the first
+-- @formLife@ still lays the sigil down one index at a time — spec 0016's
+-- "index order is drawing order" survives verbatim, which is what makes
+-- this the literal reading of /draw, then freeze/. At the far end the
+-- spawn window closes and each particle vanishes on its own cycle
+-- boundary, in index order: with the fade gone that reads as the sigil
+-- being erased in the order it was drawn, which is the symmetric ending
+-- and costs no code.
+formationAppearance :: Bool -> Element -> Appearance
+formationAppearance hold element =
   let Appearance (ColorRamp start _) _ blend _ _ = elementAppearance element
-   in Appearance (ColorRamp start (clearAlpha start)) 0.03 blend Nothing BillboardSquare
+      end = if hold then start else clearAlpha start
+   in Appearance (ColorRamp start end) 0.03 blend Nothing BillboardSquare
   where
     clearAlpha c = c .&. 0xFFFFFF00

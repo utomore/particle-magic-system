@@ -126,6 +126,8 @@ spec = describe "Expr rune fold landing spots (spec 0004 S1)" $ do
               , circlePhases = Nothing
               , circleFields = []
               , circleAnchors = Nothing
+              , circleSigil = Nothing
+              , circleVolume = Nothing
               }
           em = theEmitter c
       motRange (emMotion em) `shouldBe` Nothing

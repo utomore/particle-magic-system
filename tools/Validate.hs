@@ -32,6 +32,7 @@ module Validate
   , validateBytes
   , renderReport
   , renderJsonReport
+  , renderCompileError
   , failureCount
   , exitCodeFor
 
@@ -195,6 +196,11 @@ renderCompileError err = case err of
       ++ ", the cap is "
       ++ show cap
       ++ " (the core centre's \"power\" scales the count: 256 x power)"
+  ManaExceeded wanted cap ->
+    "too much mana: this circle costs "
+      ++ show wanted
+      ++ ", the cap is "
+      ++ show cap
 
 statsOf :: Circle -> ActiveSpell -> Stats
 statsOf circle spell =

@@ -64,6 +64,8 @@ loadedCircle =
     , circlePhases = Nothing
     , circleFields = []
     , circleAnchors = Nothing
+    , circleSigil = Nothing
+    , circleVolume = Nothing
     }
 
 newtype AnyFields = AnyFields [ForceField]

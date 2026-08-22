@@ -66,13 +66,13 @@ import Validate (exitCodeFor, failureCount, validateBytes)
 spellDir :: FilePath
 spellDir = "assets/spells"
 
--- | This round's own two examples.
 -- | Everything the compatibility law is /not/ stated over: this round's
--- own two examples, plus twin-lance, which arrived on the parallel
--- func-spec 0025 line and was merged in afterwards. Neither existed
--- before 0021, so neither can witness anything about it.
+-- own two examples, plus the ones later rounds shipped (twin-lance from
+-- the parallel func-spec 0025 line, comet-trail from 0023,
+-- lingering-seal from 0026, stacked-sigil from magic-semantics F002).
+-- None of them existed before 0021, so none can witness anything about it.
 newSpells :: [String]
-newSpells = ["wuxing-seal", "yin-yang", "twin-lance", "comet-trail"]
+newSpells = ["wuxing-seal", "yin-yang", "twin-lance", "comet-trail", "lingering-seal", "stacked-sigil"]
 
 -- | Everything that existed before this round — the population the
 -- compatibility law is stated over.

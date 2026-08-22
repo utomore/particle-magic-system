@@ -164,8 +164,22 @@ spec = describe "fitted oriented boxes (func-spec 0025 S1)" $ do
       -- against. 0023 does not touch 'emitterBounds' at all — velocity is
       -- a new column, not a new position — so every row below is
       -- unaffected by it.
+      --
+      -- lingering-seal.json is func-spec 0026's own example and is
+      -- excluded on the same ground. 0026 moves when the sigil ends, not
+      -- where it can reach: 'emitterBounds' reads the anchor, the motion
+      -- and the horizon it is handed, and none of the three depends on
+      -- the envelope's duration.
+      --
+      -- stacked-sigil.json is magic-semantics F002's own example and is
+      -- excluded on the same ground: no circle stacked before F002
+      -- existed, so there is no pre-F002 value to freeze it against.
       spells <-
-        filter ((`notElem` ["twin-lance.json", "comet-trail.json"]) . fst) <$> exampleSpells
+        filter
+          ( (`notElem` ["twin-lance.json", "comet-trail.json", "lingering-seal.json", "stacked-sigil.json"])
+              . fst
+          )
+          <$> exampleSpells
       let produced =
             [ unwords
                 ( [name, show e, show h]

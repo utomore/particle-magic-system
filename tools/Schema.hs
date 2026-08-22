@@ -180,6 +180,8 @@ definitions =
   , ("forceField", forceFieldDef)
   , ("anchorArray", anchorArrayDef)
   , ("anchor", anchorDef)
+  , ("sigil", sigilDef)
+  , ("volume", volumeDef)
   , ("vec3", vec3Def)
   , ("formula", formulaDef)
   ]
@@ -197,6 +199,8 @@ circleDef =
         , ("phases", nullable (ref "phases"))
         , ("fields", nullable (ref "fieldArray"))
         , ("anchors", nullable (ref "anchorArray"))
+        , ("sigil", nullable (ref "sigil"))
+        , ("volume", nullable (ref "volume"))
         ])
     ]
 
@@ -402,6 +406,32 @@ anchorDef =
         [ ("offset", ref "vec3")
         , ("normal", ref "vec3")
         ])
+    ]
+
+sigilDef :: J
+sigilDef =
+  JObj
+    [ ("description", JStr "The drawn circle's own clock. Both keys are optional and '\"sigil\": {}' does nothing. Omitting the key is the default: the circle ends with the spell and keeps redrawing itself while it waits.")
+    , ("type", JStr "object")
+    , ("properties", JObj
+        [ ("linger", JObj
+            [ ("description", JStr "Seconds to shift the circle's end by, relative to the spell's. Positive = it outstays the spell; negative = it goes first, but it is always drawn to completion whatever the value.")
+            , ("type", JStr "number")
+            , ("minimum", JInt (-60))
+            , ("maximum", JInt 60)
+            ])
+        , ("hold", JObj
+            [ ("description", JStr "Freeze once drawn: the circle is still laid down one point at a time, and after that its look no longer changes. It keeps turning either way.")
+            , ("type", JStr "boolean")
+            ])
+        ])
+    ]
+
+volumeDef :: J
+volumeDef =
+  JObj
+    [ ("description", JStr "Opt-in 3D stacking: presence turns it on, the object's contents are ignored. The actual number of layers is derived from which of the circle's five ring/interlayer slots are filled, not from anything written here.")
+    , ("type", JStr "object")
     ]
 
 vec3Def :: J

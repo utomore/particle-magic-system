@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "name": "lingering-seal",
+  "circle": {
+    "phases": { "draw": 1.2, "converge": 0.6 },
+    "sigil": { "linger": 2.5, "hold": true },
+    "outer": [
+      { "rune": "radiate", "mode": "along-normal" },
+      { "rune": "style", "billboard": "spark" }
+    ],
+    "inner": [
+      { "rune": "trajectory", "kind": "forward", "speed": 3.0 },
+      { "rune": "timing", "delay": 0.0, "duration": 2.0, "lifetime": 1.5 }
+    ],
+    "core": {
+      "center": { "element": "water", "power": 1.0 },
+      "nodes": {
+        "north": { "rune": "dir-bias", "strength": 0.2 },
+        "south": { "rune": "dir-bias", "strength": 0.2 },
+        "east": { "rune": "dir-bias", "strength": -0.2 },
+        "west": { "rune": "dir-bias", "strength": -0.2 }
+      }
+    }
+  }
+}

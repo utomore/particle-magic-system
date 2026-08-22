@@ -55,6 +55,7 @@ import Magic.FFI
   , pmErrCapacity
   , pmErrInternal
   , pmErrJson
+  , pmErrMana
   , pmErrQuota
   , pmErrState
   , pmMaxParticles
@@ -301,6 +302,8 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
             -- the C# binding reconcile once instead of twice.
             ("PM_ERR_INTERNAL", pmErrInternal)
           , ("PM_ERR_STATE", pmErrState)
+          , -- magic-semantics F003: reserved, no entry point returns it yet.
+            ("PM_ERR_MANA", pmErrMana)
           ]
     mapM_ (\(name, value) -> lookup name header `shouldBe` Just (fromIntegral value)) expected
 
@@ -506,6 +509,7 @@ spec = describe "C ABI contract (func-spec 0009 §8 S4)" $ do
         , "PM_ERR_QUOTA"
         , "PM_ERR_INTERNAL"
         , "PM_ERR_STATE"
+        , "PM_ERR_MANA"
         , "PM_OCCUPANCY_DIM_DEFAULT"
         , "PM_PLANE_SIDE_XY"
         , "PM_PLANE_TOP_XZ"
