@@ -1,4 +1,14 @@
 dist-newstyle/
+# Release drops assembled by packaging/pack.sh and packaging/pack.ps1
+# (host-runtime F007). A drop is tens of megabytes of build output; what
+# belongs in version control is packaging/artifacts.json, the manifest
+# that says what a drop must contain.
+dist/
 *.hi
 *.o
 pm-stdout.txt
+# The out-of-process smoke's executable (host-runtime F006). Built by
+# test/oop/build.{sh,ps1} from the checked-in test/oop/oop_smoke.c, next to
+# its source so run.{sh,ps1} can find it without a build directory.
+test/oop/oop-smoke
+test/oop/oop-smoke.exe

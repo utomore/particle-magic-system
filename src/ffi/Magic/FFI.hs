@@ -15,10 +15,16 @@
 --     functions. Any behaviour that exists only on the FFI side is a bug —
 --     @test\/Acceptance9Spec.hs@ turns that sentence into an equivalence
 --     law (ADR-0011 D8).
---   * __Handle = 'StablePtr' over an 'IORef'__ (ADR-0011 D4). 'advanceSpell'
---     is pure, hosts want in-place advance, so the handle points at a cell
---     that @pm_advance@ reads-computes-writes back. One handle is owned by
---     one thread; there is no internal lock in v1.
+--   * __Handle = a generation-tagged index over an 'IORef'__ (ADR-0011 D4
+--     as revised by ADR-022 D3). 'advanceSpell' is pure, hosts want
+--     in-place advance, so the handle names a cell that @pm_advance@
+--     reads-computes-writes back. The handle is no longer a live
+--     'StablePtr': it is a word encoding kind, slot and generation, which
+--     "Magic.FFI.Registry" resolves — so a freed, double-freed or forged
+--     handle is an error code rather than undefined behaviour. The
+--     read-compute-write is a single atomic step ('stepCell'), so
+--     concurrent advances of one handle lose no update (host-runtime F004,
+--     C2.2); the per-frame path still takes no lock.
 --   * __copy-out, never borrow__ (ADR-0011 D3). 'Data.Vector.Unboxed' has
 --     no pointer interface, so @pm_observe@ pokes element by element into
 --     host-owned arrays.
@@ -38,6 +44,7 @@ module Magic.FFI
   , pm_cast
   , pm_cast_ex
   , pm_advance
+  , pm_advance_ex
   , pm_is_finished
   , pm_age
   , pm_observe
@@ -54,6 +61,7 @@ module Magic.FFI
   , pm_scene_cast_many
   , pm_scene_dismiss
   , pm_scene_advance
+  , pm_scene_advance_ex
   , pm_scene_observe
   , pm_scene_budget
   , pm_scene_count
@@ -68,6 +76,9 @@ module Magic.FFI
   , pm_occupancy_mask
   , pm_scene_spell_bounds
 
+    -- * Fixed-timestep planning (host-runtime F005; C1.7)
+  , pm_plan_steps
+
     -- * Contract constants (mirrored in @include\/particle_magic.h@,
     -- guarded by @test\/FFIContractSpec.hs@)
   , pmAbiVersion
@@ -78,6 +89,8 @@ module Magic.FFI
   , pmErrCapacity
   , pmErrArgs
   , pmErrQuota
+  , pmErrInternal
+  , pmErrState
   , pmOccupancyDimDefault
   , pmPlaneSideXY
   , pmPlaneTopXZ
@@ -94,11 +107,31 @@ module Magic.FFI
   , nullScene
   , isNullScene
   , writeErr
+
+    -- * The atomic step (host-runtime F004; not part of the C contract,
+    -- exposed so the specs can race it directly)
+  , stepCell
+  , stepCellWith
+
+    -- * The exception firewall (host-runtime F001; not part of the C
+    -- contract, exposed so the specs can hand it an action that throws)
+  , firewall
+  , firewallErr
+
+    -- * Handle registry internals (host-runtime F002; not part of the C
+    -- contract, exposed so the specs can drive the lifecycle directly)
+  , newSpellHandle
+  , freeSpellHandle
+  , newSceneHandle
+  , freeSceneHandle
+  , spellRegistryStats
+  , sceneRegistryStats
   ) where
 
+import Control.Exception (SomeException, displayException, evaluate, try)
 import Control.Monad (foldM, when)
 import qualified Data.ByteString as BS
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import qualified Data.Vector.Unboxed as U
 import Data.Word (Word32, Word64, Word8)
 import Foreign.C.String (CString)
@@ -106,20 +139,23 @@ import Foreign.C.Types (CChar, CDouble (..), CFloat (..), CInt (..))
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Utils (copyBytes)
 import Foreign.Ptr (Ptr, castPtr, nullPtr, plusPtr)
-import Foreign.StablePtr
-  ( StablePtr
-  , castPtrToStablePtr
-  , castStablePtrToPtr
-  , deRefStablePtr
-  , freeStablePtr
-  , newStablePtr
-  )
+import Foreign.StablePtr (StablePtr, castPtrToStablePtr, castStablePtrToPtr)
 import Foreign.Storable (peek, peekByteOff, peekElemOff, poke, pokeByteOff, pokeElemOff)
 import GHC.Float (float2Double)
 import qualified GHC.Foreign as GHCF
 import GHC.IO.Encoding (utf8)
 import Magic.Codec (loadCircle, renderLoadError)
 import Magic.Columns (fromColumns)
+import Magic.FFI.Registry
+  ( HandleKind (..)
+  , Registry
+  , Resolved (..)
+  , newRegistry
+  , registryInsert
+  , registryRelease
+  , registryResolve
+  , registryStats
+  )
 import Magic.Interface
   ( ActiveSpell
   , BillboardShape
@@ -177,6 +213,8 @@ import Magic.Scene
   , sceneBudget
   , sceneSpells
   )
+import Magic.Step (StepPlan (..), plan)
+import System.IO.Unsafe (unsafePerformIO)
 
 -- Contract constants ---------------------------------------------------------
 
@@ -202,7 +240,7 @@ pmAbiVersion = 1
 pmMaxParticles :: CInt
 pmMaxParticles = 16384
 
-pmOk, pmErrJson, pmErrBudget, pmErrCapacity, pmErrArgs, pmErrQuota :: CInt
+pmOk, pmErrJson, pmErrBudget, pmErrCapacity, pmErrArgs, pmErrQuota, pmErrInternal, pmErrState :: CInt
 pmOk = 0
 pmErrJson = -1
 pmErrBudget = -2
@@ -219,6 +257,19 @@ pmErrArgs = -4
 -- refusal after dismissing something, and cannot retry a compile failure
 -- at all.
 pmErrQuota = -5
+
+-- | The firewall caught a Haskell exception (ADR-022 D2, host-runtime
+-- C1.9): something inside the library is broken. Never the host's fault,
+-- never worth retrying, and always worth a bug report — but the process
+-- stays alive and the library stays usable, which is the whole point.
+pmErrInternal = -6
+
+-- | The host called out of order — the runtime is not up, or was shut
+-- down, or is being configured a second time (host-runtime C1.9). The
+-- semantics land with host-runtime F003 and F004; the constant is minted
+-- here so the header, the Haskell mirror and the C# binding are reconciled
+-- once instead of twice.
+pmErrState = -7
 
 -- | 'CastRefusal' → C code. A pure function, so the classification is
 -- testable without a handle in sight, and so the /only/ decision the
@@ -291,20 +342,55 @@ newtype SpellCell = SpellCell (IORef ActiveSpell)
 
 -- | The @NULL@ handle. C sees it as a null pointer; every entry point
 -- tolerates it (no-op or neutral value) so a host that forgot to check
--- @pm_cast@'s result gets a quiet failure rather than a crash. Any /other/
--- invalid handle (freed, forged) is undefined behaviour, as in any C API.
+-- @pm_cast@'s result gets a quiet failure rather than a crash.
+--
+-- Any /other/ invalid handle — freed, freed twice, forged, or a
+-- @PmScene*@ where a @PmSpell*@ belongs — is recognised by
+-- "Magic.FFI.Registry" and answered with 'pmErrArgs' (or, for the symbols
+-- with no error channel, a neutral value). It is no longer undefined
+-- behaviour (host-runtime C2.3, ADR-022 D3).
 nullSpell :: StablePtr SpellCell
 nullSpell = castPtrToStablePtr nullPtr
 
 isNullSpell :: StablePtr SpellCell -> Bool
 isNullSpell h = castStablePtrToPtr h == nullPtr
 
-withCell :: StablePtr SpellCell -> b -> (IORef ActiveSpell -> IO b) -> IO b
-withCell h fallback k
-  | isNullSpell h = pure fallback
-  | otherwise = do
-      SpellCell ref <- deRefStablePtr h
-      k ref
+-- | The spell table. A module-level 'IORef' inside, which is also what
+-- keeps the cells reachable: the registry is the GC root the 'StablePtr'
+-- used to be, so a released handle's spell becomes collectable at exactly
+-- the same moment it did before.
+spellRegistry :: Registry SpellCell
+spellRegistry = unsafePerformIO (newRegistry KindSpell)
+{-# NOINLINE spellRegistry #-}
+
+-- | Register a freshly cast spell and hand back its handle.
+--
+-- __Lazy in the spell__, deliberately: @newSpellHandle (error "…")@ yields
+-- a perfectly legal handle whose contents are bottom, which is how a spec
+-- reaches the code behind the handle check.
+newSpellHandle :: ActiveSpell -> IO (StablePtr SpellCell)
+newSpellHandle spell = do
+  ref <- newIORef spell
+  castPtrToStablePtr <$> registryInsert spellRegistry (SpellCell ref)
+
+-- | The body of 'pm_free': a handle that does not resolve (NULL, forged,
+-- already released) is a safe no-op.
+freeSpellHandle :: StablePtr SpellCell -> IO ()
+freeSpellHandle = registryRelease spellRegistry . castStablePtrToPtr
+
+-- | @(live spell handles, slots ever allocated)@.
+spellRegistryStats :: IO (Int, Int)
+spellRegistryStats = registryStats spellRegistry
+
+-- | Three-way handle resolution (host-runtime C2.3): the frozen @NULL@
+-- answer, the invalid answer, or the cell. Every spell entry point that
+-- takes a handle goes through here.
+withCell :: StablePtr SpellCell -> b -> b -> (IORef ActiveSpell -> IO b) -> IO b
+withCell h onNull onInvalid k =
+  registryResolve spellRegistry (castStablePtrToPtr h) >>= \case
+    ResNull -> pure onNull
+    ResInvalid -> pure onInvalid
+    ResLive (SpellCell ref) -> k ref
 
 -- | What a @PmScene*@ points at (func-spec 0018 §3.3): the same shape as
 -- 'SpellCell', for the same reason — 'Magic.Scene.Scene' is an immutable
@@ -324,33 +410,214 @@ nullScene = castPtrToStablePtr nullPtr
 isNullScene :: StablePtr SceneCell -> Bool
 isNullScene h = castStablePtrToPtr h == nullPtr
 
-withScene :: StablePtr SceneCell -> b -> (IORef Scene -> IO b) -> IO b
-withScene h fallback k
-  | isNullScene h = pure fallback
-  | otherwise = do
-      SceneCell ref <- deRefStablePtr h
-      k ref
+-- | The scene table — the same structure as 'spellRegistry', tagged with
+-- the other kind bit so the two handle spaces cannot be confused.
+sceneRegistry :: Registry SceneCell
+sceneRegistry = unsafePerformIO (newRegistry KindScene)
+{-# NOINLINE sceneRegistry #-}
+
+-- | 'newSpellHandle' for scenes, and lazy in the scene for the same
+-- reason.
+newSceneHandle :: Scene -> IO (StablePtr SceneCell)
+newSceneHandle scene = do
+  ref <- newIORef scene
+  castPtrToStablePtr <$> registryInsert sceneRegistry (SceneCell ref)
+
+-- | The body of 'pm_scene_free'.
+freeSceneHandle :: StablePtr SceneCell -> IO ()
+freeSceneHandle = registryRelease sceneRegistry . castStablePtrToPtr
+
+-- | @(live scene handles, slots ever allocated)@.
+sceneRegistryStats :: IO (Int, Int)
+sceneRegistryStats = registryStats sceneRegistry
+
+withScene :: StablePtr SceneCell -> b -> b -> (IORef Scene -> IO b) -> IO b
+withScene h onNull onInvalid k =
+  registryResolve sceneRegistry (castStablePtrToPtr h) >>= \case
+    ResNull -> pure onNull
+    ResInvalid -> pure onInvalid
+    ResLive (SceneCell ref) -> k ref
+
+-- The atomic step (host-runtime F004, ADR-022 D4) ----------------------------
+--
+-- Every entry point that moves a handle's state forward used to do it as
+-- read, compute, write back — three steps a second thread can
+-- interleave with, so two concurrent advances landed one step instead of
+-- two. The lost update is silent: no error code, no crash, just a spell
+-- whose clock is behind. C2.2 promises the opposite, so all six
+-- read-modify-write sites go through one combinator, and a source audit in
+-- @test\/FFIThreadSpec.hs@ asserts by name that the non-atomic write-back
+-- has left this module for good, so it cannot creep back in.
+--
+-- Why 'atomicModifyIORef'' and not a lock: the shell's dependency
+-- whitelist is @base@ \/ @magic-boundary@ \/ @bytestring@ \/ @vector@, so
+-- @stm@ and @atomic-primops@ are out; and of what is left, a lock is the
+-- wrong instrument anyway. Measured at GHC 9.14.1, @-O2 -threaded@: the
+-- old shape 2.84 ns per call, 'atomicModifyIORef'' 9.31 ns at @-N1@ and
+-- 11.15 ns at @-N8@, @modifyMVar_@ 9.87 ns and 17.37 ns. Six nanoseconds
+-- once a frame is 4e-5 % of a 60 fps budget; blocking is not.
+--
+-- __Failure poisons the cell__ (F004 §6, assumption A2). 'atomicModifyIORef''
+-- installs the new value and /then/ forces it, so a step that throws
+-- leaves a throwing thunk behind and that handle answers
+-- 'pmErrInternal' from then on — forever, and only that handle. The old
+-- strict write-back forced first and so kept the previous value. The
+-- difference is accepted deliberately: the pure transitions here are total
+-- (ADR-0007), the blast radius is one handle out of the whole process
+-- (P-1), and avoiding it costs either a second forcing pass or a
+-- hand-rolled CAS loop over a raw primop.
+
+-- | Read, compute and write a cell back as one atomic step, answering
+-- something about the transition.
+--
+-- The new value is forced to WHNF before the call returns, which is
+-- exactly the depth the strict write-back forced to — 'ActiveSpell' and
+-- 'Magic.Scene.Scene' have strict fields throughout, so WHNF already
+-- pins the clock and the field state and no thunk accumulates over a
+-- session's worth of frames.
+--
+-- Under contention the transition function is applied more than once but
+-- only /forced/ once: the losing attempt's thunk is dropped unevaluated
+-- when the compare-and-swap fails. That is what lets 'admitInto' put a
+-- whole @castManyInto@ — circle compilation included — inside the step
+-- without paying for it twice.
+stepCellWith :: IORef a -> (a -> (a, b)) -> IO b
+stepCellWith = atomicModifyIORef'
+{-# INLINE stepCellWith #-}
+
+-- | 'stepCellWith' for the transitions with nothing to report: the four
+-- advances and the dismissal.
+stepCell :: IORef a -> (a -> a) -> IO ()
+stepCell ref f = stepCellWith ref (\x -> (f x, ()))
+{-# INLINE stepCell #-}
+
+-- The exception firewall (host-runtime F001, ADR-022 D2) ---------------------
+--
+-- A Haskell exception crossing a @foreign export@ boundary is not an error
+-- the host can handle: the RTS terminates the process and prints to a
+-- stderr nobody is reading. The pure core is total and the boundary turns
+-- errors into values, so nothing here is meant to throw — but heap
+-- exhaustion, a deep recursion on hostile JSON and a future incomplete
+-- pattern are not things a type can rule out, and P-1 says the library
+-- never kills its host.
+--
+-- So every entry point runs inside one of the two combinators below. The
+-- firewall is the /last/ line, not a control-flow device: catching
+-- anything at all means there is a defect to fix.
+
+-- | Run an entry point's body; answer @sentinel@ if it throws.
+--
+-- The sentinel is the type's own way of saying @PM_ERR_INTERNAL@ —
+-- 'pmErrInternal' for the counting symbols, a @NULL@ handle for the two
+-- that return one, @-6.0@ for 'pm_age', @0@ for 'pm_occupancy_mask' and
+-- @()@ for the five that return @void@ and have nothing to say it with.
+firewall :: a -> IO a -> IO a
+firewall = firewallErr nullPtr 0
+
+-- | 'firewall' for the entry points that carry a host error buffer: the
+-- exception's text goes into @err_buf@ on the way out, through the same
+-- truncation-safe 'writeErr' every other failure message uses. 'firewall'
+-- is this with a @NULL@ buffer, which 'writeErr' already treats as a
+-- no-op — so there is one implementation, not two.
+--
+-- __Not all-or-nothing.__ 'pm_observe' promises that a /capacity/ failure
+-- writes no byte at all; the firewall promises no such thing, because an
+-- exception raised half way through a copy leaves the host's arrays half
+-- updated. On this path the library promises exactly two things: it
+-- returns, and it says @PM_ERR_INTERNAL@.
+firewallErr :: CString -> CInt -> a -> IO a -> IO a
+firewallErr buf len sentinel action =
+  -- 'evaluate' is load-bearing. GHC's foreign export wrapper unboxes the
+  -- result /after/ the Haskell action returns, so a body that leaves its
+  -- answer in a thunk (pm_age's @Time t@, pm_is_finished's conditional)
+  -- would throw outside this 'try' and walk straight past the firewall.
+  -- WHNF is enough: CInt, CDouble, Word32, StablePtr and () are complete
+  -- at WHNF, which is why the shell needs no deepseq.
+  tryAny (action >>= evaluate) >>= \case
+    Right a -> pure a
+    Left e -> do
+      msg <- firewallMessage e
+      writeErr buf len msg
+      pure sentinel
+
+-- | 'try' at 'SomeException', written once so the entry points need no
+-- type annotations — and pinned to /every/ exception on purpose (ADR-022
+-- D2): a C boundary has no later moment at which to rethrow, so letting
+-- an asynchronous 'Control.Exception.ThreadKilled' through would kill the
+-- host just as surely as an 'ErrorCall'.
+tryAny :: IO a -> IO (Either SomeException a)
+tryAny = try
+
+-- | The caught exception as text, defensively.
+--
+-- 'displayException' is itself a pure computation over a value that just
+-- proved it can explode, so it gets its own 'try': a bottom hiding inside
+-- the exception's own message must not turn a caught defect into an
+-- uncaught one. The text is bounded here as well as in 'writeErr', so
+-- forcing it cannot run away. Its wording is not part of any contract —
+-- only "readable UTF-8" is.
+firewallMessage :: SomeException -> IO String
+firewallMessage e =
+  tryAny (evaluate (forceString (take firewallMessageLimit rendered))) >>= \case
+    Right msg -> pure msg
+    Left _ -> pure "internal error: exception message unavailable"
+  where
+    rendered = "internal error: " ++ displayException e
+
+-- | Bound on the exception text the firewall will force and hand to
+-- 'writeErr'. Generous next to any host's @err_buf@, and finite next to a
+-- message that generates itself.
+firewallMessageLimit :: Int
+firewallMessageLimit = 512
+
+-- | Force a string's spine /and/ its characters, so that a bottom
+-- anywhere inside it surfaces under the 'try' that asked for it rather
+-- than later, in 'writeErr', outside.
+forceString :: String -> String
+forceString s = go s `seq` s
+  where
+    go [] = ()
+    go (c : cs) = c `seq` go cs
 
 -- Entry points ---------------------------------------------------------------
 
-foreign export ccall pm_abi_version :: IO CInt
+-- Every export below carries an explicit external name, @pm_hs_*@, because
+-- the C symbol a host links against is no longer this one: host-runtime
+-- F003 puts a gate in front of it (@cbits\/pm_gate.c@) that answers
+-- @PM_ERR_STATE@ when the runtime is not initialised or has been shut
+-- down. That check cannot live here — calling into a Haskell export
+-- before @hs_init@ or after @hs_exit@ terminates the process inside the
+-- RTS, before any Haskell in this module runs. So @pm_advance@ the C
+-- symbol is the gate; @pm_hs_advance@ is the function below.
+--
+-- @pm_hs_*@ names are INTERNAL: they are not in the header and not in
+-- @particle-magic-ffi.def@. Nothing else changed — the Haskell names,
+-- signatures and bodies are exactly what they were, so in-process callers
+-- (the whole test suite) see no difference at all.
+
+foreign export ccall "pm_hs_abi_version" pm_abi_version :: IO CInt
 
 pm_abi_version :: IO CInt
-pm_abi_version = pure pmAbiVersion
+pm_abi_version = firewall pmErrInternal (pure pmAbiVersion)
 
-foreign export ccall pm_max_particles :: IO CInt
+foreign export ccall "pm_hs_max_particles" pm_max_particles :: IO CInt
 
 -- | The particle cap this build of the core actually enforces — the
 -- capacity each of @pm_observe@'s six columns needs.
 --
--- Today it answers @PM_MAX_PARTICLES@ (4096). The header constant is
--- frozen at that value; this query is not, so a host that allocates from
--- it survives a future cap rise without recompiling against a new header
--- (func-spec 0011 §2, roadmap §4.2).
+-- It already answers more than @PM_MAX_PARTICLES@: the header constant is
+-- frozen at the first generation's 4096 and this query is not, which is
+-- the entire point of splitting them (func-spec 0011 §2, roadmap §4.2). A
+-- host that allocates from the query survives a cap rise without
+-- recompiling against a new header — and one already happened.
+--
+-- The number itself lives in 'pmMaxParticles' above, together with the
+-- account of that rise. Deliberately not repeated here: a third copy of a
+-- value is a third thing to go stale.
 pm_max_particles :: IO CInt
-pm_max_particles = pure pmMaxParticles
+pm_max_particles = firewall pmErrInternal (pure pmMaxParticles)
 
-foreign export ccall pm_cast
+foreign export ccall "pm_hs_cast" pm_cast
   :: CString
   -> Ptr CFloat
   -> Ptr CFloat
@@ -378,12 +645,19 @@ pm_cast
   -- ^ error buffer capacity in bytes, including the NUL
   -> IO (StablePtr SpellCell)
 pm_cast json posPtr facingPtr sd errBuf errLen =
-  alloca $ \out -> do
-    poke out nullSpell
-    _ <- pm_cast_ex json posPtr facingPtr sd errBuf errLen out
-    peek out
+  -- Nested firewalls are deliberate and harmless: the body below is
+  -- 'pm_cast_ex', which is already wrapped, so the inner one catches first
+  -- and this one reads back the @NULL@ handle it left in @out@. Each
+  -- exported symbol still carries its own, because the source audit in
+  -- @test\/FFIFirewallSpec.hs@ asks every definition — not every call
+  -- chain — to be protected.
+  firewallErr errBuf errLen nullSpell $
+    alloca $ \out -> do
+      poke out nullSpell
+      _ <- pm_cast_ex json posPtr facingPtr sd errBuf errLen out
+      peek out
 
-foreign export ccall pm_cast_ex
+foreign export ccall "pm_hs_cast_ex" pm_cast_ex
   :: CString
   -> Ptr CFloat
   -> Ptr CFloat
@@ -407,58 +681,122 @@ pm_cast_ex
   -> Ptr (StablePtr SpellCell)
   -- ^ out: the new handle, @NULL@ on failure
   -> IO CInt
-pm_cast_ex json posPtr facingPtr sd errBuf errLen out = do
-  writeOut nullSpell
-  if json == nullPtr
-    then fail' pmErrJson "spell JSON error: null pointer"
-    else do
-      bytes <- BS.packCString json
-      case loadCircle bytes of
-        Left err -> fail' pmErrJson (renderLoadError err)
-        Right circle -> do
-          pos <- peekV3 posPtr
-          facing <- peekV3 facingPtr
-          let ctx = CastContext {casterPos = pos, casterFacing = facing, seed = Seed sd}
-          case castSpell CastRequest {circleOf = circle, ctxOf = ctx} of
-            Left err -> fail' pmErrBudget ("spell compile error: " ++ show err)
-            Right spell -> do
-              handle <- newStablePtr . SpellCell =<< newIORef spell
-              writeOut handle
-              pure pmOk
+pm_cast_ex json posPtr facingPtr sd errBuf errLen out =
+  firewallErr errBuf errLen pmErrInternal $ do
+    writeOut nullSpell
+    if json == nullPtr
+      then fail' pmErrJson "spell JSON error: null pointer"
+      else do
+        bytes <- BS.packCString json
+        case loadCircle bytes of
+          Left err -> fail' pmErrJson (renderLoadError err)
+          Right circle -> do
+            pos <- peekV3 posPtr
+            facing <- peekV3 facingPtr
+            let ctx = CastContext {casterPos = pos, casterFacing = facing, seed = Seed sd}
+            case castSpell CastRequest {circleOf = circle, ctxOf = ctx} of
+              Left err -> fail' pmErrBudget ("spell compile error: " ++ show err)
+              Right spell -> do
+                handle <- newSpellHandle spell
+                if isNullSpell handle
+                  then -- Unreachable in practice: the slot space runs to 2³⁰
+                  -- live handles. Reported rather than aliased.
+                    fail' pmErrCapacity "spell handle table exhausted"
+                  else do
+                    writeOut handle
+                    pure pmOk
   where
     writeOut h = if out == nullPtr then pure () else poke out h
     fail' code msg = writeErr errBuf errLen msg >> pure code
 
-foreign export ccall pm_advance :: StablePtr SpellCell -> CFloat -> IO ()
+-- | Is this a step a spell's clock may be moved by (host-runtime C2.6)?
+--
+-- @NaN@, @±Infinity@ and a negative @dt@ are not. The first is the one
+-- that matters most: a single @NaN@ frame poisons the age for good, after
+-- which 'pm_is_finished' answers 0 forever and a host's
+-- @while (!pm_is_finished(s))@ never leaves. Zero /is/ legal — a paused
+-- host stepping 0 is asking for a no-op, and gets one.
+--
+-- Judged on the @CFloat@ the host handed over rather than on the widened
+-- 'Double': 'cfloatToDouble' is exact, so the two are equivalent, and
+-- this way the rule reads as being about the argument in the prototype.
+-- @-0.0@ passes and is a no-op, as it should be.
+--
+-- One function, four call sites (the two advances and their @_ex@
+-- variants), so the rule cannot drift between them.
+legalDt :: CFloat -> Bool
+legalDt (CFloat dt) = not (isNaN dt) && not (isInfinite dt) && dt >= 0
+
+foreign export ccall "pm_hs_advance" pm_advance :: StablePtr SpellCell -> CFloat -> IO ()
 
 -- | Advance the spell's clock by @dt@ seconds, in place.
+--
+-- An illegal @dt@ ('legalDt') is a no-op: the spell's clock is not moved
+-- by one bit. There is no error channel in a @void@ — the frozen
+-- signature has no room for one — so 'pm_advance_ex' is where a host that
+-- wants to be told about it looks. Silently doing nothing is still
+-- strictly better than the alternative, which was poisoning the age.
 pm_advance :: StablePtr SpellCell -> CFloat -> IO ()
 pm_advance h dt =
-  withCell h () $ \ref -> do
-    spell <- readIORef ref
-    writeIORef ref $! advanceSpell (FrameInput (DeltaTime (cfloatToDouble dt))) spell
+  firewall () $
+    if not (legalDt dt)
+      then pure ()
+      else withCell h () () $ \ref ->
+        stepCell ref (advanceSpell (FrameInput (DeltaTime (cfloatToDouble dt))))
 
-foreign export ccall pm_is_finished :: StablePtr SpellCell -> IO CInt
+foreign export ccall "pm_hs_advance_ex" pm_advance_ex
+  :: StablePtr SpellCell -> CFloat -> IO CInt
+
+-- | 'pm_advance' with the argument check reported (host-runtime C1.12).
+--
+-- 'pmErrArgs' for an illegal @dt@ and for a handle that does not resolve
+-- — including @NULL@, which the @void@ 'pm_advance' tolerates and this
+-- one does not: an @_ex@ variant exists to classify, and every other
+-- entry point with an error channel calls a @NULL@ handle an argument
+-- error. Otherwise the very same 'advanceSpell' call as 'pm_advance',
+-- which is what makes "the outputs are bit-identical for a legal @dt@" a
+-- statement about one code path rather than two.
+pm_advance_ex :: StablePtr SpellCell -> CFloat -> IO CInt
+pm_advance_ex h dt =
+  firewall pmErrInternal $
+    if not (legalDt dt)
+      then pure pmErrArgs
+      else withCell h pmErrArgs pmErrArgs $ \ref -> do
+        stepCell ref (advanceSpell (FrameInput (DeltaTime (cfloatToDouble dt))))
+        pure pmOk
+
+foreign export ccall "pm_hs_is_finished" pm_is_finished :: StablePtr SpellCell -> IO CInt
 
 -- | 1 when the spell has outlived its lifetime, 0 while it is running.
--- A @NULL@ handle reports 1 — nothing left to run.
+-- A @NULL@ handle reports 1 — nothing left to run. An /invalid/ handle
+-- reports 'pmErrArgs': that is a host bug, not a finished spell.
 pm_is_finished :: StablePtr SpellCell -> IO CInt
 pm_is_finished h =
-  withCell h 1 $ \ref -> do
-    spell <- readIORef ref
-    pure (if isFinished spell then 1 else 0)
+  -- The sentinel is right here as well as safe: -6 is truthy in C, so a
+  -- host's @while (!pm_is_finished(s))@ leaves the loop instead of
+  -- spinning on a spell that can no longer answer.
+  firewall pmErrInternal $
+    withCell h 1 pmErrArgs $ \ref -> do
+      spell <- readIORef ref
+      pure (if isFinished spell then 1 else 0)
 
-foreign export ccall pm_age :: StablePtr SpellCell -> IO CDouble
+foreign export ccall "pm_hs_age" pm_age :: StablePtr SpellCell -> IO CDouble
 
--- | Seconds since this spell was cast.
+-- | Seconds since this spell was cast. There is no error channel in a
+-- @double@, so both a @NULL@ and an invalid handle answer 0 — safe, and
+-- the same answer a spell that has not been advanced gives.
 pm_age :: StablePtr SpellCell -> IO CDouble
 pm_age h =
-  withCell h 0 $ \ref -> do
-    spell <- readIORef ref
-    let Time t = spellAge spell
-    pure (CDouble t)
+  -- @-6.0@ is PM_ERR_INTERNAL's float mirror: an age is never negative, so
+  -- the value is unambiguous, and unlike NaN it will not poison whatever
+  -- clock the host mixes it into.
+  firewall (-6.0) $
+    withCell h 0 0 $ \ref -> do
+      spell <- readIORef ref
+      let Time t = spellAge spell
+      pure (CDouble t)
 
-foreign export ccall pm_observe
+foreign export ccall "pm_hs_observe" pm_observe
   :: StablePtr SpellCell
   -> Ptr CFloat
   -> Ptr CFloat
@@ -502,22 +840,23 @@ pm_observe
   -- ^ capacity of @batch_info@, in batches
   -> IO CInt
 pm_observe h px py pz psize plife pcolor capacity infoPtr maxBatches =
-  pm_observe_ex
-    h
-    px
-    py
-    pz
-    psize
-    plife
-    pcolor
-    nullPtr
-    nullPtr
-    nullPtr
-    capacity
-    infoPtr
-    maxBatches
+  firewall pmErrInternal $
+    pm_observe_ex
+      h
+      px
+      py
+      pz
+      psize
+      plife
+      pcolor
+      nullPtr
+      nullPtr
+      nullPtr
+      capacity
+      infoPtr
+      maxBatches
 
-foreign export ccall pm_observe_ex
+foreign export ccall "pm_hs_observe_ex" pm_observe_ex
   :: StablePtr SpellCell
   -> Ptr CFloat
   -> Ptr CFloat
@@ -579,22 +918,23 @@ pm_observe_ex
   -- ^ capacity of @batch_info@, in batches
   -> IO CInt
 pm_observe_ex h px py pz psize plife pcolor pvx pvy pvz capacity infoPtr maxBatches =
-  withCell h 0 $ \ref -> do
-    spell <- readIORef ref
-    copyOut
-      (batches (observeSpell spell))
-      px
-      py
-      pz
-      psize
-      plife
-      pcolor
-      pvx
-      pvy
-      pvz
-      capacity
-      infoPtr
-      maxBatches
+  firewall pmErrInternal $
+    withCell h 0 pmErrArgs $ \ref -> do
+      spell <- readIORef ref
+      copyOut
+        (batches (observeSpell spell))
+        px
+        py
+        pz
+        psize
+        plife
+        pcolor
+        pvx
+        pvy
+        pvz
+        capacity
+        infoPtr
+        maxBatches
 
 -- | The copy-out shared by 'pm_observe' and 'pm_scene_observe' (func-spec
 -- 0018 §3.3): a batch list into the host's six columns plus one
@@ -659,14 +999,15 @@ copyOut bs px py pz psize plife pcolor pvx pvy pvz capacity infoPtr maxBatches =
       _ <- foldM writeBatch 0 (zip [0 :: Int ..] bs)
       pure (fromIntegral nBatches)
 
-foreign export ccall pm_free :: StablePtr SpellCell -> IO ()
+foreign export ccall "pm_hs_free" pm_free :: StablePtr SpellCell -> IO ()
 
--- | Release a handle. Freeing @NULL@ is a no-op (C convention); freeing
--- twice is undefined behaviour (ADR-0011 D4).
+-- | Release a handle. Freeing @NULL@ is a no-op (C convention), and so is
+-- freeing anything else that does not resolve — a handle freed twice, or
+-- one this library never issued. @void@ leaves no room to report it, so
+-- the promise here is the safe half of C2.3: nothing happens, and the host
+-- process lives (ADR-022 D3, revising ADR-0011 D4).
 pm_free :: StablePtr SpellCell -> IO ()
-pm_free h
-  | isNullSpell h = pure ()
-  | otherwise = freeStablePtr h
+pm_free h = firewall () (freeSpellHandle h)
 
 -- Scenes (func-spec 0018) ----------------------------------------------------
 --
@@ -677,7 +1018,7 @@ pm_free h
 -- pure layer, which is what makes @test\/Acceptance18Spec.hs@'s
 -- equivalence law provable rather than aspirational.
 
-foreign export ccall pm_scene_new :: CInt -> IO (StablePtr SceneCell)
+foreign export ccall "pm_hs_scene_new" pm_scene_new :: CInt -> IO (StablePtr SceneCell)
 
 -- | Open a scene whose live spells may hold @global_cap@ particles in
 -- total.
@@ -685,21 +1026,23 @@ foreign export ccall pm_scene_new :: CInt -> IO (StablePtr SceneCell)
 -- A negative cap is /not/ rejected: 'newScene' defines it as a scene that
 -- admits nothing, and turning a defined behaviour into an argument error
 -- here would be a semantic the Haskell path does not have (func-spec 0018
--- §2). Never returns the 'nullScene' handle in this generation.
+-- §2). Answers the 'nullScene' handle only when no scene could be made at
+-- all: the firewall catching an internal failure, or the registry running
+-- out of slots (2³⁰ live handles — unreachable in practice, but not a
+-- promise this function is in a position to make).
 pm_scene_new :: CInt -> IO (StablePtr SceneCell)
 pm_scene_new cap =
-  newStablePtr . SceneCell =<< newIORef (newScene (SceneConfig (fromIntegral cap)))
+  firewall nullScene (newSceneHandle (newScene (SceneConfig (fromIntegral cap))))
 
-foreign export ccall pm_scene_free :: StablePtr SceneCell -> IO ()
+foreign export ccall "pm_hs_scene_free" pm_scene_free :: StablePtr SceneCell -> IO ()
 
 -- | Release a scene and, with it, every spell still live inside it.
--- Freeing 'nullScene' is a no-op; freeing twice is undefined behaviour.
+-- Freeing 'nullScene' is a no-op, and so is freeing a scene handle that
+-- does not resolve — already freed, or forged (host-runtime C2.3).
 pm_scene_free :: StablePtr SceneCell -> IO ()
-pm_scene_free h
-  | isNullScene h = pure ()
-  | otherwise = freeStablePtr h
+pm_scene_free h = firewall () (freeSceneHandle h)
 
-foreign export ccall pm_scene_cast
+foreign export ccall "pm_hs_scene_cast" pm_scene_cast
   :: StablePtr SceneCell
   -> CString
   -> Ptr CFloat
@@ -733,17 +1076,18 @@ pm_scene_cast
   -- ^ out: the admitted spell's id
   -> IO CInt
 pm_scene_cast h json posPtr facingPtr sd errBuf errLen outId =
-  withCast h posPtr facingPtr sd errBuf errLen outId $ \ref ctx ->
-    if json == nullPtr
-      then castFail errBuf errLen pmErrJson "spell JSON error: null pointer"
-      else do
-        bytes <- BS.packCString json
-        case loadCircle bytes of
-          Left err -> castFail errBuf errLen pmErrJson (renderLoadError err)
-          Right circle ->
-            admitInto ref outId errBuf errLen (castInto CastRequest {circleOf = circle, ctxOf = ctx})
+  firewallErr errBuf errLen pmErrInternal $
+    withCast h posPtr facingPtr sd errBuf errLen outId $ \ref ctx ->
+      if json == nullPtr
+        then castFail errBuf errLen pmErrJson "spell JSON error: null pointer"
+        else do
+          bytes <- BS.packCString json
+          case loadCircle bytes of
+            Left err -> castFail errBuf errLen pmErrJson (renderLoadError err)
+            Right circle ->
+              admitInto ref outId errBuf errLen (castInto CastRequest {circleOf = circle, ctxOf = ctx})
 
-foreign export ccall pm_scene_cast_many
+foreign export ccall "pm_hs_scene_cast_many" pm_scene_cast_many
   :: StablePtr SceneCell
   -> Ptr CString
   -> CInt
@@ -775,19 +1119,22 @@ pm_scene_cast_many
   -> CInt
   -> Ptr CInt
   -> IO CInt
-pm_scene_cast_many h jsons count posPtr facingPtr sd errBuf errLen outId
-  | count < 0 = castFail errBuf errLen pmErrArgs "scene cast error: negative count"
-  | otherwise =
-      withCast h posPtr facingPtr sd errBuf errLen outId $ \ref ctx ->
-        if count > 0 && jsons == nullPtr
-          then castFail errBuf errLen pmErrArgs "scene cast error: null circle array"
-          else do
-            ptrs <- traverse (peekElemOff jsons) [0 .. fromIntegral count - 1]
-            loaded <- loadCircles ptrs
-            case loaded of
-              Left msg -> castFail errBuf errLen pmErrJson msg
-              Right circles -> admitInto ref outId errBuf errLen (castManyInto circles ctx)
+pm_scene_cast_many h jsons count posPtr facingPtr sd errBuf errLen outId =
+  firewallErr errBuf errLen pmErrInternal body
   where
+    body
+      | count < 0 = castFail errBuf errLen pmErrArgs "scene cast error: negative count"
+      | otherwise =
+          withCast h posPtr facingPtr sd errBuf errLen outId $ \ref ctx ->
+            if count > 0 && jsons == nullPtr
+              then castFail errBuf errLen pmErrArgs "scene cast error: null circle array"
+              else do
+                ptrs <- traverse (peekElemOff jsons) [0 .. fromIntegral count - 1]
+                loaded <- loadCircles ptrs
+                case loaded of
+                  Left msg -> castFail errBuf errLen pmErrJson msg
+                  Right circles -> admitInto ref outId errBuf errLen (castManyInto circles ctx)
+
     -- The composition's circles, or the first decode failure's message.
     loadCircles :: [CString] -> IO (Either String [Circle])
     loadCircles = go id
@@ -818,14 +1165,32 @@ withCast
 withCast h posPtr facingPtr sd errBuf errLen outId k
   | isNullScene h = castFail errBuf errLen pmErrArgs "scene cast error: null scene"
   | outId == nullPtr = castFail errBuf errLen pmErrArgs "scene cast error: null out_id"
-  | otherwise = do
-      poke outId (-1)
-      SceneCell ref <- deRefStablePtr h
-      pos <- peekV3 posPtr
-      facing <- peekV3 facingPtr
-      k ref CastContext {casterPos = pos, casterFacing = facing, seed = Seed sd}
+  | otherwise =
+      -- The handle is resolved /before/ @out_id@ is touched, so an invalid
+      -- scene leaves the host's id word exactly as a NULL scene does: not
+      -- written at all.
+      registryResolve sceneRegistry (castStablePtrToPtr h) >>= \case
+        ResNull -> castFail errBuf errLen pmErrArgs "scene cast error: null scene"
+        ResInvalid -> castFail errBuf errLen pmErrArgs "scene cast error: invalid scene handle"
+        ResLive (SceneCell ref) -> do
+          poke outId (-1)
+          pos <- peekV3 posPtr
+          facing <- peekV3 facingPtr
+          k ref CastContext {casterPos = pos, casterFacing = facing, seed = Seed sd}
 
 -- | Commit an admission decision to the cell, or report the refusal.
+--
+-- The decision is taken /inside/ the atomic step (host-runtime F004), so
+-- two threads casting into the same scene at the same time each see the
+-- other's admission: the quota is counted once per spell rather than once
+-- per thread, and two casts that only fit one get one 'pmOk' and one
+-- 'pmErrQuota'. A refusal writes the scene back unchanged — same value,
+-- so semantically the no-op it always was, but kept as one exchange so
+-- there is no window between deciding and committing.
+--
+-- Everything with an effect stays outside the step: 'poke' and the error
+-- buffer would otherwise be run twice by a losing compare-and-swap
+-- attempt.
 admitInto
   :: IORef Scene
   -> Ptr CInt
@@ -834,39 +1199,61 @@ admitInto
   -> (Scene -> Either CastRefusal (SpellId, Scene))
   -> IO CInt
 admitInto ref outId errBuf errLen admit = do
-  scene <- readIORef ref
-  case admit scene of
+  outcome <- stepCellWith ref $ \scene -> case admit scene of
+    Left refusal -> (scene, Left refusal)
+    Right (sid, scene') -> (scene', Right sid)
+  case outcome of
     Left refusal -> castFail errBuf errLen (refusalCode refusal) (refusalMessage refusal)
-    Right (SpellId sid, scene') -> do
-      writeIORef ref $! scene'
+    Right (SpellId sid) -> do
       poke outId (fromIntegral sid)
       pure pmOk
 
 castFail :: CString -> CInt -> CInt -> String -> IO CInt
 castFail errBuf errLen code msg = writeErr errBuf errLen msg >> pure code
 
-foreign export ccall pm_scene_dismiss :: StablePtr SceneCell -> CInt -> IO ()
+foreign export ccall "pm_hs_scene_dismiss" pm_scene_dismiss :: StablePtr SceneCell -> CInt -> IO ()
 
 -- | Remove a spell early. An unknown id — stale, already finished, never
 -- issued — is a no-op, because 'dismiss' says so and ids are never
 -- reused; the C side therefore needs no generation counter.
 pm_scene_dismiss :: StablePtr SceneCell -> CInt -> IO ()
 pm_scene_dismiss h sid =
-  withScene h () $ \ref -> do
-    scene <- readIORef ref
-    writeIORef ref $! dismiss (SpellId (fromIntegral sid)) scene
+  firewall () $
+    withScene h () () $ \ref ->
+      stepCell ref (dismiss (SpellId (fromIntegral sid)))
 
-foreign export ccall pm_scene_advance :: StablePtr SceneCell -> CFloat -> IO ()
+foreign export ccall "pm_hs_scene_advance" pm_scene_advance :: StablePtr SceneCell -> CFloat -> IO ()
 
 -- | Advance every live spell by @dt@ seconds, in place, dropping the ones
 -- that finished — which is also how their share of the quota comes back.
+--
+-- An illegal @dt@ ('legalDt') is a no-op, exactly as in 'pm_advance', and
+-- for the same reason: one poisoned frame would otherwise freeze every
+-- spell in the scene at once.
 pm_scene_advance :: StablePtr SceneCell -> CFloat -> IO ()
 pm_scene_advance h dt =
-  withScene h () $ \ref -> do
-    scene <- readIORef ref
-    writeIORef ref $! advanceScene (FrameInput (DeltaTime (cfloatToDouble dt))) scene
+  firewall () $
+    if not (legalDt dt)
+      then pure ()
+      else withScene h () () $ \ref ->
+        stepCell ref (advanceScene (FrameInput (DeltaTime (cfloatToDouble dt))))
 
-foreign export ccall pm_scene_observe
+foreign export ccall "pm_hs_scene_advance_ex" pm_scene_advance_ex
+  :: StablePtr SceneCell -> CFloat -> IO CInt
+
+-- | 'pm_scene_advance' with the argument check reported (host-runtime
+-- C1.12) — 'pm_advance_ex' for scenes, same rules, same one call to the
+-- boundary layer.
+pm_scene_advance_ex :: StablePtr SceneCell -> CFloat -> IO CInt
+pm_scene_advance_ex h dt =
+  firewall pmErrInternal $
+    if not (legalDt dt)
+      then pure pmErrArgs
+      else withScene h pmErrArgs pmErrArgs $ \ref -> do
+        stepCell ref (advanceScene (FrameInput (DeltaTime (cfloatToDouble dt))))
+        pure pmOk
+
+foreign export ccall "pm_hs_scene_observe" pm_scene_observe
   :: StablePtr SceneCell
   -> Ptr CFloat
   -> Ptr CFloat
@@ -901,28 +1288,29 @@ pm_scene_observe
   -> CInt
   -> IO CInt
 pm_scene_observe h px py pz psize plife pcolor capacity infoPtr maxBatches =
-  withScene h 0 $ \ref -> do
-    scene <- readIORef ref
-    -- No velocity out of the scene entry point this round: func-spec 0023
-    -- widens the single-spell path only, so this passes the three @NULL@s
-    -- that make 'copyOut' behave exactly as it did before (the scene
-    -- counterpart is booked, not delivered — func-spec 0023 §10).
-    copyOut
-      (batches (observeScene scene))
-      px
-      py
-      pz
-      psize
-      plife
-      pcolor
-      nullPtr
-      nullPtr
-      nullPtr
-      capacity
-      infoPtr
-      maxBatches
+  firewall pmErrInternal $
+    withScene h 0 pmErrArgs $ \ref -> do
+      scene <- readIORef ref
+      -- No velocity out of the scene entry point this round: func-spec 0023
+      -- widens the single-spell path only, so this passes the three @NULL@s
+      -- that make 'copyOut' behave exactly as it did before (the scene
+      -- counterpart is booked, not delivered — func-spec 0023 §10).
+      copyOut
+        (batches (observeScene scene))
+        px
+        py
+        pz
+        psize
+        plife
+        pcolor
+        nullPtr
+        nullPtr
+        nullPtr
+        capacity
+        infoPtr
+        maxBatches
 
-foreign export ccall pm_scene_budget
+foreign export ccall "pm_hs_scene_budget" pm_scene_budget
   :: StablePtr SceneCell -> Ptr CInt -> Ptr CInt -> IO CInt
 
 -- | @(particles committed by the live spells, the scene's cap)@ —
@@ -930,36 +1318,39 @@ foreign export ccall pm_scene_budget
 -- that only wants the other one.
 pm_scene_budget :: StablePtr SceneCell -> Ptr CInt -> Ptr CInt -> IO CInt
 pm_scene_budget h outUsed outCap =
-  withScene h pmErrArgs $ \ref -> do
-    (used, cap) <- sceneBudget <$> readIORef ref
-    when (outUsed /= nullPtr) (poke outUsed (fromIntegral used))
-    when (outCap /= nullPtr) (poke outCap (fromIntegral cap))
-    pure pmOk
+  firewall pmErrInternal $
+    withScene h pmErrArgs pmErrArgs $ \ref -> do
+      (used, cap) <- sceneBudget <$> readIORef ref
+      when (outUsed /= nullPtr) (poke outUsed (fromIntegral used))
+      when (outCap /= nullPtr) (poke outCap (fromIntegral cap))
+      pure pmOk
 
-foreign export ccall pm_scene_count :: StablePtr SceneCell -> IO CInt
+foreign export ccall "pm_hs_scene_count" pm_scene_count :: StablePtr SceneCell -> IO CInt
 
 -- | How many spells are live — the capacity 'pm_scene_spells' wants.
 pm_scene_count :: StablePtr SceneCell -> IO CInt
 pm_scene_count h =
-  withScene h 0 $ \ref -> fromIntegral . length . sceneSpells <$> readIORef ref
+  firewall pmErrInternal $
+    withScene h 0 pmErrArgs $ \ref -> fromIntegral . length . sceneSpells <$> readIORef ref
 
-foreign export ccall pm_scene_spells :: StablePtr SceneCell -> Ptr CInt -> CInt -> IO CInt
+foreign export ccall "pm_hs_scene_spells" pm_scene_spells :: StablePtr SceneCell -> Ptr CInt -> CInt -> IO CInt
 
 -- | The live spells' ids in admission order. Returns how many were
 -- written, or 'pmErrCapacity' with __nothing written at all__ when they
 -- do not fit — the same all-or-nothing rule 'pm_observe' follows.
 pm_scene_spells :: StablePtr SceneCell -> Ptr CInt -> CInt -> IO CInt
 pm_scene_spells h outIds maxIds =
-  withScene h 0 $ \ref -> do
-    ids <- sceneSpells <$> readIORef ref
-    let n = length ids
-    if n > fromIntegral maxIds || (n > 0 && outIds == nullPtr)
-      then pure pmErrCapacity
-      else do
-        mapM_
-          (\(i, SpellId sid) -> pokeElemOff outIds i (fromIntegral sid))
-          (zip [0 ..] ids)
-        pure (fromIntegral n)
+  firewall pmErrInternal $
+    withScene h 0 pmErrArgs $ \ref -> do
+      ids <- sceneSpells <$> readIORef ref
+      let n = length ids
+      if n > fromIntegral maxIds || (n > 0 && outIds == nullPtr)
+        then pure pmErrCapacity
+        else do
+          mapM_
+            (\(i, SpellId sid) -> pokeElemOff outIds i (fromIntegral sid))
+            (zip [0 ..] ids)
+          pure (fromIntegral n)
 
 -- Spatial summary (func-spec 0025) -------------------------------------------
 --
@@ -971,24 +1362,26 @@ pm_scene_spells h outIds maxIds =
 -- back, so a host may call them between @pm_advance@ and @pm_observe@
 -- without changing one particle.
 
-foreign export ccall pm_spell_bounds
+foreign export ccall "pm_hs_spell_bounds" pm_spell_bounds
   :: StablePtr SpellCell -> Ptr CFloat -> Ptr CFloat -> IO CInt
 
 -- | The whole spell's world axis-aligned box over its entire life, as two
 -- corners. 'pmOk', or 'pmErrArgs' (@NULL@ handle or @NULL@ output) with
 -- nothing written.
 pm_spell_bounds :: StablePtr SpellCell -> Ptr CFloat -> Ptr CFloat -> IO CInt
-pm_spell_bounds h outMin outMax
-  | outMin == nullPtr || outMax == nullPtr = pure pmErrArgs
-  | otherwise =
-      withCell h pmErrArgs $ \ref -> do
-        spell <- readIORef ref
-        let (lo, hi) = spellBoundsOf spell
-        pokeV3 outMin lo
-        pokeV3 outMax hi
-        pure pmOk
+pm_spell_bounds h outMin outMax = firewall pmErrInternal body
+  where
+    body
+      | outMin == nullPtr || outMax == nullPtr = pure pmErrArgs
+      | otherwise =
+          withCell h pmErrArgs pmErrArgs $ \ref -> do
+            spell <- readIORef ref
+            let (lo, hi) = spellBoundsOf spell
+            pokeV3 outMin lo
+            pokeV3 outMax hi
+            pure pmOk
 
-foreign export ccall pm_spell_box
+foreign export ccall "pm_hs_spell_box" pm_spell_box
   :: StablePtr SpellCell -> Ptr CFloat -> Ptr CFloat -> Ptr CFloat -> IO CInt
 
 -- | The whole spell as an oriented box over its entire life: center,
@@ -1005,19 +1398,21 @@ pm_spell_box
   -- ^ out: half-extents, 3 floats
   -> IO CInt
 pm_spell_box h outCenter outAxes outHalf =
-  withCell h pmErrArgs $ \ref -> do
-    spell <- readIORef ref
-    writeBox (spellBoxOf spell) outCenter outAxes outHalf
+  firewall pmErrInternal $
+    withCell h pmErrArgs pmErrArgs $ \ref -> do
+      spell <- readIORef ref
+      writeBox (spellBoxOf spell) outCenter outAxes outHalf
 
-foreign export ccall pm_emitter_count :: StablePtr SpellCell -> IO CInt
+foreign export ccall "pm_hs_emitter_count" pm_emitter_count :: StablePtr SpellCell -> IO CInt
 
 -- | How many emitters this spell compiled to — the index range
 -- 'pm_emitter_box' accepts. 0 for a @NULL@ handle.
 pm_emitter_count :: StablePtr SpellCell -> IO CInt
 pm_emitter_count h =
-  withCell h 0 $ \ref -> fromIntegral . length . emittersOf <$> readIORef ref
+  firewall pmErrInternal $
+    withCell h 0 pmErrArgs $ \ref -> fromIntegral . length . emittersOf <$> readIORef ref
 
-foreign export ccall pm_emitter_box
+foreign export ccall "pm_hs_emitter_box" pm_emitter_box
   :: StablePtr SpellCell -> CInt -> Ptr CFloat -> Ptr CFloat -> Ptr CFloat -> IO CInt
 
 -- | One emitter's fitted oriented box at the cast's current age, in the
@@ -1031,13 +1426,14 @@ pm_emitter_box
   -> Ptr CFloat
   -> IO CInt
 pm_emitter_box h index outCenter outAxes outHalf =
-  withCell h pmErrArgs $ \ref -> do
-    spell <- readIORef ref
-    let ems = emittersOf spell
-        i = fromIntegral index :: Int
-    if i < 0 || i >= length ems
-      then pure pmErrArgs
-      else writeBox (emitterBoxOf spell (ems !! i)) outCenter outAxes outHalf
+  firewall pmErrInternal $
+    withCell h pmErrArgs pmErrArgs $ \ref -> do
+      spell <- readIORef ref
+      let ems = emittersOf spell
+          i = fromIntegral index :: Int
+      if i < 0 || i >= length ems
+        then pure pmErrArgs
+        else writeBox (emitterBoxOf spell (ems !! i)) outCenter outAxes outHalf
 
 -- | The copy-out shared by the two box entry points: nothing is written
 -- until every output pointer has been checked, so the error path leaves
@@ -1054,7 +1450,7 @@ writeBox box outCenter outAxes outHalf
       pokeV3 outHalf (V3 (obHalfU box) (obHalfV box) (obHalfN box))
       pure pmOk
 
-foreign export ccall pm_occupancy
+foreign export ccall "pm_hs_occupancy" pm_occupancy
   :: StablePtr SpellCell -> CInt -> Ptr CInt -> CInt -> IO CInt
 
 -- | @dim³@ occupancy counts of the spell's currently live particles, in
@@ -1066,30 +1462,36 @@ foreign export ccall pm_occupancy
 -- @dim@ or a @NULL@ handle, or 'pmErrCapacity' when @capacity < dim³@ —
 -- in which case __nothing is written at all__.
 pm_occupancy :: StablePtr SpellCell -> CInt -> Ptr CInt -> CInt -> IO CInt
-pm_occupancy h dim outCounts capacity
-  | dim <= 0 = pure pmErrArgs
-  | otherwise =
-      withCell h pmErrArgs $ \ref -> do
-        let n = fromIntegral dim :: Int
-            cells = n * n * n
-        if cells > fromIntegral capacity || outCounts == nullPtr
-          then pure pmErrCapacity
-          else do
-            spell <- readIORef ref
-            let counts = ogCounts (occupancyOf n spell)
-            U.imapM_ (\i c -> pokeElemOff outCounts i (fromIntegral c)) counts
-            pure (fromIntegral cells)
+pm_occupancy h dim outCounts capacity = firewall pmErrInternal body
+  where
+    body
+      | dim <= 0 = pure pmErrArgs
+      | otherwise =
+          withCell h pmErrArgs pmErrArgs $ \ref -> do
+            let n = fromIntegral dim :: Int
+                cells = n * n * n
+            if cells > fromIntegral capacity || outCounts == nullPtr
+              then pure pmErrCapacity
+              else do
+                spell <- readIORef ref
+                let counts = ogCounts (occupancyOf n spell)
+                U.imapM_ (\i c -> pokeElemOff outCounts i (fromIntegral c)) counts
+                pure (fromIntegral cells)
 
-foreign export ccall pm_occupancy_mask :: StablePtr SpellCell -> IO Word32
+foreign export ccall "pm_hs_occupancy_mask" pm_occupancy_mask :: StablePtr SpellCell -> IO Word32
 
 -- | The @PM_OCCUPANCY_DIM_DEFAULT@ fast path: bit @c@ is set when cell
 -- @c@ of a @3³@ 'pm_occupancy' would be non-zero. 0 for a @NULL@ handle,
 -- which is also what an empty spell answers — "nothing anywhere" is the
 -- honest reading of both.
 pm_occupancy_mask :: StablePtr SpellCell -> IO Word32
-pm_occupancy_mask h = withCell h 0 $ \ref -> occupancyMask <$> readIORef ref
+-- The firewall's sentinel here is 0 as well: there is no negative
+-- @uint32_t@ to spend, and "nothing anywhere" is the fail-safe answer for
+-- an overlap test — it under-claims rather than over-claims.
+pm_occupancy_mask h =
+  firewall 0 $ withCell h 0 0 $ \ref -> occupancyMask <$> readIORef ref
 
-foreign export ccall pm_scene_spell_bounds
+foreign export ccall "pm_hs_scene_spell_bounds" pm_scene_spell_bounds
   :: StablePtr SceneCell -> CInt -> Ptr CFloat -> Ptr CFloat -> IO CInt
 
 -- | 'pm_spell_bounds' for one spell inside a scene: 'pm_scene_spells'
@@ -1101,18 +1503,20 @@ foreign export ccall pm_scene_spell_bounds
 -- number almost nothing can use.
 pm_scene_spell_bounds
   :: StablePtr SceneCell -> CInt -> Ptr CFloat -> Ptr CFloat -> IO CInt
-pm_scene_spell_bounds h sid outMin outMax
-  | outMin == nullPtr || outMax == nullPtr = pure pmErrArgs
-  | otherwise =
-      withScene h pmErrArgs $ \ref -> do
-        scene <- readIORef ref
-        case lookupSpell (SpellId (fromIntegral sid)) scene of
-          Nothing -> pure pmErrArgs
-          Just spell -> do
-            let (lo, hi) = spellBoundsOf spell
-            pokeV3 outMin lo
-            pokeV3 outMax hi
-            pure pmOk
+pm_scene_spell_bounds h sid outMin outMax = firewall pmErrInternal body
+  where
+    body
+      | outMin == nullPtr || outMax == nullPtr = pure pmErrArgs
+      | otherwise =
+          withScene h pmErrArgs pmErrArgs $ \ref -> do
+            scene <- readIORef ref
+            case lookupSpell (SpellId (fromIntegral sid)) scene of
+              Nothing -> pure pmErrArgs
+              Just spell -> do
+                let (lo, hi) = spellBoundsOf spell
+                pokeV3 outMin lo
+                pokeV3 outMax hi
+                pure pmOk
 
 -- Projection (func-spec 0011 §3) ---------------------------------------------
 --
@@ -1123,7 +1527,7 @@ pm_scene_spell_bounds h sid outMin outMax
 -- more (the zero-new-semantics rule; @test\/FFIProjectSpec.hs@ states it
 -- as an equivalence).
 
-foreign export ccall pm_project
+foreign export ccall "pm_hs_project" pm_project
   :: CInt
   -> Ptr CFloat
   -> Ptr CFloat
@@ -1164,21 +1568,22 @@ pm_project
   -- ^ out: depth
   -> IO CInt
 pm_project plane inX inY inZ count outU outV outDepth =
-  withColumns plane count [inX, inY, inZ, outU, outV, outDepth] $ \viewPlane n ->
-    let go i
-          | i >= n = pure pmOk
-          | otherwise = do
-              x <- peekFloat inX i
-              y <- peekFloat inY i
-              z <- peekFloat inZ i
-              let (V2 u v, depth) = orthographic viewPlane (V3 x y z)
-              pokeFloat outU i u
-              pokeFloat outV i v
-              pokeFloat outDepth i depth
-              go (i + 1)
-     in go 0
+  firewall pmErrInternal $
+    withColumns plane count [inX, inY, inZ, outU, outV, outDepth] $ \viewPlane n ->
+      let go i
+            | i >= n = pure pmOk
+            | otherwise = do
+                x <- peekFloat inX i
+                y <- peekFloat inY i
+                z <- peekFloat inZ i
+                let (V2 u v, depth) = orthographic viewPlane (V3 x y z)
+                pokeFloat outU i u
+                pokeFloat outV i v
+                pokeFloat outDepth i depth
+                go (i + 1)
+       in go 0
 
-foreign export ccall pm_depth_order
+foreign export ccall "pm_hs_depth_order" pm_depth_order
   :: CInt -> Ptr CFloat -> Ptr CFloat -> Ptr CFloat -> CInt -> Ptr CInt -> IO CInt
 
 -- | The painter's permutation for @count@ positions: the indices
@@ -1206,19 +1611,22 @@ pm_depth_order
   -- ^ out: @count@ indices, far to near
   -> IO CInt
 pm_depth_order plane inX inY inZ count outIndices =
-  withColumns plane count [inX, inY, inZ, castPtr outIndices] $ \viewPlane n -> do
-    xs <- readFloats inX n
-    ys <- readFloats inY n
-    zs <- readFloats inZ n
-    let blank = U.replicate n 0
-    case fromColumns xs ys zs blank blank (U.replicate n 0) of
-      -- Unreachable: the six columns are built to one length. Reported
-      -- rather than thrown, because an exception crossing back into C is
-      -- undefined behaviour.
-      Left _ -> pure pmErrArgs
-      Right pb -> do
-        U.imapM_ (\i j -> pokeElemOff outIndices i (fromIntegral j)) (depthOrder viewPlane pb)
-        pure pmOk
+  firewall pmErrInternal $
+    withColumns plane count [inX, inY, inZ, castPtr outIndices] $ \viewPlane n -> do
+      xs <- readFloats inX n
+      ys <- readFloats inY n
+      zs <- readFloats inZ n
+      let blank = U.replicate n 0
+      case fromColumns xs ys zs blank blank (U.replicate n 0) of
+        -- Unreachable: the six columns are built to one length. Reported
+        -- rather than thrown, because an exception crossing back into C
+        -- used to be undefined behaviour — since host-runtime F001 it is
+        -- PM_ERR_INTERNAL, but reporting a value the caller can classify
+        -- is still the better answer.
+        Left _ -> pure pmErrArgs
+        Right pb -> do
+          U.imapM_ (\i j -> pokeElemOff outIndices i (fromIntegral j)) (depthOrder viewPlane pb)
+          pure pmOk
 
 -- | The shared argument check of the two array entry points: decode the
 -- plane, reject a negative length, and — only when there is an element to
@@ -1238,6 +1646,82 @@ withColumns plane count ptrs k =
       | otherwise -> k viewPlane n
       where
         n = fromIntegral count
+
+-- Fixed-timestep planning (host-runtime F005, C1.7) ---------------------------
+
+foreign export ccall "pm_hs_plan_steps" pm_plan_steps
+  :: CDouble -> CInt -> CDouble -> CDouble -> Ptr CInt -> Ptr CDouble -> IO CInt
+
+-- | How many fixed steps this frame owes, and the accumulator to carry
+-- into the next one — the same 'Magic.Step.plan' the demo shell and the
+-- test suite drive, handed to C hosts verbatim.
+--
+-- The whole point is that there is exactly one planner. A host that
+-- hand-rolls @while (acc >= FIXED_DT)@ has no clamp, so one loading hitch
+-- makes it call 'pm_advance' hundreds of times for one frame and the
+-- spiral of death is on; and its accumulator drifts, because the host's
+-- is a @float@ and this library's is a @double@. Both are cured by
+-- calling this and looping @*out_steps@ times. Nothing here recomputes
+-- anything: the clamp, the epsilon and the backlog-dropping rule are
+-- 'Magic.Step.plan' and cannot be copied wrong, because they are not
+-- copied.
+--
+-- Everything 'Magic.Step.plan' says stays said, deliberately. @dt <= 0@
+-- plans no steps and returns the accumulator untouched; a negative
+-- @elapsed@ reads as zero; a backlog past @max_steps@ clamps and drops
+-- the rest. Note that a negative @dt@ here is /not/ the C2.6 rule the
+-- advances follow — a planner's @dt@ is the host's fixed setting, an
+-- advance's is its per-frame input, and they are different functions.
+--
+-- What the C side does add is an argument check, because 'plan' is a
+-- pure function with no error channel and its answers on nonsense input
+-- are worse than useless: a non-finite @dt@ or @acc_in@ silently zeroes
+-- the accumulator (the host's backlog vanishes), a non-finite @elapsed@
+-- poisons it forever (every later frame plans 0 steps), and a negative
+-- @max_steps@ or @acc_in@ hands back a /negative step count/ that a host
+-- is about to use as a loop bound. So those are 'pmErrArgs', and — as
+-- everywhere else on this boundary — the error path writes no byte at
+-- all.
+--
+-- Post-condition on 'pmOk', asserted in @test\/FFIStepPlanSpec.hs@:
+-- @*out_steps@ is in @[0, max_steps]@ and @*out_acc@ is not negative.
+pm_plan_steps
+  :: CDouble
+  -- ^ the fixed step, seconds
+  -> CInt
+  -- ^ most steps to run in one frame (the spiral-of-death clamp)
+  -> CDouble
+  -- ^ seconds since the previous frame
+  -> CDouble
+  -- ^ the accumulator this frame starts with
+  -> Ptr CInt
+  -- ^ out: steps to run now
+  -> Ptr CDouble
+  -- ^ out: the accumulator to carry over
+  -> IO CInt
+pm_plan_steps dt maxSteps elapsed accIn outSteps outAcc =
+  firewall pmErrInternal $
+    if outSteps == nullPtr
+      || outAcc == nullPtr
+      || not (finite dt')
+      || not (finite elapsed')
+      || not (finite accIn')
+      || maxSteps < 0
+      || accIn' < 0
+      then pure pmErrArgs
+      else do
+        let StepPlan n acc = plan dt' (fromIntegral maxSteps) elapsed' accIn'
+        poke outSteps (fromIntegral n)
+        poke outAcc (CDouble acc)
+        pure pmOk
+  where
+    -- Unwrapping the newtype rather than 'realToFrac', for the reason
+    -- 'cfloatToDouble' gives: 'realToFrac' goes through 'Rational' and
+    -- mangles exactly the values this check is here to reject.
+    CDouble dt' = dt
+    CDouble elapsed' = elapsed
+    CDouble accIn' = accIn
+    finite x = not (isNaN x) && not (isInfinite x)
 
 -- Marshalling helpers --------------------------------------------------------
 

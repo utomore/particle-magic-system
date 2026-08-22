@@ -16,16 +16,30 @@
  *   pm_init();
  *   char err[256];
  *   const float pos[3] = {0, 0, 0}, facing[3] = {0, 0, 1};
+ *
+ *   int cap = pm_max_particles();
+ *   ...  allocate px, py, pz, size, life and color: cap elements each.
+ *        Ask the query, never the PM_MAX_PARTICLES macro -- see below ...
+ *
  *   PmSpell* s = pm_cast(json, pos, facing, 42, err, sizeof err);
  *   if (!s) { fprintf(stderr, "%s\n", err); return 1; }
+ *
+ *   double acc = 0.0;
  *   while (!pm_is_finished(s)) {
- *       pm_advance(s, 1.0f / 60.0f);
+ *       int steps;
+ *       pm_plan_steps(1.0 / 60.0, 8, seconds_since_last_frame,
+ *                     acc, &steps, &acc);
+ *       while (steps-- > 0) pm_advance_ex(s, 1.0f / 60.0f);
  *       int n = pm_observe(s, px, py, pz, size, life, color,
- *                          PM_MAX_PARTICLES, info, 8);
+ *                          cap, info, 8);
  *       ...  feed your vertex buffer from the six arrays ...
  *   }
  *   pm_free(s);
  *   pm_shutdown();
+ *
+ * The 8 handed to pm_plan_steps is the ceiling on steps in one frame --
+ * the spiral-of-death guard. See "Fixed timesteps" at the bottom of this
+ * header for why the loop is not a hand-rolled while (acc >= dt).
  *
  * Scenes:
  *
@@ -37,8 +51,12 @@
  *   int id;
  *   if (pm_scene_cast(sc, json, pos, facing, 42, err, sizeof err, &id) != PM_OK)
  *       fprintf(stderr, "%s\n", err);
+ *   double acc = 0.0;
  *   for (;;) {
- *       pm_scene_advance(sc, 1.0f / 60.0f);
+ *       int steps;
+ *       pm_plan_steps(1.0 / 60.0, 8, seconds_since_last_frame,
+ *                     acc, &steps, &acc);
+ *       while (steps-- > 0) pm_scene_advance_ex(sc, 1.0f / 60.0f);
  *       int n = pm_scene_observe(sc, px, py, pz, size, life, color,
  *                                MY_CAPACITY, info, MY_MAX_BATCHES);
  *       ...  same six columns, same batch_info layout as pm_observe ...
@@ -57,7 +75,9 @@
  *     and no way to move an existing PmSpell* into a scene. Single cast:
  *     pm_cast + pm_free. Several: pm_scene_cast + pm_scene_dismiss.
  *
- * Threading is per handle here too: one scene is owned by one thread.
+ * Threading works the same for a scene as for a spell -- see the Threading
+ * section below; concurrent casts into one scene count the quota once per
+ * spell, not once per thread.
  *
  * Coordinate system: the abstract space is right-handed, OpenGL style --
  * X to the right, Y up, +Z towards the viewer. Lengths are whatever world
@@ -69,8 +89,100 @@
  * `vortex` force field spins the wrong way, because a cross product is
  * genuinely handed.
  *
- * Threading: one handle is owned by one thread. The library itself takes
- * no locks (ADR-0011 D4); different handles on different threads are fine.
+ * Threading (host-runtime F004, ADR-022 D4):
+ *
+ * Three promises first, because they are what you would otherwise have to
+ * discover by experiment.
+ *
+ *   * This library never starts an OS thread of its own. Every line of it
+ *     runs on a thread you called it from.
+ *   * The per-frame path -- advancing, observing, any query -- takes no
+ *     lock at all. Nothing you call once a frame can block on anything
+ *     else this library is doing.
+ *   * An internal failure poisons ONE handle. That handle answers
+ *     PM_ERR_INTERNAL from then on (or its sentinel, for the entry points
+ *     with no error channel); every other handle, and your process, carry
+ *     on untouched.
+ *
+ * Safe to run concurrently -- the library's problem, not yours:
+ *
+ *   * Any operations on different handles, with no restriction.
+ *   * Several advances of the SAME handle: no lost updates. N concurrent
+ *     pm_advance calls move the clock exactly N steps, never N-1.
+ *   * Several pm_scene_cast / pm_scene_cast_many / pm_scene_dismiss calls
+ *     on the same scene: no lost updates either, and the quota is counted
+ *     once per spell. Cast twice into a scene with room for one and you
+ *     get one PM_OK and one PM_ERR_QUOTA, never two of either.
+ *   * An advance concurrent with an observe or a query: the reader sees a
+ *     complete snapshot, from before the step or from after it, never half
+ *     of each.
+ *   * pm_abi_version, pm_max_particles, pm_project, pm_depth_order and
+ *     pm_plan_steps: stateless, any thread, any time.
+ *
+ * Yours to serialise -- the library cannot see enough to do it for you:
+ *
+ *   * pm_free / pm_scene_free against any other call on the SAME handle.
+ *     The handle dies the moment it is freed, so a concurrent call lands
+ *     on either side of that: it either runs or answers PM_ERR_ARGS.
+ *     Neither crashes, but which one you get is not defined.
+ *   * pm_init / pm_init_ex / pm_shutdown against any call at all. Those
+ *     are the runtime's lifecycle, not a handle's.
+ *   * Two observes writing into the SAME host arrays. That memory is
+ *     yours; the library cannot know two calls share it.
+ *   * Handing a handle to another thread. Publish it through a queue, a
+ *     lock or a job dependency, as with any C API -- the handle is only
+ *     visible to a thread that got it through a real synchronisation.
+ *   * An advance and an observe you need PAIRED ("this frame's picture
+ *     must be this frame's step"). Both are safe; their order is not
+ *     promised.
+ *
+ * What is NOT promised, precisely: the ORDER of concurrent operations on
+ * one handle. Only that none of them is dropped. For advancing that is a
+ * distinction without a difference -- each step adds the same dt to
+ * whatever came before, so the end state is the same however they
+ * interleave -- but the ids handed out by concurrent casts arrive in no
+ * particular order.
+ *
+ * Handle safety: every handle is generation-tagged. It is not a pointer
+ * you may dereference -- it is an opaque token whose value encodes which
+ * table it belongs to, which slot, and which generation of that slot.
+ * Pass one back that has already been freed, free one twice,
+ * forge one, or hand a PmScene* to a PmSpell* entry point, and the
+ * library recognises it and answers PM_ERR_ARGS. It does NOT read freed
+ * memory and it does NOT terminate your process (ADR-022 D3, revising
+ * ADR-0011 D4). Seven frozen entry points have no error channel to say it
+ * with, and keep the same promise by doing nothing at all: pm_advance,
+ * pm_free, pm_scene_free, pm_scene_dismiss and pm_scene_advance return
+ * void and are no-ops; pm_age returns 0.0; pm_occupancy_mask returns 0.
+ * Two of those seven have a variant that can say it -- pm_advance_ex and
+ * pm_scene_advance_ex return PM_ERR_ARGS where the void pair silently
+ * does nothing -- so a host that wants the diagnosis calls those instead.
+ * The one case that cannot be caught is a forged value that happens to
+ * equal a currently live handle -- that is the shared ceiling of any
+ * handle scheme, not a gap in this one.
+ *
+ * Never terminates your process: every entry point here runs inside an
+ * exception firewall (ADR-022 D2). Whatever goes wrong inside the library
+ * -- exhausted memory, a defect, a case nobody wrote -- it is caught at
+ * this boundary and reported as PM_ERR_INTERNAL rather than taking your
+ * host down with it. The seven entry points with no error channel answer
+ * their own equivalent: pm_cast and pm_scene_new return NULL, pm_age
+ * returns -6.0 (an age is never negative, so the value is unambiguous),
+ * pm_occupancy_mask returns 0, and the five void ones do nothing. When
+ * the call carries an err_buf, the reason is written there in the usual
+ * truncation-safe UTF-8.
+ *
+ * PM_ERR_INTERNAL from pm_is_finished is -6, which C reads as true, so
+ * the usual `while (!pm_is_finished(s))` loop ends rather than spinning
+ * forever on a spell that can no longer answer.
+ *
+ * Two things this promise does NOT include. It is not an error-handling
+ * channel: a well-behaved call never sees PM_ERR_INTERNAL, and one that
+ * does has found a bug in this library, not in your code. And it is not
+ * all-or-nothing -- pm_observe guarantees that a PM_ERR_CAPACITY failure
+ * writes no byte at all, while an exception raised part way through a
+ * copy may leave your arrays half updated. On that path the library
+ * promises exactly two things: it returns, and it says PM_ERR_INTERNAL.
  *
  * Determinism: the same (json, pos, facing, seed, dt sequence) always
  * produces bit-identical output through either consumption path
@@ -97,16 +209,20 @@ extern "C" {
 /* Generation of this ABI. Compare against pm_abi_version() at startup. */
 #define PM_ABI_VERSION 1
 
-/* Upper bound on the particles a single spell can produce, i.e. the
-   capacity each of the six columns needs. Mirrors the core's budgetCap. */
+/* This ABI's first-generation capacity FLOOR, frozen at 4096 forever. It
+   is not the cap and it does not mirror anything: the core's own cap has
+   been higher than this since func-spec 0012, and being frozen this macro
+   could not follow. What it is good for is exactly one thing -- code
+   compiled against any version of this header allocates a buffer the
+   library will never overrun. */
 #define PM_MAX_PARTICLES 4096
 
-/* ... and, being frozen, it stays 4096 forever: it is the first
-   generation's value, kept so code compiled against any version of this
-   header keeps allocating a buffer the library will never overrun. A
-   later core may raise the real cap; pm_max_particles() is the query that
-   follows it, so new hosts should size their columns from that instead
-   (func-spec 0011 section 2). */
+/* ... so size your columns from pm_max_particles() instead. The query
+   follows the core, the macro cannot (func-spec 0011 section 2). A host
+   that sizes from the macro is not broken -- it keeps working, and keeps
+   getting PM_ERR_CAPACITY out of pm_observe for every spell that wants
+   more than PM_MAX_PARTICLES particles, which the all-or-nothing rule
+   turns into a frame that is not drawn at all. */
 
 /* Error codes. Functions returning a count return a non-negative number on
    success and one of these on failure; functions returning a handle return
@@ -121,6 +237,16 @@ extern "C" {
    global_cap has no room left for it (func-spec 0018). Only the
    pm_scene_cast* entry points can return it. */
 #define PM_ERR_QUOTA (-5)
+
+/* The firewall caught an exception: something inside the library is
+   broken (ADR-022 D2). Never your call's fault, never worth retrying --
+   but always worth a bug report. The library stays usable and, above all,
+   your process stays alive. See "Never terminates your process" below. */
+#define PM_ERR_INTERNAL (-6)
+
+/* You called out of order: using the library before pm_init, or
+   initialising again after pm_shutdown. */
+#define PM_ERR_STATE (-7)
 
 /* Grid dimension whose cell count fits one uint32_t: 3*3*3 = 27 <= 32,
    which is what lets pm_occupancy_mask answer without an array
@@ -160,19 +286,133 @@ extern "C" {
 /* An active spell. Opaque: created by pm_cast, released by pm_free. */
 typedef struct PmSpell PmSpell;
 
-/* Start the runtime. Idempotent; call once before anything else. */
+/* --- The runtime (host-runtime F003, ADR-022 D1) ------------------------
+ *
+ * The library is Haskell inside, so it carries the GHC runtime with it.
+ * That runtime is YOURS to configure: this library never starts OS threads
+ * behind your back and never picks a capability count for you.
+ *
+ * One state machine governs it, and both platforms answer identically
+ * because the answer comes from the machine rather than from the runtime:
+ *
+ *     UNINIT --(pm_init / pm_init_ex)--> RUNNING --(pm_shutdown)--> CLOSED
+ *        |                                                            |
+ *        +----- every other entry point answers PM_ERR_STATE ---------+
+ *
+ * Before pm_init and after pm_shutdown every entry point answers a
+ * sentinel instead of entering the runtime, because entering it is what
+ * would end your process: the counting ones return PM_ERR_STATE, pm_cast
+ * and pm_scene_new return NULL (with the reason in err_buf where there is
+ * one), pm_age returns -7.0, pm_occupancy_mask returns 0, and the five
+ * void ones do nothing. pm_abi_version is the one exception -- the C layer
+ * answers it directly, so a startup generation check is safe before
+ * pm_init.
+ *
+ * pm_shutdown is a ONE-WAY DOOR. Afterwards this process may not use the
+ * library again: pm_init_ex answers PM_ERR_STATE, pm_init does nothing,
+ * and every other symbol keeps answering its sentinel. A long-lived host
+ * (a game engine, the Unity editor) should simply never call it. Same rule
+ * on Windows and on Linux.
+ *
+ * Which settings take effect where
+ * --------------------------------
+ * Measured 2026-08-20 against the shipped artefacts; macOS is inferred
+ * from the Linux path and has not been run.
+ *
+ *     platform                        caps  nursery  gc_mode  stats
+ *     windows x86_64 (standalone DLL)  yes    yes      yes     yes
+ *     linux x86_64 (.so)               yes    yes      yes     yes
+ *     macos (.dylib, not yet run)      yes    yes      yes     yes
+ *
+ *     any platform, but the GHC runtime was ALREADY running in this
+ *     process before you asked (a Haskell host, or you called hs_init
+ *     yourself):
+ *                                      yes     no       no      no
+ *
+ * On that last row pm_init_ex answers PM_ERR_STATE, the capability count
+ * still takes effect through the runtime's own API, and the library is
+ * up and usable. Nothing is ever ignored in silence.
+ *
+ * PM_ERR_STATE therefore says one of two things, and they are easy to tell
+ * apart because the second can only ever happen on your FIRST call:
+ *
+ *   1. the call was out of order -- nothing happened at all; or
+ *   2. the library is up and usable, but part of your configuration could
+ *      not be applied in this process (the row above).
+ *
+ * Capabilities and the parallel sampler: sampling splits a window of 8192
+ * rows or more across capabilities. At capabilities = 1 that split costs
+ * something and buys nothing, so a host that samples large spells wants
+ * 2..4 -- and usually NOT 0 (every core on the machine), which competes
+ * with your own job system. The output is identical either way (ADR-0017).
+ */
+
+/* GC mode for PmConfig.gc_mode. */
+#define PM_GC_DEFAULT 0
+#define PM_GC_NONMOVING 1
+
+/* Runtime statistics for PmConfig.stats. The runtime can only be told to
+   collect them WHILE STARTING UP, so a host that wants the process-wide GC
+   numbers has to say so here. Without it getRTSStatsEnabled() is false and
+   those numbers are reported as UNAVAILABLE -- not as zero, which is what
+   the runtime itself hands back and is indistinguishable from "nothing
+   paused for GC". */
+#define PM_STATS_OFF 0
+#define PM_STATS_ON 1
+
+/* Bounds pm_init_ex validates PmConfig against. Outside them it answers
+   PM_ERR_ARGS and starts nothing -- the runtime would otherwise abort the
+   whole process on a bad value. */
+#define PM_MAX_CAPABILITIES 256
+#define PM_NURSERY_MIN_BYTES 8192
+#define PM_NURSERY_MAX_BYTES 1073741824
+
+/* Runtime settings. Zero the whole struct, set size to sizeof(PmConfig),
+   fill in what you care about. Add-only: a later generation may append
+   fields, and `size` is how this library knows which ones you compiled
+   against. A size it does not recognise is PM_ERR_ARGS rather than a
+   silent partial application. */
+typedef struct PmConfig {
+    uint32_t size;           /* sizeof(PmConfig) */
+    uint32_t capabilities;   /* 0 = follow the hardware; else 1..PM_MAX_CAPABILITIES */
+    uint64_t nursery_bytes;  /* 0 = the runtime's default (4 MiB) */
+    uint32_t gc_mode;        /* PM_GC_DEFAULT or PM_GC_NONMOVING */
+    uint32_t stats;          /* PM_STATS_OFF or PM_STATS_ON -- decided only here */
+} PmConfig;
+
+/* Start the runtime with the host's settings. Call it INSTEAD of pm_init,
+   once, before anything else.
+
+   Returns PM_OK; PM_ERR_ARGS, meaning the config is out of range and
+   nothing was started; or PM_ERR_STATE in either of the two senses above.
+
+       PmConfig cfg = {0};
+       cfg.size = sizeof cfg;
+       cfg.capabilities = 4;
+       cfg.stats = PM_STATS_ON;
+       int rc = pm_init_ex(&cfg);
+*/
+int pm_init_ex(const PmConfig* config);
+
+/* Start the runtime with the library's conservative defaults: one
+   capability, the default collector, no statistics. Idempotent; call once
+   before anything else. After pm_shutdown it does nothing at all. */
 void pm_init(void);
 
-/* Stop the runtime. Idempotent. Free every handle first. */
+/* Stop the runtime. Idempotent, and a one-way door: see above. Free every
+   handle first. */
 void pm_shutdown(void);
 
 /* PM_ABI_VERSION as compiled into the library. */
 int pm_abi_version(void);
 
 /* The particle cap this build actually enforces -- the capacity each of
-   pm_observe's six columns needs. Today it answers PM_MAX_PARTICLES; it
-   is the value to allocate from, because unlike the macro it tracks the
-   core (see PM_MAX_PARTICLES above). */
+   pm_observe's six columns needs.
+
+   It already answers more than PM_MAX_PARTICLES, and will answer more
+   again the next time the core's cap rises -- which is precisely why it,
+   and not the frozen macro, is the value to allocate from (see
+   PM_MAX_PARTICLES above). */
 int pm_max_particles(void);
 
 /* Compile a magic circle from UTF-8 JSON and cast it at (caster_pos,
@@ -186,8 +426,8 @@ PmSpell* pm_cast(const char* circle_json,
 
 /* pm_cast with the failure classified: returns PM_OK, PM_ERR_JSON (the
    JSON did not decode) or PM_ERR_BUDGET (it did, but asks for more
-   particles than PM_MAX_PARTICLES). *out_spell is the new handle, or NULL
-   on any failure. */
+   particles than pm_max_particles() reports -- the enforced cap, not the
+   frozen macro). *out_spell is the new handle, or NULL on any failure. */
 int pm_cast_ex(const char* circle_json,
                const float caster_pos[3], const float caster_facing[3],
                uint64_t seed, char* err_buf, int err_len,
@@ -195,8 +435,22 @@ int pm_cast_ex(const char* circle_json,
 
 /* Advance the spell's clock by dt seconds. Sampling happens in
    pm_observe, so several fixed steps per rendered frame cost nothing
-   extra. */
+   extra.
+
+   A dt that is NaN, infinite or negative does nothing at all -- the
+   clock is not moved by one bit. It used to poison the age, after which
+   pm_is_finished answered 0 forever and a `while (!pm_is_finished(s))`
+   loop never ended. A dt of 0 is legal and is likewise a no-op. This
+   returns void and so cannot say which of the two happened; pm_advance_ex
+   below is the same call with that one answer added. */
 void pm_advance(PmSpell* spell, float dt);
+
+/* pm_advance with the argument check reported: PM_OK, or PM_ERR_ARGS --
+   leaving the spell's clock untouched -- for a NULL or otherwise invalid
+   handle and for a dt that is NaN, infinite or negative. A dt of 0 is
+   legal and is a no-op. For every legal dt this and pm_advance run the
+   identical code and produce identical state. */
+int pm_advance_ex(PmSpell* spell, float dt);
 
 /* 1 once the spell has outlived its lifetime, 0 while it is running. */
 int pm_is_finished(const PmSpell* spell);
@@ -285,8 +539,9 @@ int pm_depth_order(int plane,
                    const float* pos_x, const float* pos_y, const float* pos_z,
                    int count, int* out_indices);
 
-/* Release a handle. Freeing NULL is a no-op; freeing twice is undefined
-   behaviour, as in any C API. */
+/* Release a handle. Freeing NULL is a no-op, and so is freeing a handle
+   that is already released, was never issued here, or belongs to the other
+   handle space -- see "Handle safety" above. */
 void pm_free(PmSpell* spell);
 
 /* --- Scenes (func-spec 0018, ADR-0012) ---------------------------------
@@ -305,11 +560,20 @@ typedef struct PmScene PmScene;
 /* global_cap = total particles the scene may hold across every live
    spell. Size YOUR six columns from this, not from pm_max_particles()
    (which bounds one spell). A negative cap is legal and means a scene
-   that admits nothing. Never returns NULL in this generation. */
+   that admits nothing.
+
+   Returns NULL only when no scene could be made at all: before pm_init
+   or after pm_shutdown (see the state machine above), if the firewall
+   catches an internal failure, or if the handle registry has no slot
+   left -- which takes 2^30 live handles and so is not reachable by any
+   real host. Not a cap refusal and not an argument error; those are
+   reported by pm_scene_cast, not here. Check it anyway: it costs one
+   branch and it is the only wrong answer this call can give. */
 PmScene* pm_scene_new(int global_cap);
 
 /* Release a scene and everything still live inside it. Freeing NULL is a
-   no-op; freeing twice is undefined behaviour. */
+   no-op, and so is freeing a scene handle that is already released or was
+   never issued here -- see "Handle safety" above. */
 void pm_scene_free(PmScene* scene);
 
 /* Cast one circle into the scene. Returns PM_OK (with *out_id set to the
@@ -333,8 +597,15 @@ int pm_scene_cast_many(PmScene* scene, const char* const* circle_jsons, int coun
 void pm_scene_dismiss(PmScene* scene, int spell_id);
 
 /* Advance every live spell by dt seconds and drop the ones that finished
-   -- which is also how their share of the quota is released. */
+   -- which is also how their share of the quota is released.
+
+   Same dt rule as pm_advance: NaN, infinite or negative does nothing at
+   all, zero is a legal no-op. */
 void pm_scene_advance(PmScene* scene, float dt);
+
+/* pm_scene_advance with the same check reported, exactly as
+   pm_advance_ex reports pm_advance's. */
+int pm_scene_advance_ex(PmScene* scene, float dt);
 
 /* Sample every live spell into the caller's six columns, exactly as
    pm_observe does for one spell; batches are concatenated in spell-id
@@ -429,6 +700,53 @@ uint32_t pm_occupancy_mask(PmSpell* spell);
    and a box around everything is a number almost nothing can use. */
 int pm_scene_spell_bounds(const PmScene* scene, int spell_id,
                           float out_min[3], float out_max[3]);
+
+/* --- Fixed timesteps (host-runtime F005) --------------------------------
+ *
+ * Your render frame rate and this library's simulation step are separate
+ * things, and the accumulator that keeps them separate is YOURS -- this
+ * library holds no per-spell clock of its own for it. What it does hold
+ * is the arithmetic, and there is exactly one copy of it:
+ *
+ *     static double acc = 0.0;
+ *     int steps;
+ *     pm_plan_steps(1.0 / 120.0, 8, frame_seconds, acc, &steps, &acc);
+ *     for (int i = 0; i < steps; i++) pm_advance(spell, 1.0f / 120.0f);
+ *
+ * The hand-rolled `while (acc >= FIXED_DT)` this replaces has two faults
+ * that only show up in the field. It has no clamp, so one loading hitch
+ * or one breakpoint asks for hundreds of steps in a single frame and the
+ * next frame is later still -- the spiral of death. And its accumulator
+ * is usually a float, which drifts against a double simulation. Both are
+ * fixed by looping *out_steps times instead.
+ */
+
+/* Plan one frame's fixed steps. Pure: it reads and writes nothing but its
+   own arguments, and is the same implementation the library uses
+   internally, so a host driving its loop with this steps bit-identically
+   with one written in Haskell.
+
+   Double precision on purpose -- a float accumulator drifts. pm_advance's
+   float dt is unaffected.
+
+   dt <= 0 plans zero steps and hands the accumulator back untouched (it
+   is a setting, not a per-frame input, so unlike pm_advance's dt it is
+   not rejected). A negative elapsed reads as zero. When the backlog
+   exceeds max_steps the plan clamps to max_steps and DROPS the rest, so
+   the simulation slows down instead of freezing.
+
+   Returns PM_OK, or PM_ERR_ARGS -- writing nothing at all -- when either
+   out pointer is NULL, when dt, elapsed or acc_in is not finite, when
+   max_steps is negative, or when acc_in is negative. On PM_OK,
+   *out_steps is in [0, max_steps] and *out_acc is >= 0.
+
+   Needs the runtime: call pm_init() or pm_init_ex() first, as for every
+   other entry point here. Being a pure function does not exempt it --
+   the point of this call is that it is not a second copy of the
+   planner, and reaching the only copy means crossing into the runtime.
+   Before it is up, this returns PM_ERR_STATE and writes nothing. */
+int pm_plan_steps(double dt, int max_steps, double elapsed, double acc_in,
+                  int* out_steps, double* out_acc);
 
 #ifdef __cplusplus
 }

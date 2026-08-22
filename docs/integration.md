@@ -5,14 +5,15 @@ title: host-integration-guide
 description: 各語言宿主怎麼接上本系統的整合指南與資料合約
 status: done
 created: 2026-08-14
-updated: 2026-08-16
-related-adr: [adr-0008, adr-0011, adr-0012]
-related-spec: [func-0009, func-0011, func-0018]
+updated: 2026-08-21
+related-adr: [adr-0008, adr-0011, adr-0012, adr-022]
+related-spec: [func-0009, func-0011, func-0018, func-0025]
 ---
 
 # 宿主整合指南
 
-> 版本：1.3（2026-08-16，enhance-0001 落地後：**母語路線補上可跑的範例**——§1 的路線表加一欄「可跑的範例」、§3 開頭補齊 `bytestring`／`vector` 兩個容易漏的依賴並指向 [`examples/haskell/`](../examples/haskell/)、新增 **§3.3「2D／像素風宿主食譜」**（五步，不分語言，§4.5 交叉指路）、§8 新增一列誠實記帳「像素風只有食譜，沒有像素風的參考實作」。合約零變更：沒有新語意、沒有動 JSON schema、ABI version 仍為 1）
+> 版本：1.4（2026-08-21，host-runtime 子系統階段一交付後：**執行期契約從口頭變成明文**——§4.3 的錯誤表補上 `PM_ERR_INTERNAL`（−6）與 `PM_ERR_STATE`（−7）兩列；§4.4 的關閉語意改寫成**單向門**（`pm_shutdown()` 之後 `pm_init_ex()` 回 `PM_ERR_STATE`、其餘符號回哨兵，**不再殺掉宿主 process**，Windows 與 Linux 一致）；新增 **§4.4.1「執行期設定 `pm_init_ex()`」**（`PmConfig` 與逐平台生效表）與 **§4.4.2「執行緒模型」**（可直接併發與必須自行序列化的兩張清單，取代舊的那句話歸屬規則，並隨之對齊 §4.6、§6、§8 的三份副本）；時步規劃器上 C 面（`pm_plan_steps` 與帶錯誤碼的 `pm_advance_ex`／`pm_scene_advance_ex`），§2.4、§4.2、§5.4、§6 的主迴圈範例全部改用它而不再手寫 `while`；新增 §4.8「MSVC 連結」與 §4.9「macOS `@rpath` 與雙架構」。合約零移除：`PM_ABI_VERSION` 仍為 **1**，全部是加法）
+> 1.3（2026-08-16，enhance-0001 落地後：**母語路線補上可跑的範例**——§1 的路線表加一欄「可跑的範例」、§3 開頭補齊 `bytestring`／`vector` 兩個容易漏的依賴並指向 [`examples/haskell/`](../examples/haskell/)、新增 **§3.3「2D／像素風宿主食譜」**（五步，不分語言，§4.5 交叉指路）、§8 新增一列誠實記帳「像素風只有食譜，沒有像素風的參考實作」。合約零變更：沒有新語意、沒有動 JSON schema、ABI version 仍為 1）
 > 1.2（2026-08-16，spec 0018 交付後：場景層整個上 C ABI——新增 §4.6、`PM_ERR_QUOTA` 進 §4.3 的錯誤表、§3.2 與 §8 的「只在 Haskell 面」收窄為「不進場景的合成只在 Haskell 面」。ABI version 仍為 1——全部是加法。1.1 為 spec 0011 交付後：投影三件套上 C ABI、C# 參考綁定與 Unity 範例成為真檔案）
 > 對象：想把這套粒子魔法系統接進自己遊戲的人——Unity、Godot、C/C++ 引擎、Haskell 專案，或完全自製的前端。
 > 相關文件：[architecture.md](arch/architecture.md)（系統設計）、[roadmap.md](roadmap.md)（還缺什麼）、[`include/particle_magic.h`](../include/particle_magic.h)（凍結的 C 合約）、[`bindings/csharp/ParticleMagic.cs`](../bindings/csharp/ParticleMagic.cs)（C# 參考綁定）、[`examples/haskell/`](../examples/haskell/)（Haskell 最小宿主）、[`examples/c/`](../examples/c/)（C 最小宿主）、[`examples/unity/`](../examples/unity/)（Unity 最小範例）
@@ -95,18 +96,30 @@ uint8_t a =  c        & 0xFF;
 
 模擬假設**固定 `dt`**（[architecture §11](arch/architecture.md#11-不容易擴充與改動的地方明知的代價) 把它列為系統公理）。力場層的確定性與可回放性依賴這一點。
 
-正確做法是 accumulator：渲染幀率浮動，模擬永遠走固定步。
+正確做法是 accumulator：渲染幀率浮動，模擬永遠走固定步。累加器是**你的**，但那段算術不必你寫——`pm_plan_steps()` 就是庫自己用的那一份：
 
 ```c
-accumulator += frame_time;
-while (accumulator >= FIXED_DT) {          /* 每步都 advance */
-    pm_advance(spell, FIXED_DT);
-    accumulator -= FIXED_DT;
+#define FIXED_DT_F (1.0f / 60.0f)           /* pm_advance_ex 收的 */
+#define FIXED_DT   ((double)FIXED_DT_F)     /* pm_plan_steps 規劃用的 */
+#define MAX_STEPS_PER_FRAME 8
+
+static double acc = 0.0;                    /* 累加器，雙精度 */
+int steps;
+
+pm_plan_steps(FIXED_DT, MAX_STEPS_PER_FRAME, frame_time, acc, &steps, &acc);
+while (steps-- > 0) {                       /* 每步都 advance */
+    pm_advance_ex(spell, FIXED_DT_F);
 }
 pm_observe(spell, ...);                     /* 每個畫面幀只取樣一次 */
 ```
 
-`pm_advance` 只推進時鐘（有力場時順便積分），取樣發生在 `pm_observe`——所以「一幀跑三個固定步」不會付三倍的取樣成本。
+三件事值得知道：
+
+- **單幀最大步數是死亡螺旋防護**。手寫的 `while (acc >= dt)` 沒有上限：一次關卡載入的卡頓、一個中斷點，就會在單幀要求上百步，於是下一幀更晚、要求更多步。規劃器截斷在 `MAX_STEPS_PER_FRAME`，並**丟棄剩下的積壓**——模擬變慢，而不是凍結。範例取的 `8` 沿用本 repo demo 外殼跑完整個 POC 的值（`app/Main.hs` 的 `lcMaxStepsPerFrame`）。
+- **規劃器是雙精度**，推進的 `dt` 是單精度。累加器用 `float` 會對著雙精度的模擬慢慢漂，所以 `FIXED_DT` 由 `FIXED_DT_F` 加寬而來，兩邊永遠是同一個數。
+- **和 Haskell 面同一份實作**（`Magic.Step.plan`）。C 宿主與 Haskell 宿主餵同一串幀時間，會排出逐位元相同的步數序列。
+
+`pm_advance` / `pm_advance_ex` 只推進時鐘（有力場時順便積分），取樣發生在 `pm_observe`——所以「一幀跑三個固定步」不會付三倍的取樣成本。`pm_advance_ex` 與 `pm_advance` 對合法的 `dt` 執行完全相同的程式碼，只多一個錯誤碼通道。
 
 ### 2.5 六條陣列要開多大
 
@@ -120,6 +133,8 @@ pm_observe(spell, ...);                     /* 每個畫面幀只取樣一次 */
 int cap = pm_max_particles();
 float* px = malloc(cap * sizeof(float));   /* ... 六條 */
 ```
+
+可執行的完整版在 [§4.2](#42-最小完整迴圈) 與 [`examples/c/main.c`](../examples/c/main.c)——這一條規則曾經只寫在這裡、範例卻用常數配置，所以現在兩邊由同一支守門測試（`test/ExampleLoopSpec.hs`）釘在一起。
 
 Haskell 宿主無此問題（`observeSpell` 回的 buffer 自己帶長度）。
 
@@ -380,22 +395,32 @@ gcc -Iinclude your_host.c path/to/particle-magic-ffi.dll.a -o game.exe
 ```c
 #include "particle_magic.h"
 
-static float px[PM_MAX_PARTICLES], py[PM_MAX_PARTICLES], pz[PM_MAX_PARTICLES];
-static float sz[PM_MAX_PARTICLES], lf[PM_MAX_PARTICLES];
-static uint32_t col[PM_MAX_PARTICLES];
-static int      info[8 * PM_BATCH_INFO_STRIDE];
+#define FIXED_DT_F (1.0f / 60.0f)                /* pm_advance_ex 收的 */
+#define FIXED_DT   ((double)FIXED_DT_F)          /* pm_plan_steps 規劃用的 */
+#define MAX_STEPS_PER_FRAME 8                    /* 死亡螺旋防護，見 §2.4 */
+
+static float *px, *py, *pz, *sz, *lf;
+static uint32_t *col;
+static int    info[8 * PM_BATCH_INFO_STRIDE];
 
 int main(void)
 {
     char  err[256];
     const float pos[3]    = {0, 0, 0};
     const float facing[3] = {0, 0, 1};
+    int    cap;
+    double acc = 0.0;
 
     pm_init();                                   /* 冪等，啟動 GHC RTS */
 
     if (pm_abi_version() != PM_ABI_VERSION) {    /* header 與 .dll 是同一代嗎 */
         return 1;
     }
+
+    /* 六條欄的長度來自執行期查詢，不是 header 的凍結常數（見 §2.5） */
+    cap = pm_max_particles();
+    px = malloc(cap * sizeof(float));            /* ... 六條都一樣 */
+    /* ... py, pz, sz, lf, col ... */
 
     PmSpell *s = pm_cast(json_text, pos, facing, 42, err, sizeof err);
     if (!s) {                                    /* NULL = 失敗，原因在 err */
@@ -404,10 +429,17 @@ int main(void)
     }
 
     while (!pm_is_finished(s)) {
-        pm_advance(s, 1.0f / 60.0f);
+        int steps;
+
+        /* 幀時間交給規劃器，它決定這一幀要走幾個固定步（最多 8 個） */
+        pm_plan_steps(FIXED_DT, MAX_STEPS_PER_FRAME, seconds_since_last_frame,
+                      acc, &steps, &acc);
+        while (steps-- > 0) {
+            pm_advance_ex(s, FIXED_DT_F);
+        }
 
         int n = pm_observe(s, px, py, pz, sz, lf, col,
-                           PM_MAX_PARTICLES, info, 8);
+                           cap, info, 8);
         if (n < 0) { break; }                    /* PM_ERR_CAPACITY */
 
         for (int i = 0; i < n; i++) {
@@ -427,7 +459,7 @@ int main(void)
 }
 ```
 
-`examples/c/main.c` 是這段的完整可執行版（150 行，印出逐幀摘要而非畫圖）。
+`examples/c/main.c` 是這段的完整可執行版（印出逐幀摘要而非畫圖，含六條欄的配置與釋放、以及每個回傳碼的檢查）。兩邊必須同步：`test/ExampleLoopSpec.hs` 守著這一點。
 
 ### 4.3 錯誤處理
 
@@ -437,6 +469,8 @@ int main(void)
 | 想知道**為什麼**失敗 | 改用 `pm_cast_ex(..., &spell)`：回 `PM_OK` / `PM_ERR_JSON`（JSON 不合法或符文 tag 不認識）/ `PM_ERR_BUDGET`（合法，但要求的粒子數超過上限） |
 | `pm_observe` 空間不足 | `PM_ERR_CAPACITY`，**一個位元組都不寫**——不會有半更新的幀 |
 | `pm_project` / `pm_depth_order` 參數不合法 | `PM_ERR_ARGS`（`NULL` 指標、負長度、未知 plane），同樣**一個位元組都不寫** |
+| **呼叫順序錯了** | `PM_ERR_STATE`（−7）：`pm_init()` 之前就呼叫、`pm_shutdown()` 之後再初始化、重複帶設定初始化、或設定在當前平台無法生效。是**你的**呼叫順序問題，不是法術的問題（見 §4.4） |
+| **庫內部出錯** | `PM_ERR_INTERNAL`（−6）：例外防火牆攔到了庫自己的失敗（記憶體耗盡、缺陷、沒人寫到的情況）。永遠不是你這次呼叫的錯，**不必重試**，你的 process 也不受影響——但值得回報一個 bug。良好行為的呼叫永遠不會看到它 |
 | `pm_scene_cast` / `pm_scene_cast_many` 失敗 | 同樣四碼加一：`PM_ERR_JSON` / `PM_ERR_BUDGET`（單張陣自己就編不出來）/ **`PM_ERR_QUOTA`**（編得出來，但場景放不下——見 §4.6）/ `PM_ERR_ARGS`（`NULL` 場景、`NULL out_id`、負 count）。四種都寫人類可讀原因進 `err_buf`，且**場景完全未變** |
 
 錯誤訊息與 demo HUD 上顯示的是同一句（共用 `Magic.Codec.renderLoadError`），含 JSON 路徑，例如
@@ -444,11 +478,112 @@ int main(void)
 
 ### 4.4 生命週期規則
 
-- `pm_init()` 冪等，可以被多個子系統各叫一次。
-- **一個 handle 屬於一個執行緒**（ADR-0011 D4）。庫內部**沒有鎖**。不同 handle 在不同執行緒是安全的；同一個 handle 跨執行緒不是。
-- `pm_free(NULL)` 是 no-op。重複 free、free 過再用是 UB——和任何 C API 一樣。
-- **`pm_shutdown()` 之後不能再 `pm_init()`**：GHC 的 RTS 一旦真正 `hs_exit()`，同一個 process 內無法重啟。長駐型宿主（尤其 Unity Editor）**乾脆永遠不要呼叫它**。
+- `pm_init()` 冪等，可以被多個子系統各叫一次。想指定 RTS 設定就改用 `pm_init_ex()`（見 §4.4.1）；兩者擇一，只需要成功一次。
+- **初始化之前呼叫任何符號都不會殺掉你的 process**。未初始化（以及 `pm_shutdown()` 之後）每個符號都回哨兵值：回計數／錯誤碼的回 `PM_ERR_STATE`（−7），`pm_cast`／`pm_scene_new` 回 `NULL`（前者另把原因寫進 `err_buf`），`pm_age` 回 `-7.0`，`pm_occupancy_mask` 回 `0`，五個 `void` 的安靜返回。
+- 唯一的例外是 **`pm_abi_version()`**：它由 C 層直接回答，**任何狀態下都安全**，所以 startup 的世代比對可以擺在 `pm_init*()` 之前。
+- **執行緒模型見 §4.4.2**（ADR-022 D4 修訂 ADR-0011 D4）。摘要：不同 handle 隨便併發；同一個 handle 的多次推進或多次施法**不丟更新**；順序不保證；`pm_free` 與同 handle 的其他呼叫要你自己排。初始化與關閉本身是原子的：兩個執行緒同時 `pm_init_ex()` 只有一個生效，另一個回 `PM_ERR_STATE`，不會崩潰。
+- `pm_free(NULL)` 是 no-op。**重複 free、free 過再用、亂造一個 handle 都不再是 UB**：handle 帶世代標籤,庫認得出來並回 `PM_ERR_ARGS`,不會讀已釋放的記憶體、也不會終止你的 process(ADR-022 D3 修訂 ADR-0011 D4)。七個沒有錯誤碼通道的凍結符號改以中性值兌現同一條保證——`pm_advance`／`pm_free`／`pm_scene_free`／`pm_scene_dismiss`／`pm_scene_advance` 無操作,`pm_age` 回 `0.0`,`pm_occupancy_mask` 回 `0`。唯一抓不到的是「偽造的值恰好等於一個現存的合法 handle」,那是任何 handle 方案的共同上限。
+- handle **不是可以解參考的指標**,是一個不透明的識別字(值恆為奇數,永遠不會是對齊的堆積位址)。只把它原樣傳回庫裡。
+- **`pm_shutdown()` 是單向門**：之後這個 process 不能再使用本庫——`pm_init_ex()` 回 `PM_ERR_STATE`、`pm_init()` 是無操作、其餘符號一律回哨兵。它**不再殺掉你的 process**：以前 `pm_shutdown()` 之後再 `pm_init()`，GHC 的 RTS 會印一行 `reinitializing the RTS after shutdown is not currently supported` 然後直接讓宿主死掉。現在那個拒絕是一個錯誤碼。長駐型宿主（尤其 Unity Editor）**乾脆永遠不要呼叫它**。
+- `pm_shutdown()` 呼叫兩次是無操作，也不會出現 RTS 的 `too many hs_exit()s` 警告。Windows 與 Linux 的關閉語意**完全一致**，因為答案來自庫自己的狀態機而不是 RTS。
 - 一個 process 只能有一份 GHC RTS——不要把兩個 GHC 產生的共享庫連進同一個宿主。
+- **`GHCRTS` 環境變數對本庫無效**。庫以 `RtsOptsIgnoreAll` 啟動 RTS，所以環境變數既不能蓋掉宿主透過 `pm_init_ex()` 給的設定，也不能用一個非 safe 的選項把宿主 process 殺掉（實測 `GHCRTS=-A128m` 對舊版的 `pm_init()` 就是這個下場）。要調 RTS 只有 `pm_init_ex()` 一條路。
+
+### 4.4.1 執行期設定：`pm_init_ex()`（host-runtime F003 新增）
+
+**RTS 是宿主的**（ADR-022 D1）。庫不設定就保守——單 capability、預設 GC、不收統計——也不會自己開 OS 執行緒。要別的就自己說：
+
+```c
+PmConfig cfg = {0};
+cfg.size          = sizeof cfg;
+cfg.capabilities  = 4;                    /* 0 = 依硬體；通常你要的是 2..4 */
+cfg.nursery_bytes = 64u * 1024u * 1024u;  /* 0 = RTS 預設的 4 MiB */
+cfg.gc_mode       = PM_GC_NONMOVING;      /* 或 PM_GC_DEFAULT */
+cfg.stats         = PM_STATS_ON;          /* 想要 GC 數字就只能在這裡表態 */
+
+int rc = pm_init_ex(&cfg);
+if (rc == PM_ERR_ARGS) { /* 設定超出範圍，什麼都沒啟動 */ }
+```
+
+`PmConfig` 以 `size` 欄開頭：把整個結構清零、填 `sizeof(PmConfig)`，之後的世代加欄位也不會弄壞舊宿主。反過來，**本庫不認得的 `size` 一律拒收**（`PM_ERR_ARGS`）而不是忽略多出來的欄位——「不靜默忽略任何無法生效的設定」是這條契約的硬規則。
+
+| 欄位 | 合法值 | 超出範圍時 |
+|---|---|---|
+| `size` | `sizeof(PmConfig)`（本世代為 24） | `PM_ERR_ARGS` |
+| `capabilities` | `0`（依硬體）或 `1..PM_MAX_CAPABILITIES`（256） | `PM_ERR_ARGS` |
+| `nursery_bytes` | `0`（RTS 預設）或 `PM_NURSERY_MIN_BYTES`（8192）`..PM_NURSERY_MAX_BYTES`（1 GiB） | `PM_ERR_ARGS` |
+| `gc_mode` | `PM_GC_DEFAULT` / `PM_GC_NONMOVING` | `PM_ERR_ARGS` |
+| `stats` | `PM_STATS_OFF` / `PM_STATS_ON` | `PM_ERR_ARGS` |
+
+每一條都是 RTS 自己會用「終止整個 process」來執行的界線（`-N0`、`-A0`、壞掉的選項字串都是當場死），所以庫在碰 RTS 之前就先擋下來，而且**選項字串由庫自己生成**，不接受宿主的任何自由文字。
+
+回傳只有三種：
+
+| 回傳 | 意思 |
+|---|---|
+| `PM_OK` | 四項全部生效 |
+| `PM_ERR_ARGS` | 設定超出上表，**什麼都沒啟動**，可以改好再呼叫一次 |
+| `PM_ERR_STATE` | 兩種語氣，見下 |
+
+`PM_ERR_STATE` 的兩種語氣很好分——後者只可能發生在**你自己的第一次** `pm_init_ex()`：
+
+1. **呼叫順序錯**：已經初始化過了，或在 `pm_shutdown()` 之後。**什麼都沒發生**，這次的設定沒有生效。
+2. **庫已就緒，但部分設定在這個 process 無法生效**：RTS 在你呼叫之前就已經被**宿主自己**啟動了（Haskell 宿主，或你自己先呼叫過 `hs_init`）。capability 數仍然透過 RTS 的執行期 API 生效，nursery、GC 模式與統計旗標則無法套用。庫可以正常使用。
+
+逐平台生效表（2026-08-20 對出貨產物實測；macOS 尚未實測，依 Linux 路徑推斷）：
+
+| 平台 | `capabilities` | `nursery_bytes` | `gc_mode` | `stats` |
+|---|---|---|---|---|
+| Windows x86_64（standalone DLL） | 生效 | 生效 | 生效 | 生效 |
+| Linux x86_64（`.so`） | 生效 | 生效 | 生效 | 生效 |
+| macOS（`.dylib`，未實測） | 預期生效 | 預期生效 | 預期生效 | 預期生效 |
+| 任一平台，但 RTS 已由宿主啟動 | 生效 | **不生效** | **不生效** | **不生效** |
+
+最後一列就是上面第 2 種語氣。Windows 的 standalone DLL **並不會**在 `DllMain` 先幫你啟動 RTS（這一點以前的文件推測錯了，已實測更正），所以純 C／C++／Unity 宿主拿到的是前兩列。
+
+**capability 數怎麼選**。核心的取樣器在單一視窗達到 **8192** 列以上時會切到分片路徑；`capabilities = 1` 時那條路徑付了分片與串接的成本卻拿不到任何加速。所以：
+
+- 只跑小陣（< 8192 粒）：`capabilities = 1` 與多 capability 沒有差別。
+- 會跑大陣：`2..4`。
+- **通常不要填 `0`**（＝整台機器的核心數）：粒子取樣會跟引擎自己的 job system 搶時間片。
+
+輸出與 capability 數無關、逐位元相同（ADR-0017），所以這純粹是成本取捨，不是正確性問題。
+
+**RTS 統計**。統計旗標**無法在初始化之後打開**，所以想要進程層級的 GC 次數與暫停時間，就必須在 `pm_init_ex()` 的 `stats` 欄表態。沒表態時 `getRTSStatsEnabled()` 為假，那些數字會被回報為「**不可用**」而不是零——RTS 自己在統計關閉時回的暫停時間就是 `0`，跟「這一段真的沒有 GC 暫停」長得一模一樣，只有旗標本身是誠實的判準。
+
+### 4.4.2 執行緒模型（host-runtime F004 明文化）
+
+以前這裡只寫「handle 歸單一執行緒所有」一句。那句話對你沒有用：它沒說不同 handle 行不行，也沒說違反了會發生什麼。現在的合約是兩張清單。
+
+先三句承諾：
+
+- 庫**永遠不會自己開 OS 執行緒**。每一行都跑在你呼叫進來的那條執行緒上。
+- **每幀路徑不取任何鎖**（推進、觀測、任何查詢）。你一幀呼叫一次的東西不會被庫內部的任何事情擋住。
+- 內部失敗**只毒化那一個 handle**：它從此每次呼叫都回 `PM_ERR_INTERNAL`（沒有錯誤碼通道的符號回自己的哨兵值），其他 handle 與你的 process 完全不受影響。
+
+**可以直接併發（庫負責）**
+
+| 操作 | 保證 |
+|---|---|
+| 不同 handle 的任何操作 | 無限制 |
+| 同一個 handle 的多次 `pm_advance` | **不丟更新**——N 次併發推進恰好推進 N 步，不會是 N−1 |
+| 同一個場景的多次 `pm_scene_cast`／`pm_scene_cast_many`／`pm_scene_dismiss` | **不丟更新**，且配額**一個法術只算一次**。往只剩一個名額的場景併發施法兩次，結果一定是一個 `PM_OK` 加一個 `PM_ERR_QUOTA` |
+| 推進與觀測／查詢併發 | 讀到的一定是推進**前**或推進**後**的完整快照，不會半新半舊 |
+| `pm_abi_version`／`pm_max_particles`／`pm_project`／`pm_depth_order`／`pm_plan_steps` | 無狀態，任何執行緒任何時候 |
+
+**必須由你自己序列化（庫看不到）**
+
+| 操作 | 為什麼 |
+|---|---|
+| `pm_free`／`pm_scene_free` 與**同一個** handle 的任何其他呼叫 | 釋放的瞬間 handle 就失效；併發者會落在其中一側——要嘛正常執行，要嘛回 `PM_ERR_ARGS`。兩側都不崩潰，但拿到哪一個不保證 |
+| `pm_init`／`pm_init_ex`／`pm_shutdown` 與任何呼叫 | 那是執行期的生命週期，不是某個 handle 的 |
+| 兩次寫進**同一組**宿主陣列的觀測 | 那是你的記憶體，庫不知道兩次呼叫共用它 |
+| 把 handle 交給另一條執行緒 | 要透過佇列、鎖或 job 相依邊發布——跟任何 C API 一樣。真正的同步原語才帶記憶體屏障 |
+| 需要**成對**的推進與觀測（「這一幀的畫面要對應這一幀的推進」） | 兩個呼叫各自安全，但相對順序不保證 |
+
+**不保證的到底是什麼**：同一個 handle 上併發操作的**順序**，僅此而已，沒有任何一個會被丟掉。對推進來說這個區別沒有可觀測後果——每一步都是「在前一個值上加同一個 `dt`」，最終狀態與交錯順序無關；對施法來說，併發拿到的 `SpellId` 誰先誰後不保證。
+
+成本：原子讀改寫的固定成本是個位數奈秒（實測每次推進 +6.5 ns，約 60 fps 幀預算的 4×10⁻⁵ %）。這是**不付鎖的成本**，不是不付成本。
 
 ### 4.5 2D 宿主：投影與深度排序（0011 新增）
 
@@ -510,7 +645,7 @@ pm_scene_free(sc);
 | **六欄開多大** | 用你傳給 `pm_scene_new` 的 `global_cap`,**不要**用 `pm_max_particles()`——後者界定的是**單一法術**。搞反的症狀是第二張陣進場後 `pm_scene_observe` 開始回 `PM_ERR_CAPACITY`,而且照慣例整幀不寫,看起來像閃爍不像錯誤 |
 | **新錯誤碼 `PM_ERR_QUOTA`（−5）** | 法術編得起來,只是場景滿了——這是唯一值得**反應**（先 `pm_scene_dismiss` 再重試）而不只是記 log 的失敗。被拒的那一次**場景一個位元都沒變**,`pm_scene_count`／`_spells`／`_budget` 三者皆與拒收前相同 |
 | **場景獨佔其法術** | 進了場景的法術**沒有** `PmSpell*`;不能丟給 `pm_free`,也不能把既有的 `PmSpell*` 搬進場景。每次施法二選一 |
-| **一個 scene 一個執行緒** | 與 `PmSpell*` 同一條紀律,庫內仍然無鎖 |
+| **併發規則與 `PmSpell*` 同一條** | 不同場景之間隨便併發;同一個場景的併發 `pm_scene_cast`／`_cast_many`／`_dismiss` 保證**不丟更新**、配額**一個法術只算一次**,但誰先誰後不保證。每幀路徑無鎖（§4.4.2） |
 
 `SpellId` 遞增不重用,所以陳舊的 id 是**惰性**而非歧義:`pm_scene_dismiss` 對未知／已結束的 id 是 no-op,宿主不必先查法術還活著沒有,也不需要 generation counter。
 
@@ -548,6 +683,53 @@ broad phase 因此是一行：兩道法術的 mask 做 AND，非零才需要細�
 - `pm_occupancy_mask` 對 `NULL` handle 回 0，位元 27..31 恆為 0。
 
 跨界等價律（`test/FFISpaceSpec.hs`）：每個進入點與對應的 `Magic.Interface` 函數逐位元相同，13 個範例陣 × 3 種維度。
+
+### 4.8 MSVC 連結（Visual Studio 宿主）
+
+§4.1 給的 `particle-magic-ffi.dll.a` 是 **MinGW** 格式的匯入庫，`cl.exe` 不吃它。發布產物因此另外附一份 COFF 匯入庫 `particle-magic-ffi.lib`（見 [release.md](release.md) §6），MSVC 宿主連它：
+
+```
+cl.exe /nologo /W3 /I <drop> your_host.c <drop>\particle-magic-ffi.lib /Fe:game.exe
+```
+
+`<drop>` 就是解壓出來的那個資料夾——標頭與匯入庫都在裡面，**不需要指向這個 repo 的任何路徑，也不需要機器上有 GHC**。執行期把 `particle-magic-ffi.dll` 放在 exe 旁邊（或任何 `LoadLibrary` 找得到的地方）即可，那份 DLL 是 standalone 的，RTS 在裡面。
+
+驗過的結果：這樣連出來的 exe，`dumpbin /dependents` 只有 **`particle-magic-ffi.dll` 與 `KERNEL32.dll`** 兩個匯入，跑完 120 幀的完整生命週期。`packaging/smoke-msvc.ps1` 就是把上面這段做一遍，退出碼即結論。
+
+**自己產一份匯入庫**（不想等發布包，或想從自己的建置產出來）：權威輸入是 repo 根目錄的 `particle-magic-ffi.def`，也就是 DLL 連結時用的同一份匯出清單，兩條路都可以：
+
+```
+lib.exe /nologo /def:particle-magic-ffi.def /machine:x64 /out:particle-magic-ffi.lib
+llvm-dlltool -m i386:x86-64 -d particle-magic-ffi.def -D particle-magic-ffi.dll -l particle-magic-ffi.lib
+```
+
+第二條用的是 ghcup 隨附的 `llvm-dlltool`，機器上沒有 Visual Studio 也能產；兩種產出都實測可被 `cl.exe` 連結。`packaging/pack.ps1` 先找 `lib.exe`（透過 `vswhere`），找不到就退回 `llvm-dlltool`。
+
+C++ 宿主沒有額外步驟——標頭已經包在 `extern "C"` 裡（§4.3 的錯誤碼與 §4.4 的生命週期規則原封不動適用）。
+
+### 4.9 macOS：`@rpath` 與雙架構
+
+> **本節未經驗證。** 建置設定與打包腳本的 macOS 分支已經寫好，但本輪沒有 macOS 機器產出或檢查過任何一份 `.dylib`；發布清單（[release.md](release.md) §6）的兩個 macOS 平台項因此標 `verified: false`。真的要用，請自己先跑一次完整生命週期再上線。
+
+Cabal **不會**替 foreign library 設 `install_name`，預設會把建置時的絕對路徑寫進 `.dylib`——檔案一搬走，宿主就載不到。本專案的 cabal 檔因此在 `if os(darwin)` 下自己下：
+
+```
+-optl-Wl,-install_name,@rpath/libparticle-magic-ffi.dylib
+```
+
+意思是「我的名字由載入我的人決定」。宿主端相對應地給自己一條 rpath：
+
+```
+clang -I<drop> your_host.c <drop>/libparticle-magic-ffi.dylib \
+      -Wl,-rpath,@executable_path -o game
+```
+
+`@executable_path` 表示「exe 旁邊」；把 `.dylib` 和 exe 放同一層就成立。App bundle 常見的寫法是 `-Wl,-rpath,@executable_path/../Frameworks`。用 `otool -L game` 可以確認宿主記下的是 `@rpath/libparticle-magic-ffi.dylib` 而不是誰的家目錄。
+
+**雙架構**：x86_64 與 arm64 是兩次建置，用 `lipo -create` 併成一份 universal `.dylib`。`packaging/pack.sh` 在 macOS 上接受 `--fat-with <另一個架構的 dylib>` 走這一步。
+
+**Linux 宿主不需要這一節**，但值得知道對應的機制：Linux 產物是 `.so` 加上它整包共享物件閉包放同一層，`.so` 的搜尋路徑是 `$ORIGIN`（＝「我自己所在的資料夾」）。宿主照 §4.1 連結即可，把整個資料夾一起搬走就會動；`packaging/pack.sh --verify` 在乾淨環境下驗過這件事。
+
 
 ---
 
@@ -606,7 +788,9 @@ static void BootParticleMagic()
 
 **絕對不要在 `OnDestroy` / `OnApplicationQuit` 呼叫 `pm_shutdown()`。**
 
-原因見 §4.4：GHC 的 RTS 停掉之後就無法在同一個 process 重啟。而 Unity Editor 在停止播放時**不會卸載 native plugin**——下一次按 Play 還是同一個 process。你會得到「第一次跑正常、第二次直接掛掉」這種最難查的症狀。
+原因見 §4.4：GHC 的 RTS 停掉之後就無法在同一個 process 重啟，所以 `pm_shutdown()` 是**單向門**——之後這個 process 的每個符號都回 `PM_ERR_STATE`（或它自己的哨兵值）。而 Unity Editor 在停止播放時**不會卸載 native plugin**——下一次按 Play 還是同一個 process。舊版的症狀是「第一次跑正常、第二次直接讓 Editor 掛掉」；現在不會掛了，但庫也一樣不能再用，所以規則沒變：別呼叫它。
+
+想指定 capability 數或 GC 模式就把 `Pm.pm_init()` 換成 `Pm.pm_init_ex(ref cfg)`，見 §4.4.1。`Pm.pm_abi_version()` 在初始化之前也安全，所以世代比對擺在最前面也可以。
 
 正確做法：`pm_init()` 一次，之後就讓它活著。真正的清理只有 `pm_free()`（每個法術一次），這個一定要做。
 
@@ -627,9 +811,15 @@ void Update()
 {
     if (spell == IntPtr.Zero) return;
 
-    // 1. 固定時步 accumulator：模擬永遠走 FixedDt，畫面幀率隨意
-    accumulator += Time.deltaTime;
-    while (accumulator >= FixedDt) { Pm.pm_advance(spell, FixedDt); accumulator -= FixedDt; }
+    // 1. 固定時步：步數交給庫的規劃器算（雙精度累加器＋單幀上限，見 §2.4）
+    int steps;
+    double nextAcc;                                         // accumulator 欄位必須是 double
+    if (Pm.pm_plan_steps(FixedDtSeconds, MaxStepsPerFrame, Time.deltaTime,
+                         accumulator, out steps, out nextAcc) == Pm.Ok)
+    {
+        accumulator = nextAcc;                              // 被拒時兩個 out 都沒寫，累加器維持原值
+        for (int i = 0; i < steps; i++) Pm.pm_advance_ex(spell, FixedDt);
+    }
 
     // 2. 一幀取樣一次，寫進重複使用的六條欄（capacity 來自 pm_max_particles()）
     int n = Pm.pm_observe(spell, px, py, pz, sz, lf, col, capacity, info, MaxBatches);
@@ -674,8 +864,8 @@ void Update()
 1. `pm_init()` 一次，之後不要 `pm_shutdown()`（除非你真的要結束 process）。
 2. 啟動時比對 `pm_abi_version()` 與你編譯時的 `PM_ABI_VERSION`。
 3. 六條陣列由**你**配置、由**你**持有，長度用 `pm_max_particles()` 查（不要用 `PM_MAX_PARTICLES` 常數，見 §2.5）；庫只往裡面寫。
-4. 一個 handle 一個執行緒。
-5. 固定 `dt`；一幀多步 `advance`、只 `observe` 一次。
+4. 不同 handle 之間隨便併發;同一個 handle 的併發推進與施法保證**不丟更新**（N 次併發推進恰好 N 步），但**順序不保證**。`pm_free` 與同 handle 的其他呼叫、以及「這一幀的觀測要對應這一幀的推進」這種成對操作，要**你**自己序列化（見 §4.4.2 的兩張清單）。
+5. 固定 `dt`；一幀多步 `advance`、只 `observe` 一次。步數用 `pm_plan_steps` 規劃，**不要自己寫 `while`**——手寫的沒有單幀上限，一次卡頓就是死亡螺旋，累加器用 `float` 還會漂（見 §2.4）。
 6. `pm_observe` 回負數＝什麼都沒寫；不要用上一幀的殘留資料當這一幀畫。
 7. 顏色是 `0xRRGGBBAA`；位置是右手系。
 8. 每個 `pm_cast` 配一個 `pm_free`。
@@ -709,10 +899,10 @@ void Update()
 | **不進場景的合成只在 Haskell 面** | 場景層已於 func-spec 0018 上 C ABI（§4.6，ADR-0012 D8 的延後已解除）。仍只在 Haskell 面的是 `castSpells`——把幾張陣合成一個**獨立** `ActiveSpell`。C 宿主要合成,開一個 `global_cap` 夠大的場景用 `pm_scene_cast_many` 即可,差別只在多了一個場景 handle |
 | **場景不報批次歸屬** | `pm_scene_observe`（與 `observeScene`）都不告訴你某個 batch 屬於哪一張陣;要按法術分別上色／分別剔除的宿主目前得自己開多個場景。做法已知且為純加法，記在 func-spec 0018 §8-1 |
 | **合成後只有一個 blend mode** | 合成法術渲染成一個 batch，混合模式取第一張陣的（ADR-0012 D5）。把火（additive）與水（alpha）疊起來，整體以第一張的模式繪製 |
-| **單執行緒 handle** | 庫內無鎖 |
-| **RTS 不可重啟** | `pm_shutdown()` 之後不能再 `pm_init()`；一個 process 一份 GHC RTS |
-| **DLL 約 46 MB** | `standalone` 內嵌整個 GHC RTS 的代價；換來的是宿主端零 Haskell 依賴 |
-| **只有 win64 被完整實測** | `.so` / `.dylib` 由 cabal stanza 天然涵蓋，但沒有列入驗收 |
+| **同 handle 不保證順序** | 同一個 handle 的併發操作保證**不丟更新**（N 次併發推進恰好 N 步），但**順序**不保證；`pm_free` 與同 handle 的其他呼叫、以及推進／觀測的配對，要宿主自己序列化（§4.4.2） |
+| **關閉是單向門** | 一個 process 一份 GHC RTS，所以 `pm_shutdown()` 之後這個 process 就不能再使用本庫。但它**不再殺掉宿主 process**：`pm_init_ex()` 回 `PM_ERR_STATE`、`pm_init()` 是無操作、其餘符號一律回自己的哨兵值，Windows 與 Linux 語意完全一致（§4.4）。長駐型宿主（尤其 Unity Editor）乾脆永遠不要呼叫它 |
+| **DLL 約 46 MB** | `standalone` 內嵌整個 GHC RTS 的代價；換來的是宿主端零 Haskell 依賴。（量測基準：GHC 9.14.1、Windows x86_64、`standalone` 建置的 `particle-magic-ffi.dll`，2026-08-21 實測 47,990,272 bytes ＝ 45.8 MiB） |
+| **macOS 沒有任何機器驗過** | CI 矩陣是 `windows-latest` 與 `ubuntu-latest`（`.github/workflows/ci.yml`），兩個平台**每次都跑完整的 hspec 套件**，Windows 與 Linux 因此都是實測過的。macOS 的 `.dylib` 只有 cabal 的建置設定與封裝腳本（`@rpath`、`lipo`），沒有一台機器建過或跑過——`packaging/artifacts.json` 把兩個 macOS 目標記為 `verified: false`，見 §4.9 |
 | **billboard 形狀是無參數列舉** | func-spec 0015 起有四種形狀碼（square／soft-dot／ring／spark），但形狀**永遠不帶參數**（拉伸、旋轉需另開查詢，ADR-0013）；怎麼畫每種形狀由宿主自行決定（demo 用 64×64 程序生成 alpha 貼圖，RGB 全白、顏色仍來自頂點色） |
 | **只有 Unity 被實測過** | C# 綁定在 Unity 6000.5.7f1 batchmode 實測通過（[0011 §9.3](spec/func-0011-host-integration-surface.md)，可用 `examples/unity/PmSmoke.cs` 一鍵複驗）；Godot／Unreal／其他 .NET 宿主只有合約保證，沒有實測 |
 | **空間摘要交資訊，不交判定** | func-spec 0025 給的是包絡與佔用格網（§3.1.1／§4.7），**不是**碰撞判定：「粒子撞到牆會怎樣」是遊戲層的規則。真要做碰撞回饋（粒子反彈）需要把結果送回模擬，那會是輸出第一次影響輸入，屬於另一輪。視錐剔除同理——核心沒有相機概念（ADR-0008） |

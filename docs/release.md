@@ -113,3 +113,58 @@ source-repository-package
 **對宿主的一句話**：在同一台機器上重播錄影，用相等比較；跨機器比對，用容差比較。
 
 **對本專案的一句話**：逐位元 golden 的摘要半場只在錄製它的平台（目前 windows/x86_64）斷言，每幀粒子數到處斷言——見 `test/GoldenPlatform.hs`。新增參考平台＝錄一份該平台的 golden ＋ 放寬 `referencePlatform`，其他 golden spec 的部分不動。**這條規則適用於每一份 golden**，包括 `examples/haskell/expected-output.txt`（enhance-0001 §8.3：它漏套過一次，代價是 CI 的 Linux 腳紅在一個 checksum 的最後一位小數）。
+
+## 6. 發布產物（一包裡有什麼）
+
+宿主拿到的不是原始碼，是一包檔案。**機器可讀的權威是 `packaging/artifacts.json`**；下面這張表是它的散文複述，`test/PackagingSpec.hs` 斷言兩者**雙向相等**——清單裡有的檔名這裡一定看得到，這裡提到的檔名清單裡一定有。少一個就紅。
+
+| 平台 | 檔案 | 角色 | 狀態 |
+|---|---|---|---|
+| **windows-x86_64** | `particle-magic-ffi.dll` | runtime（standalone，內嵌 RTS） | 已驗證 |
+| | `particle-magic-ffi.dll.a` | import-lib-mingw | 已驗證 |
+| | `particle-magic-ffi.lib` | import-lib-msvc | 已驗證 |
+| | `particle_magic.h` | header | 已驗證 |
+| | `pm-version.json` | version | 已驗證 |
+| **linux-x86_64** | `libparticle-magic-ffi.so` | runtime | 已驗證 |
+| | `*.so*` | runtime-closure（與 `.so` 同層的共享物件閉包） | 已驗證 |
+| | `particle_magic.h` | header | 已驗證 |
+| | `pm-version.json` | version | 已驗證 |
+| **macos-x86_64** | `libparticle-magic-ffi.dylib` | runtime | **未驗證** |
+| | `particle_magic.h` | header | **未驗證** |
+| | `pm-version.json` | version | **未驗證** |
+| **macos-arm64** | `libparticle-magic-ffi.dylib` | runtime | **未驗證** |
+| | `particle_magic.h` | header | **未驗證** |
+| | `pm-version.json` | version | **未驗證** |
+
+`role` 是**封閉詞彙**，只有六個值：`runtime`、`runtime-closure`、`import-lib-mingw`、`import-lib-msvc`、`header`、`version`。清單多出第七個角色，守門測試會紅。
+
+### 6.1 三個平台各自的形狀
+
+**Windows** 的 DLL 是 standalone 的——RTS 內嵌，宿主不需要裝 GHC。MinGW 宿主連 `particle-magic-ffi.dll.a`，MSVC 宿主連 `particle-magic-ffi.lib`（由 `lib.exe /def:` 從 repo 裡那份 `particle-magic-ffi.def` 產生，沒有 MSVC 時退回 ghcup 隨附的 `llvm-dlltool`）。接法見 [integration.md](integration.md) §4.8。
+
+**Linux** 走的**不是**字面的 standalone。GHC 發行版的靜態封存檔不是 PIC，連結器直接拒絕把它們連進共享物件（2026-08-20 實測），所以字面 standalone 在這條工具鏈上做不到。改走的路是等價的：`.so` 連結時帶 `-Wl,-rpath,$ORIGIN`，打包時把它的整個共享物件閉包（`libHS*`、`libffi`、`libgmp`）複製到同一個資料夾。目標與 standalone 相同——**宿主不必安裝 GHC 執行期，也不相依發行版的 libgmp／libffi**。驗收是機械的：`packaging/pack.sh --verify` 在 `env -i` 的乾淨環境下斷言 `ldd` 零 `not found`，且沒有任何一條相依解析到產物資料夾之外（涵蓋整個閉包，不只 gmp 與 ffi），再 dlopen 一次確認 `pm_init` 真的活著。
+
+**macOS** 本輪**只寫了建置設定與打包腳本分支，沒有機器驗過**。`install_name` 以 `@rpath` 為基準（cabal 的 `if os(darwin)` 條件下），雙架構由分別建置後 `lipo -create` 合併。清單裡兩列的 `verified` 欄因此是 `false`，這張表的狀態欄寫「未驗證」——等 macOS 進 CI 矩陣之後才改。
+
+### 6.2 版本檔
+
+每份產物資料夾根目錄放一份 `pm-version.json`，四個欄位、一個不多：
+
+| 欄位 | 型別 | 來源 |
+|---|---|---|
+| `package-version` | string | `particle-magic.cabal` 的 `version:` |
+| `abi-version` | number | `include/particle_magic.h` 的 `PM_ABI_VERSION` |
+| `platform` | string | 清單的平台 id（`windows-x86_64` 等） |
+| `commit` | string | `git rev-parse HEAD`；不在 git 工作樹裡（例如從 sdist 建）時寫 `unknown` |
+
+套件版本與 ABI 世代**獨立遞增**（§2），版本檔同時記兩個就是為了讓宿主一眼看出自己拿到的是哪一組。
+
+### 6.3 打包腳本
+
+| 腳本 | 平台 | 做什麼 |
+|---|---|---|
+| `packaging/pack.ps1` | Windows | 蒐集 DLL 與 MinGW 匯入庫、產 MSVC 匯入庫、複製標頭、寫版本檔 |
+| `packaging/pack.sh` | Linux／macOS | 蒐集共享函式庫與（Linux）共享物件閉包、複製標頭、寫版本檔；`--verify` 做乾淨環境的自足性檢查 |
+| `packaging/smoke-msvc.ps1` | Windows | 以 `cl.exe` 編 C 最小宿主、連 MSVC 匯入庫、跑完一次完整生命週期 |
+
+三支腳本的退出碼語意一致：**0 ＝ 產物齊全且（`--verify` 時）自足**，非 0 ＝ 指出缺哪一個檔或哪一條相依沒解析到。CI 直接消費退出碼，不解讀訊息。建置與上傳流程本身不在本文的範圍內（見 `.github/workflows/`）。

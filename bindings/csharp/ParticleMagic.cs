@@ -40,6 +40,8 @@ namespace ParticleMagic
         public const int ErrCapacity = -3;      // PM_ERR_CAPACITY
         public const int ErrArgs = -4;          // PM_ERR_ARGS
         public const int ErrQuota = -5;         // PM_ERR_QUOTA: scene full, retry after a Dismiss
+        public const int ErrInternal = -6;      // PM_ERR_INTERNAL: a bug in the library, never in your call
+        public const int ErrState = -7;         // PM_ERR_STATE: called out of order
 
         public const int BlendAlpha = 0;        // PM_BLEND_ALPHA
         public const int BlendAdditive = 1;     // PM_BLEND_ADDITIVE
@@ -60,16 +62,47 @@ namespace ParticleMagic
         // returns. Bits 27..31 are always clear.
         public const int OccupancyDimDefault = 3; // PM_OCCUPANCY_DIM_DEFAULT
 
+        // Runtime settings for pm_init_ex (host-runtime F003).
+        public const int GcDefault = 0;         // PM_GC_DEFAULT
+        public const int GcNonmoving = 1;       // PM_GC_NONMOVING
+        // Statistics can ONLY be turned on while the runtime starts, so a
+        // host that wants GC numbers has to ask here.
+        public const int StatsOff = 0;          // PM_STATS_OFF
+        public const int StatsOn = 1;           // PM_STATS_ON
+        public const int MaxCapabilities = 256; // PM_MAX_CAPABILITIES
+        public const int NurseryMinBytes = 8192; // PM_NURSERY_MIN_BYTES
+        public const int NurseryMaxBytes = 1073741824; // PM_NURSERY_MAX_BYTES
+
         // --- Runtime lifecycle ---
         //
-        // pm_init() once per process, before anything else. Do NOT call
-        // pm_shutdown() unless the process is ending: the GHC runtime
-        // cannot be restarted in the same process, and an editor that
-        // keeps native plugins loaded between play sessions will fail on
-        // the second run (see examples/unity/README.md).
+        // pm_init() or pm_init_ex() once per process, before anything
+        // else. Do NOT call pm_shutdown() unless the process is ending:
+        // the GHC runtime cannot be restarted in the same process, and
+        // after shutdown this library refuses every call with ErrState --
+        // an editor that keeps native plugins loaded between play sessions
+        // would otherwise fail on the second run (see
+        // examples/unity/README.md).
+        //
+        // Everything below answers ErrState (or null, or a neutral value)
+        // until the runtime is up, instead of taking the process down.
 
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
         public static extern void pm_init();
+
+        // Start the runtime with your settings. Returns Pm.Ok; Pm.ErrArgs
+        // (out of range -- nothing started); or Pm.ErrState, which means
+        // either that the call was out of order, or that the runtime was
+        // already running in this process, so the capability count took
+        // effect but the nursery, GC mode and statistics flag could not.
+        //
+        //     var cfg = new PmConfig {
+        //         size = (uint)Marshal.SizeOf<PmConfig>(),
+        //         capabilities = 4,
+        //         stats = Pm.StatsOn,
+        //     };
+        //     int rc = Pm.pm_init_ex(ref cfg);
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int pm_init_ex(ref PmConfig config);
 
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
         public static extern void pm_shutdown();
@@ -98,6 +131,12 @@ namespace ParticleMagic
 
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
         public static extern void pm_advance(IntPtr spell, float dt);
+
+        /// <summary>pm_advance that reports: PM_ERR_ARGS for an invalid handle
+        /// or a dt that is NaN, infinite or negative (the clock is left alone
+        /// either way). Zero is a legal no-op.</summary>
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int pm_advance_ex(IntPtr spell, float dt);
 
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
         public static extern int pm_is_finished(IntPtr spell);
@@ -139,8 +178,11 @@ namespace ParticleMagic
         // --- Scenes: several casts alive at once (func-spec 0018) ---
         //
         // A PmScene* is an IntPtr like a PmSpell*, and the rules are the
-        // same: one scene per thread, free it exactly once. Two things
-        // differ, and both bite silently if you get them wrong:
+        // same: free it exactly once, and see the header's Threading
+        // section for what may run concurrently (concurrent casts into one
+        // scene are safe and count the quota once per spell; freeing a
+        // handle while another thread uses it is yours to serialise). Two
+        // things differ, and both bite silently if you get them wrong:
         //
         //   * size the six columns from the globalCap you passed to
         //     pm_scene_new, NOT from pm_max_particles(). The query bounds
@@ -182,6 +224,11 @@ namespace ParticleMagic
 
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
         public static extern void pm_scene_advance(IntPtr scene, float dt);
+
+        /// <summary>pm_scene_advance that reports, exactly as pm_advance_ex
+        /// reports pm_advance.</summary>
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int pm_scene_advance_ex(IntPtr scene, float dt);
 
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
         public static extern int pm_scene_observe(IntPtr scene,
@@ -239,6 +286,25 @@ namespace ParticleMagic
         public static extern int pm_scene_spell_bounds(IntPtr scene, int spellId,
                                                        float[] outMin, float[] outMax);
 
+        // --- Fixed timesteps ---
+
+        // The library's own planner, so a host does not hand-roll
+        // `while (acc >= FixedDt)` -- which has no clamp (one hitch and the
+        // step count explodes) and drifts if acc is a float. Keep acc as a
+        // double field and pass it in and out:
+        //
+        //     int steps;
+        //     Pm.pm_plan_steps(1.0 / 120.0, 8, frameSeconds, _acc,
+        //                      out steps, out _acc);
+        //     for (int i = 0; i < steps; i++) Pm.pm_advance(spell, 1f / 120f);
+        //
+        // PM_ERR_ARGS (writing nothing) for a non-finite dt/elapsed/accIn,
+        // a negative maxSteps or a negative accIn.
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int pm_plan_steps(double dt, int maxSteps,
+                                               double elapsed, double accIn,
+                                               out int outSteps, out double outAcc);
+
         // --- 2D projection (optional; a 3D host ignores these) ---
 
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
@@ -251,6 +317,37 @@ namespace ParticleMagic
         public static extern int pm_depth_order(int plane,
                                                 float[] posX, float[] posY, float[] posZ,
                                                 int count, int[] outIndices);
+    }
+
+    /// <summary>
+    /// Runtime settings for <see cref="Pm.pm_init_ex"/> (host-runtime
+    /// F003). Blittable and laid out exactly as the header's PmConfig:
+    /// zero it, set <c>size</c>, fill in what you care about. A size this
+    /// library does not recognise is Pm.ErrArgs rather than a silently
+    /// half-applied configuration.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PmConfig
+    {
+        /// <summary>sizeof(PmConfig) -- Marshal.SizeOf&lt;PmConfig&gt;().</summary>
+        public uint size;
+
+        /// <summary>0 = follow the hardware; else 1..Pm.MaxCapabilities.
+        /// A game host usually wants 2..4, not 0: the whole machine
+        /// competes with your own job system.</summary>
+        public uint capabilities;
+
+        /// <summary>0 = the runtime's default (4 MiB); else
+        /// Pm.NurseryMinBytes..Pm.NurseryMaxBytes.</summary>
+        public ulong nursery_bytes;
+
+        /// <summary>Pm.GcDefault or Pm.GcNonmoving (shorter pauses).</summary>
+        public uint gc_mode;
+
+        /// <summary>Pm.StatsOff or Pm.StatsOn. Can only be decided
+        /// here -- the runtime accepts it while starting up and never
+        /// afterwards.</summary>
+        public uint stats;
     }
 
     /// <summary>A particle colour, unpacked from the library's 0xRRGGBBAA word.</summary>

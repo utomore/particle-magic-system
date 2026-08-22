@@ -311,7 +311,10 @@ public static class PmSmoke
     }
 
     // One second of simulation in the component's own fixed steps; batch
-    // mode reports no real delta time, so the accumulator is primed.
+    // mode reports no real delta time, so the accumulator is primed. The
+    // primed value's type has to be the field's type -- SpellRenderer
+    // declares it double (pm_plan_steps plans in double), and reflection
+    // throws ArgumentException on a boxed float.
     static void Pump(SpellRenderer renderer, int frames)
     {
         var type = typeof(SpellRenderer);
@@ -319,7 +322,7 @@ public static class PmSmoke
         var update = type.GetMethod("Update", Private);
         for (int i = 0; i < frames; i++)
         {
-            accumulator.SetValue(renderer, 0.1f);
+            accumulator.SetValue(renderer, 0.1);
             update.Invoke(renderer, null);
         }
     }
